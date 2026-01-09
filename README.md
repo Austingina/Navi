@@ -20,7 +20,7 @@ sudo make install
 
 ## 3. 编译 ROS2 包
 
-包括 fastlio、cloud_to_laserscan、slope_behavior、livox_ros_driver2、grid_map_pcl 等。
+包括 fastlio、cloud_to_laserscan、slope_behavior、livox_ros_driver2、grid_map_pcl(重写了grid_map_pcl) 等。
 
 ```bash
 cd ~/Navi/ros2_ws
@@ -42,3 +42,26 @@ cd ~/Navi/scripts/
 ```bash
 ./start_rviz.sh
 ```
+
+
+## 5. 编译运行环境
+### 1. 硬件与系统环境
+硬件：Jetson Orin系列
+
+系统：Ubuntu 22.04，CUDA环境
+### 2. ROS2 Humble 环境
+sudo apt install ros-humble-desktop-full
+### 3. 特定ros2包环境
+包括：
+
+nav2相关，nav2-common， nav2-bringup，
+
+sudo apt install ros-humble-nav2*
+
+grid-map相关，grid-map-msgs， grid-map-visualization,  grid-map-cv,  grid-map-filters
+
+sudo apt install ros-humble-grid-map*
+### 4. 星海图系统环境（编译不需要，运行需要）
+在 ~/galaxea/install目录是星海图的系统环境，
+
+烧录教程参考： https://docs.galaxea-dynamics.com/zh/Guide/ros_upgrade_guide_all/ros2_upgrade_guide_pro/#8
