@@ -1,5 +1,5 @@
 #! /bin/bash
-#! /bin/bash
+source "$(dirname "$0")/common.sh"
 # filepath: /home/nvidia/work/Navi/scripts/start_all.sh
 
 SESSION="navi"

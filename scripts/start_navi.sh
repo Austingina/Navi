@@ -1,14 +1,14 @@
 #! /bin/bash
-#! /bin/bash
+source "$(dirname "$0")/common.sh"
 # filepath: /home/nvidia/work/Navi/scripts/start_all.sh
 
-bash ~/work/Navi/scripts/stop_navi.sh
+bash "$NAVI_SCRIPT_DIR/stop_navi.sh"
 SESSION="navi"
 if [[ "$1" == "-c" ]]; then
     # 使用 tmuxp 加载配置
-    tmuxp load -d ~/work/Navi/scripts/navi.caihong.yaml
-    echo "caihong" > ~/work/Navi/NaviAgent/config/mapuse.txt
+    tmuxp load -d "$NAVI_SCRIPT_DIR/navi.caihong.yaml"
+    echo "caihong" > $NAVI_ROOT_DIR/NaviAgent/config/mapuse.txt
 else
-    tmuxp load -d ~/work/Navi/scripts/navi.yaml
-    echo "525" > ~/work/Navi/NaviAgent/config/mapuse.txt
+    tmuxp load -d "$NAVI_SCRIPT_DIR/navi.yaml"
+    echo "525" >$NAVI_ROOT_DIR/NaviAgent/config/mapuse.txt
 fi

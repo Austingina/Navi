@@ -1,4 +1,5 @@
 #! /bin/bash
+source "$(dirname "$0")/common.sh"
 
-cd /home/nvidia/work/Navi/NaviAgent
+cd $NAVI_ROOT_DIR/NaviAgent
 python server.py 
