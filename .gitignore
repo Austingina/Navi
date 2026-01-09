@@ -1,0 +1,4 @@
+# Ignore 3d_bbs build directory
+ros2_ws/build
+ros2_ws/log
+ros2_ws/install
