@@ -1,0 +1,5 @@
+<library path="global_relocalize_tool">
+  <class name="rviz_global_relocalize/GlobalRelocalizeTool" type="rviz_global_relocalize::GlobalRelocalizeTool" base_class_type="rviz_common::Tool">
+    <description>Trigger /global_relocalize service by clicking in RViz</description>
+  </class>
+</library>

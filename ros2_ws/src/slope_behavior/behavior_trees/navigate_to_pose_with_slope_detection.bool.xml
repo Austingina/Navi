@@ -1,0 +1,97 @@
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <RecoveryNode number_of_retries="6" name="NavigateRecovery">
+      <PipelineSequence name="NavigateWithReplanning">
+        
+        <!-- 全局路径规划 -->
+        <RateController hz="1.0">
+          <RecoveryNode number_of_retries="1" name="ComputePathToPose">
+            <Sequence name="ComputePathToPose">
+              <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+              <SetBlackboard output_key="NeedSlopeCheck" value="true"/>
+            </Sequence>
+            <ClearEntireCostmap name="ClearGlobalCostmap-Context" service_name="global_costmap/clear_entirely_global_costmap"/>
+          </RecoveryNode>
+        </RateController>
+        
+        <!-- 带坡度检测的路径跟随 -->
+        <RecoveryNode number_of_retries="1" name="FollowPathWithSlope">
+          <ReactiveSequence name="SlopeAwareNavigation">
+            <Fallback>
+              <BlackboardCheckBool entry="NeedSlopeCheck">
+                <Sequence>              
+                  <Fallback>
+                    <Sequence>
+                      <IsGravityLowered/>
+                      <SetBlackboard output_key="is_gravity_lowered" value="true"/>
+                    </Sequence>
+                    <SetBlackboard output_key="is_gravity_lowered" value="false"/>
+                  </Fallback>
+                  <!-- 坡度检测与重心控制 -->
+                  <Fallback name="SlopeHandling">
+                    <!-- 分支1：没有陡坡 -->
+                    <Sequence name="NoSlopeAhead">
+                      <Inverter>
+                        <IsSlopeAhead 
+                          slope_threshold="5.0"
+                          check_distance="2.0"
+                          grid_map_topic="/grid_map_from_raw_pointcloud"
+                          path_topic="/plan"
+                          slope_layer="slope"/>
+                      </Inverter>
+                      <SetBlackboard output_key="NeedSlopeCheck" value="false"/>
+                      <!-- 没有陡坡时，如果之前降低过重心，则恢复 -->
+                      <Fallback name="RestoreIfNeeded">
+                        <BlackboardCheckBool entry="is_gravity_lowered">
+                          <RestoreGravity duration="5.0"/>
+                        </BlackboardCheckBool>
+                        <AlwaysSuccess/>
+                      </Fallback>
+                    </Sequence>
+                    <!-- 分支2：检测到陡坡，检查是否已经降低重心 -->
+                    <Sequence name="HandleSteepSlope">
+                      <!-- 只用黑板变量判断是否已降低重心 -->
+                      <Fallback name="LowerIfNeeded">
+                        <BlackboardCheckBool entry="is_gravity_lowered">
+                          <!-- 未降低，执行降低重心 -->
+                          <Sequence name="DoLowerGravity">
+                            <LowerGravity 
+                              duration="5.0"
+                              torso_pitch="1.0"
+                              torso_roll="-1.96"
+                              torso_yaw="-0.96"/>
+                          </Sequence>
+                        </BlackboardCheckBool>
+                        <AlwaysSuccess/>
+                      </Fallback>
+                    </Sequence>
+                  </Fallback>
+                </Sequence>
+              </BlackboardCheckBool>
+              <AlwaysSuccess/>
+            </Fallback>
+            <!-- 跟随路径 -->
+            <FollowPath path="{path}" controller_id="FollowPath"/>
+            
+          </ReactiveSequence>
+          <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>
+        </RecoveryNode>
+        
+      </PipelineSequence>
+      
+      <!-- 恢复行为 -->
+      <ReactiveFallback name="RecoveryFallback">
+        <GoalUpdated/>
+        <RoundRobin name="RecoveryActions">
+          <Sequence name="ClearingActions">
+            <ClearEntireCostmap name="ClearLocalCostmap-Subtree" service_name="local_costmap/clear_entirely_local_costmap"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-Subtree" service_name="global_costmap/clear_entirely_global_costmap"/>
+          </Sequence>
+          <DriveOnHeading dist_to_travel="0.30" speed="0.1"/>
+          <Wait wait_duration="3"/>
+          <BackUp backup_dist="0.30" backup_speed="0.1"/>
+        </RoundRobin>
+      </ReactiveFallback>
+    </RecoveryNode>
+  </BehaviorTree>
+</root>

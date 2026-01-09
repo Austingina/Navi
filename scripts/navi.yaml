@@ -1,0 +1,25 @@
+session_name: navi
+start_directory: /home/nvidia/work/Navi/scripts
+
+windows:
+  - window_name: navi_services
+    layout: tiled
+    panes:
+      - shell_command:
+          - sleep 20
+          - bash ~/work/Navi/scripts/start_r1pro.bash
+      - shell_command:
+          - sleep 30 
+          - bash ~/work/Navi/scripts/start_lidar.bash
+      - shell_command:
+          - sleep 31
+          - bash ~/work/Navi/scripts/start_localization.bash
+      - shell_command:
+          - sleep 32
+          - bash ~/work/Navi/scripts/start_navigation.launch
+
+  - window_name: monitoring
+    panes:
+      - shell_command:
+          - echo "Use this window for monitoring"
+          - htop
