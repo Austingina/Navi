@@ -22,11 +22,17 @@ sudo make install
 
 包括 fastlio、cloud_to_laserscan、slope_behavior、livox_ros_driver2、grid_map_pcl(重写了grid_map_pcl) 等。
 
+### 在本机编译
 ```bash
 cd ~/Navi/ros2_ws
 colcon build --cmake-args -DROS_EDITION=ROS2 -DHUMBLE_ROS=humble -DCMAKE_MESSAGE_LOG_LEVEL=VERBOSE --event-handlers console_direct+ --symlink-install
 ```
 
+### 在编译机编译
+```bash
+cd ~/Navi/ros2_ws
+colcon build --cmake-args -DROS_EDITION=ROS2 -DHUMBLE_ROS=humble -DCMAKE_MESSAGE_LOG_LEVEL=VERBOSE --event-handlers console_direct+ 
+```
 ## 4. 运行脚本
 
 ### 启动和结束导航
@@ -42,8 +48,11 @@ cd ~/Navi/scripts/
 ```bash
 ./start_rviz.sh
 ```
+### 启动NaviAgent
 
-
+```bash
+./start_mcp.sh
+```
 ## 5. 编译运行环境
 ### 1. 硬件与系统环境
 硬件：Jetson Orin系列
