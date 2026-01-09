@@ -1,5 +1,6 @@
 import os
 from ament_index_python.packages import get_package_share_directory
+from nav2_common.launch import RewrittenYaml
 from launch_ros.actions import Node
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
@@ -25,6 +26,25 @@ def generate_launch_description():
     param_file = LaunchConfiguration('params', default=os.path.join(
         param_dir, 'param_r1pro.yaml'))
 
+    # Prepare parameter rewrites for BT XML files so paths are not hardcoded in YAML
+    slope_pkg_dir = get_package_share_directory('slope_behavior')
+    fast_lio_pkg_dir = wheeltec_nav_dir
+    bt_nav_through = os.path.join(fast_lio_pkg_dir, 'config', 'wheeltec_params', 'behavior_trees', 'navigate_through_poses_w_replanning_and_recovery.xml')
+    bt_nav_to = os.path.join(slope_pkg_dir, 'behavior_trees', 'navigate_to_pose_with_slope_detection.xml')
+
+    # The parameters in the YAML are under the node name -> ros__parameters -> <param>.
+    # RewrittenYaml needs the full path including 'ros__parameters' to override them.
+    param_rewrites = {
+        'bt_navigator.ros__parameters.default_nav_through_poses_bt_xml': bt_nav_through,
+        'bt_navigator.ros__parameters.default_nav_to_pose_bt_xml': bt_nav_to,
+    }
+
+    rewritten_params = RewrittenYaml(
+        source_file=param_file,
+        root_key='',
+        param_rewrites=param_rewrites,
+        convert_types=True)
+
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -45,9 +65,9 @@ def generate_launch_description():
             PythonLaunchDescriptionSource(
                 [wheeltec_nav_launchr, '/bringup_launch.py']),
             launch_arguments={
-                'map': map_file,
-                'use_sim_time': use_sim_time,
-                'params_file': param_file}.items(),
+            'map': map_file,
+            'use_sim_time': use_sim_time,
+            'params_file': rewritten_params}.items(),
         ),
 
     ])
