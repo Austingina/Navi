@@ -55,21 +55,30 @@ cd ~/Navi/scripts/
 ```
 ## 5. 编译运行环境
 ### 1. 硬件与系统环境
-硬件：Jetson Orin系列
+**硬件要求：**
+- **Jetson Orin系列**
 
-系统：Ubuntu 22.04，CUDA环境
+**系统要求：**
+- **Ubuntu 22.04**
+
+**CUDA 环境要求：**
+- **驱动版本**：`540.3.0`  
+- **CUDA 版本**：`12.2`
+
 ### 2. ROS2 Humble 环境
 sudo apt install ros-humble-desktop-full
 ### 3. 特定ros2包环境
-包括：
+- **nav2 相关组件**（如 `nav2-common`, `nav2-bringup` 等）  
+  安装命令：
+  ```bash
+  sudo apt install ros-humble-nav2*
+  ```
+- **grid-map 相关组件**（如 `grid-map-msgs`, `grid-map-visualization` 等）
+  安装命令：
+  ```bash
+  sudo apt install ros-humble-grid-map*
+  ```
 
-nav2相关，nav2-common， nav2-bringup，
-
-sudo apt install ros-humble-nav2*
-
-grid-map相关，grid-map-msgs， grid-map-visualization,  grid-map-cv,  grid-map-filters
-
-sudo apt install ros-humble-grid-map*
 ### 4. 星海图系统环境（编译不需要，运行需要）
 在 ~/galaxea/install目录是星海图的系统环境，
 
