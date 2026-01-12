@@ -280,7 +280,7 @@ global_costmap:
       footprint: "[ [-0.4, -0.4], [-0.4, 0.4],[0.4, 0.4],[0.4, -0.4] ]"
       #footprint: "[ [-0.15, -0.38], [-0.15, 0.38],[0.67,0.38],[0.67, -0.38] ]"
       resolution: 0.05                  #全局地图1像素的分辨率，以米为单位
-      track_unknown_space: true
+      track_unknown_space: false
       plugins: ["static_layer", "obstacle_layer", "inflation_layer"] #插件包括：{“静态层”，“障碍层”，“膨胀层”}
       obstacle_layer:  #障碍层参数
         plugin: "nav2_costmap_2d::ObstacleLayer" #障碍层插件

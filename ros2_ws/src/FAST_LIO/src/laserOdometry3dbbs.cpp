@@ -566,6 +566,7 @@ void publish_effect_world(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::Shar
 {
     PointCloudXYZI::Ptr laserCloudWorld( \
                     new PointCloudXYZI(effct_feat_num, 1));
+    // std::cout << "effct_feat_num: " << effct_feat_num << std::endl;
     for (int i = 0; i < effct_feat_num; i++)
     {
         RGBpointBodyToWorld(&laserCloudOri->points[i], \
@@ -1180,7 +1181,7 @@ private:
             p_imu->Process(Measures, kf, feats_undistort);
             state_point = kf.get_x();
             pos_lid = state_point.pos + state_point.rot * state_point.offset_T_L_I;
-
+            // std::cout << "point num before process" << Measures.lidar->points.size() <<"point num after process: " << feats_undistort->points.size() << std::endl;
             if (feats_undistort->empty() || (feats_undistort == NULL))
             {
                 RCLCPP_WARN(this->get_logger(), "No point, skip this scan!\n");
@@ -1272,7 +1273,7 @@ private:
             if (path_en)                         publish_path(pubPath_);
             if (scan_pub_en || pcd_save_en)      publish_frame_world(pubLaserCloudFull_);
             if (scan_pub_en && scan_body_pub_en) publish_frame_body(pubLaserCloudFull_body_);
-            // publish_effect_world(pubLaserCloudEffect);
+            // publish_effect_world(pubLaserCloudEffect_);
             // publish_map(pubLaserCloudMap);
 
             /*** Debug variables ***/

@@ -7,6 +7,7 @@ def generate_launch_description():
         'elevation_topic': '/grid_map_from_raw_pointcloud',
         'elevation_layer': 'elevation',
         'output_topic': '/cloud_as_laserscan',
+        'publish_filtered_pcd': False,
         'ground_tolerance': 0.05,
         'max_height': 2.0,
         'angle_min': -3.141592653589793,

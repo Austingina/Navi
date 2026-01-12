@@ -68,15 +68,16 @@ cd ~/Navi/scripts/
 ### 2. ROS2 Humble 环境
 sudo apt install ros-humble-desktop-full
 ### 3. 特定ros2包环境
-- **nav2 相关组件**（如 `nav2-common`, `nav2-bringup` 等）  
+- **nav2 相关组件**（如 `nav2-common`, `nav2-bringup` ,`nav2-behavior-tree`, `nav2-behavior`, `nav2-bt-navigator`等）  
   安装命令：
   ```bash
-  sudo apt install ros-humble-navigation2=1.1.19
+  sudo apt install ros-humble-navigation2=1.1.20
+  sudo apt install ros-humble-nav2*=1.1.20
   ```
-- **grid-map 相关组件**（如 `grid-map-msgs`, `grid-map-visualization` 等）
+- **grid-map 相关组件**（如 `grid-map-core`,`grid-map-rviz-plugin`,`grid-map-filter`,`grid-map-msgs`, `grid-map-visualization` 等）
   安装命令：
   ```bash
-  sudo apt install ros-humble-grid-map*=2.0.1-*
+  sudo apt install ros-humble-grid-map*=2.0.1
   ```
 
 ### 4. 星海图系统环境（编译不需要，运行需要）
