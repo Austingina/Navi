@@ -71,12 +71,12 @@ sudo apt install ros-humble-desktop-full
 - **nav2 相关组件**（如 `nav2-common`, `nav2-bringup` 等）  
   安装命令：
   ```bash
-  sudo apt install ros-humble-nav2*
+  sudo apt install ros-humble-navigation2=1.1.19
   ```
 - **grid-map 相关组件**（如 `grid-map-msgs`, `grid-map-visualization` 等）
   安装命令：
   ```bash
-  sudo apt install ros-humble-grid-map*
+  sudo apt install ros-humble-grid-map*=2.0.1-*
   ```
 
 ### 4. 星海图系统环境（编译不需要，运行需要）
