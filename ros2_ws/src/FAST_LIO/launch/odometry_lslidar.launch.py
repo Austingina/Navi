@@ -121,8 +121,9 @@ def generate_launch_description():
             'elevation_topic': '/grid_map_from_raw_pointcloud',
             'elevation_layer': 'elevation',
             'output_topic': '/livox_scan2',
+            'publish_filtered_pcd': False,
             'ground_tolerance': 0.05,
-            'max_height': 2.0,
+            'max_height': 1.6,
             'angle_min': -1.57,
             'angle_max': 3.14159,
             'angle_increment': 0.0087,  # 0.5 deg

@@ -17,8 +17,16 @@ cmake ..
 make -j
 sudo make install
 ```
-
-## 3. 编译 ROS2 包
+## 3 编译安装Livox SDK
+```bash
+cd ~/Navi/ros2_ws/src/
+git submodule update --init --recursive
+cd Livox-SDK
+cd build && cmake ..
+make
+sudo make install
+```
+## 4. 编译 ROS2 包
 
 包括 fastlio、cloud_to_laserscan、slope_behavior、livox_ros_driver2、grid_map_pcl(重写了grid_map_pcl) 等。
 
@@ -33,7 +41,8 @@ colcon build --cmake-args -DROS_EDITION=ROS2 -DHUMBLE_ROS=humble -DCMAKE_MESSAGE
 cd ~/Navi/ros2_ws
 colcon build --cmake-args -DROS_EDITION=ROS2 -DHUMBLE_ROS=humble -DCMAKE_MESSAGE_LOG_LEVEL=VERBOSE --event-handlers console_direct+ 
 ```
-## 4. 运行脚本
+
+## 5. 运行脚本
 
 ### 启动和结束导航
 

@@ -199,7 +199,6 @@ local_costmap:
         combination_method: 1
         lidar_scan:
           topic: /livox_scan2
-          sensor_frame: "livox_frame"
           obstacle_max_range: 8.0
           obstacle_min_range: 0.0
           raytrace_max_range: 10.0
