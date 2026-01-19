@@ -54,9 +54,9 @@ void HeadingAlignCritic::onInit()
     node,
     dwb_plugin_name_ + "." + name_ + ".forward_point_distance", 0.5);
   
-  goal_distance_threshold_ = nav_2d_utils::searchAndGetParam(
+  xy_goal_tolerance_ = nav_2d_utils::searchAndGetParam(
     node,
-    dwb_plugin_name_ + "." + name_ + ".goal_distance_threshold", 0.5);
+    dwb_plugin_name_ + ".xy_goal_tolerance", 0.25);
 }
 
 bool HeadingAlignCritic::prepare(
@@ -70,7 +70,7 @@ bool HeadingAlignCritic::prepare(
   double dx = pose.x - goal.x;
   double dy = pose.y - goal.y;
   double sq_dist = dx * dx + dy * dy;
-  if (sq_dist < goal_distance_threshold_ * goal_distance_threshold_) {
+  if (sq_dist < xy_goal_tolerance_ * xy_goal_tolerance_) {
     zero_scale_ = true;
   } else {
     zero_scale_ = false;

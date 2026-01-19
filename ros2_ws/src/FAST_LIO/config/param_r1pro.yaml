@@ -140,17 +140,14 @@ controller_server:
       BaseObstacle.scale: 0.02 # 障碍物评价器权重
       HeadingAlign.scale: 8.0 # 航向对齐评价器权重
       HeadingAlign.forward_point_distance: 0.5 # 航向对齐前向
-      HeadingAlign.goal_distance_threshold: 1.0 # 航向对齐目标距离阈值
-      PathAlign.scale: 32.0 # 路径对齐评价器权重
-      PathAlign.forward_point_distance: 1.0 # 路径对齐前向点距离
       GoalAlign.scale: 24.0 # 目标对齐评价器权重
       GoalAlign.forward_point_distance: 0.5 # 目标对齐前向点距离
       PathDist.scale: 32.0 # 路径距离评价器权重
       GoalDist.scale: 24.0 # 目标距离评价器权重
-      RotateToGoal.scale: 128.0 # 旋转到目标评价器权重
+      RotateToGoal.scale: 32.0 # 旋转到目标评价器权重
       RotateToGoal.slowing_factor: 5.0 # 旋转减速因子
       RotateToGoal.lookahead_time: -2.0 # 旋转预判时间
-      Oscillation.scale: 64.0 # 振荡评价器权重
+      Oscillation.scale: 32.0 # 振荡评价器权重
       
 controller_server_rclcpp_node:
   ros__parameters:

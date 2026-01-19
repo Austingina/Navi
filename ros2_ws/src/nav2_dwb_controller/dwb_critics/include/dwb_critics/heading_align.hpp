@@ -73,7 +73,7 @@ protected:
 
   nav_2d_msgs::msg::Path2D global_plan_;
   double forward_point_distance_;  ///< How far ahead to look for path direction
-  double goal_distance_threshold_;  ///< Disable critic when close to goal
+  double xy_goal_tolerance_;   ///< Distance to goal to disable this critic
   bool zero_scale_;
 };
 }  // namespace dwb_critics
