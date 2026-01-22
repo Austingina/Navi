@@ -92,6 +92,9 @@ string root_dir = ROOT_DIR;
 string map_file_path, lid_topic, imu_topic;
 std::string global_frame("odom"), robot_frame("imu_link");
 double ndt_thresh = 1.0;
+double bbs3d_score_threshold = 0.8;
+double bbs3d_voxel_size = 0.15;
+double bbs3d_min_level_res = 0.6;
 double res_mean_last = 0.05, total_residual = 0.0;
 double last_timestamp_lidar = 0, last_timestamp_imu = -1.0;
 double gyr_cov = 0.1, acc_cov = 0.1, b_gyr_cov = 0.0001, b_acc_cov = 0.0001;
@@ -816,9 +819,8 @@ bool load_map(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLas
     std::cout << "Map Kdtree Initial Done, kdtree size: " << ikdtree.size() << std::endl;;
 
     // initializing for global registration
-    double voxel_size = 0.15;
     pcl::VoxelGrid<PointType> voxel_grid_filter;
-    voxel_grid_filter.setLeafSize(voxel_size, voxel_size, voxel_size);
+    voxel_grid_filter.setLeafSize(bbs3d_voxel_size, bbs3d_voxel_size, bbs3d_voxel_size);
     voxel_grid_filter.setInputCloud(global_map);
     voxel_grid_filter.filter(*ds_map_cloud);
     // Convert to teaser point cloud
@@ -829,11 +831,11 @@ bool load_map(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLas
     // teaser::FPFHEstimation fpfh;
     // scene_descriptors = fpfh.computeFPFHFeatures(tgt_cloud, voxel_size * 2, voxel_size * 5);
 
-    bbs3d_ptr->set_tar_points(tar_points, voxel_size, 6);
+    bbs3d_ptr->set_tar_points(tar_points, bbs3d_min_level_res, 6);
     bbs3d_ptr->set_trans_search_range(tar_points);
     bbs3d_ptr->set_angular_search_range({-0.02,-0.02,0.0}, {0.02,0.02,6.28});
-    bbs3d_ptr->set_score_threshold_percentage(0.9);
-    std::cout << "3D BBS initialized!" << std::endl;
+    bbs3d_ptr->set_score_threshold_percentage(bbs3d_score_threshold);
+    std::cout << "3D BBS initialized! voxel_size: " << bbs3d_voxel_size << ", min_level_res: " << bbs3d_min_level_res << ", score_threshold: " << bbs3d_score_threshold << std::endl;
     // num_threads
     // int num_threads = 4;
     // bbs3d_ptr->set_num_threads(num_threads);
@@ -1018,6 +1020,9 @@ public:
         this->declare_parameter<vector<double>>("mapping.extrinsic_T", vector<double>());
         this->declare_parameter<vector<double>>("mapping.extrinsic_R", vector<double>());
         this->declare_parameter<double>("ndt_thresh", 1.0);
+        this->declare_parameter<double>("bbs3d.score_threshold", 0.8);
+        this->declare_parameter<double>("bbs3d.voxel_size", 0.15);
+        this->declare_parameter<double>("bbs3d.min_level_res", 0.6);
 
         this->get_parameter_or<bool>("publish.path_en", path_en, true);
         this->get_parameter_or<bool>("publish.effect_map_en", effect_pub_en, false);
@@ -1055,6 +1060,9 @@ public:
         this->get_parameter_or<vector<double>>("mapping.extrinsic_T", extrinT, vector<double>());
         this->get_parameter_or<vector<double>>("mapping.extrinsic_R", extrinR, vector<double>());
         this->get_parameter_or<double>("ndt_thresh", ndt_thresh, 1.0);
+        this->get_parameter_or<double>("bbs3d.score_threshold", bbs3d_score_threshold, 0.8);
+        this->get_parameter_or<double>("bbs3d.voxel_size", bbs3d_voxel_size, 0.15);
+        this->get_parameter_or<double>("bbs3d.min_level_res", bbs3d_min_level_res, 0.6);
 
 	pcd_save_en = false;
 
