@@ -12,7 +12,7 @@ def generate_launch_description():
     # 声明命令行参数
     folder_path_arg = DeclareLaunchArgument(
         'folder_path',
-        default_value='/home/nvidia/maps/',
+        default_value='/home/nvidia/Navi/maps/',
         description='Path to the folder containing PCD files'
     )
     
