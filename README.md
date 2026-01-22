@@ -21,8 +21,8 @@ sudo make install
 ```bash
 cd ~/Navi/ros2_ws/src/
 git submodule update --init --recursive
-cd Livox-SDK
-cd build && cmake ..
+cd Livox-SDK2
+mkdir build && cd build && cmake ..
 make
 sudo make install
 ```
