@@ -287,6 +287,8 @@ global_costmap:
         enabled: True
         combination_method: 1
         footprint_clearing_enabled: True
+        min_obstacle_height: -4.0
+        max_obstacle_height: 4.0
         observation_sources: scan                  #观测源
         scan:
           topic: /livox_scan2
