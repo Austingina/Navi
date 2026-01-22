@@ -1,3 +1,4 @@
 [submodule "ros2_ws/src/Livox-SDK"]
 	path = ros2_ws/src/Livox-SDK
 	url = https://github.com/Livox-SDK/Livox-SDK.git
+	branch = fix_ros2_humble
