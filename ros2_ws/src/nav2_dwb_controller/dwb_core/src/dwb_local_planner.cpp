@@ -405,15 +405,15 @@ DWBLocalPlanner::coreScoringAlgorithm(
     }
     throw NoLegalTrajectoriesException(tracker);
   }
-  // 打印best轨迹详情
-  RCLCPP_INFO(rclcpp::get_logger("DWBLocalPlanner"), "Best Trajectory:");
-  RCLCPP_INFO(rclcpp::get_logger("DWBLocalPlanner"), "  vx: %.3f, vy: %.3f, wz: %.3f",
-    best.traj.velocity.x, best.traj.velocity.y, best.traj.velocity.theta);
-  RCLCPP_INFO(rclcpp::get_logger("DWBLocalPlanner"), "  Total Score: %.3f", best.total);
-  for (const auto & cs : best.scores) {
-    RCLCPP_INFO(rclcpp::get_logger("DWBLocalPlanner"),
-      "    Critic: %s, Score: %.3f, Scale: %.3f", cs.name.c_str(), cs.raw_score, cs.scale);
-  }
+  // // 打印best轨迹详情
+  // RCLCPP_INFO(rclcpp::get_logger("DWBLocalPlanner"), "Best Trajectory:");
+  // RCLCPP_INFO(rclcpp::get_logger("DWBLocalPlanner"), "  vx: %.3f, vy: %.3f, wz: %.3f",
+  //   best.traj.velocity.x, best.traj.velocity.y, best.traj.velocity.theta);
+  // RCLCPP_INFO(rclcpp::get_logger("DWBLocalPlanner"), "  Total Score: %.3f", best.total);
+  // for (const auto & cs : best.scores) {
+  //   RCLCPP_INFO(rclcpp::get_logger("DWBLocalPlanner"),
+  //     "    Critic: %s, Score: %.3f, Scale: %.3f", cs.name.c_str(), cs.raw_score, cs.scale);
+  // }
   return best;
 }
 
