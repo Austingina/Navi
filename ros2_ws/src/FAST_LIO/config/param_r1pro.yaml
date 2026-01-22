@@ -195,8 +195,8 @@ local_costmap:
         enabled: True
         observation_sources: lidar_scan 
         footprint_clearing_enabled: True
-        max_obstacle_height: 1.0
-        min_obstacle_height: -1.0
+        max_obstacle_height: 4.0
+        min_obstacle_height: -4.0
         combination_method: 1
         lidar_scan:
           topic: /livox_scan2
