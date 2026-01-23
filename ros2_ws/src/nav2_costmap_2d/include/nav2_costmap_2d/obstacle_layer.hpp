@@ -253,6 +253,11 @@ protected:
   bool rolling_window_;
   bool was_reset_;
   int combination_method_;
+
+  /// @brief Whether to publish observation point cloud
+  bool pub_lidar_observation_;
+  /// @brief Publisher for observation point cloud
+  rclcpp_lifecycle::LifecyclePublisher<sensor_msgs::msg::PointCloud2>::SharedPtr observation_pcd_pub_;
 };
 
 }  // namespace nav2_costmap_2d

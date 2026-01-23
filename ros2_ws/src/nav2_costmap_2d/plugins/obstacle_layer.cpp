@@ -82,6 +82,7 @@ void ObstacleLayer::onInitialize()
   declareParameter("max_obstacle_height", rclcpp::ParameterValue(2.0));
   declareParameter("combination_method", rclcpp::ParameterValue(1));
   declareParameter("observation_sources", rclcpp::ParameterValue(std::string("")));
+  declareParameter("pub_lidar_observation", rclcpp::ParameterValue(false));
 
   auto node = node_.lock();
   if (!node) {
@@ -120,6 +121,15 @@ void ObstacleLayer::onInitialize()
   was_reset_ = false;
 
   global_frame_ = layered_costmap_->getGlobalFrameID();
+
+  // Get pub_lidar_observation parameter and create publisher if enabled
+  node->get_parameter(name_ + "." + "pub_lidar_observation", pub_lidar_observation_);
+  if (pub_lidar_observation_) {
+    observation_pcd_pub_ = node->create_publisher<sensor_msgs::msg::PointCloud2>(
+      "/observation_pcd", rclcpp::SensorDataQoS());
+    observation_pcd_pub_->on_activate();
+    RCLCPP_INFO(logger_, "Observation point cloud publisher enabled on /observation_pcd");
+  }
 
   auto sub_opt = rclcpp::SubscriptionOptions();
   sub_opt.callback_group = callback_group_;
@@ -331,7 +341,7 @@ ObstacleLayer::laserScanCallback(
   // project the laser into a point cloud
   sensor_msgs::msg::PointCloud2 cloud;
   cloud.header = message->header;
-
+  
   // project the scan into a point cloud
   try {
     projector_.transformLaserScanToPointCloud(message->header.frame_id, *message, cloud, *tf_);
@@ -350,7 +360,7 @@ ObstacleLayer::laserScanCallback(
       ex.what());
     return;
   }
-
+  
   // buffer the point cloud
   buffer->lock();
   buffer->bufferCloud(cloud);
@@ -443,6 +453,9 @@ ObstacleLayer::updateBounds(
   }
 
   // place the new obstacles into a priority queue... each with a priority of zero to begin with
+  // Collect observation points for publishing if enabled
+  std::vector<float> obs_points_x, obs_points_y, obs_points_z;
+
   for (std::vector<Observation>::const_iterator it = observations.begin();
     it != observations.end(); ++it)
   {
@@ -459,7 +472,11 @@ ObstacleLayer::updateBounds(
 
     for (; iter_x != iter_x.end(); ++iter_x, ++iter_y, ++iter_z) {
       double px = *iter_x, py = *iter_y, pz = *iter_z;
-
+      if (pub_lidar_observation_) {
+        obs_points_x.push_back(static_cast<float>(px));
+        obs_points_y.push_back(static_cast<float>(py));
+        obs_points_z.push_back(static_cast<float>(pz));        
+      }
       // if the obstacle is too low, we won't add it
       if (pz < min_obstacle_height_) {
         RCLCPP_DEBUG(logger_, "The point is too low");
@@ -483,7 +500,14 @@ ObstacleLayer::updateBounds(
         RCLCPP_DEBUG(logger_, "The point is too far away");
         continue;
       }
-
+      
+      // Collect this point for publishing if enabled
+      // if (pub_lidar_observation_) {
+      //   obs_points_x.push_back(static_cast<float>(px));
+      //   obs_points_y.push_back(static_cast<float>(py));
+      //   obs_points_z.push_back(static_cast<float>(pz));
+      //   RCLCPP_INFO(logger_, "Publishing lidar observation point: [%f, %f, %f]", px, py, pz);
+      // }
       // if the point is too close, do not conisder it
       if (sq_dist < sq_obstacle_min_range) {
         RCLCPP_DEBUG(logger_, "The point is too close");
@@ -500,7 +524,33 @@ ObstacleLayer::updateBounds(
       unsigned int index = getIndex(mx, my);
       costmap_[index] = LETHAL_OBSTACLE;
       touch(px, py, min_x, min_y, max_x, max_y);
+
+
     }
+  }
+
+  // Publish the observation point cloud if enabled
+  if (pub_lidar_observation_ && !obs_points_x.empty()) {
+    sensor_msgs::msg::PointCloud2 obs_cloud;
+    obs_cloud.header.frame_id = global_frame_;
+    obs_cloud.header.stamp = clock_->now();
+    obs_cloud.height = 1;
+    obs_cloud.is_dense = true;
+    obs_cloud.is_bigendian = false;
+
+    sensor_msgs::PointCloud2Modifier modifier(obs_cloud);
+    modifier.setPointCloud2FieldsByString(1, "xyz");
+    modifier.resize(obs_points_x.size());
+
+    sensor_msgs::PointCloud2Iterator<float> out_x(obs_cloud, "x");
+    sensor_msgs::PointCloud2Iterator<float> out_y(obs_cloud, "y");
+    sensor_msgs::PointCloud2Iterator<float> out_z(obs_cloud, "z");
+    for (size_t i = 0; i < obs_points_x.size(); ++i, ++out_x, ++out_y, ++out_z) {
+      *out_x = obs_points_x[i];
+      *out_y = obs_points_y[i];
+      *out_z = obs_points_z[i];
+    }
+    observation_pcd_pub_->publish(obs_cloud);
   }
 
   updateFootprint(robot_x, robot_y, robot_yaw, min_x, min_y, max_x, max_y);
