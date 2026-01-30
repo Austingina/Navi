@@ -42,6 +42,53 @@ cd ~/Navi/ros2_ws
 colcon build --cmake-args -DROS_EDITION=ROS2 -DHUMBLE_ROS=humble -DCMAKE_MESSAGE_LOG_LEVEL=VERBOSE --event-handlers console_direct+ 
 ```
 
+## (Optional) Building Docker Image
+```bash
+cd ros2_humble_docker
+docker build -t avant-mobilty-ros2:latest .
+```
+
+### Workspace Structure
+
+First create your own local ROS2 workspace and clone `FAST_LIO2`: 
+```bash
+mkdir -p ~/ros2_ws/src
+cd ~/ros2_ws/src
+git clone -b navi https://gitlab.autel.com/avant/AI-Embodied/Mobility/fast_lio2.git
+```
+Clone respective repos and ensure they follow this exact structure under `ros2_ws/src`:
+```
+ros2_ws/src
+├── fast_lio2
+```
+> **Important**: Maintain this exact structure within `ros_ws/src`
+
+### Docker Container Setup
+```bash
+# Allow Docker GUI access
+xhost +local:docker
+```
+
+Go to `ros2_humble_docker/container_run.sh` and make sure you change exact directory path for `PROJECT_DIR` and `DATASET_DIR`
+```bash
+PROJECT_DIR="/path/to/your/fast_lio2"
+DATASET_DIR="/path/to/your/dataset"
+```
+> **Important**: `PROJECT_DIR` should be the exact directory to `ros2_ws/src`
+
+Then launch docker container using the following:
+```bash
+# Grant access
+cd ros2_humble_docker
+sudo chmod -R 777 container_run.sh
+
+# Start container
+./container_run.sh avant-mobilty-ros2 avant-mobilty-ros2:latest
+
+# Source ROS2
+source /opt/ros/humble/setup.bash
+```
+
 ## 5. 运行脚本
 
 ### 启动和结束导航
