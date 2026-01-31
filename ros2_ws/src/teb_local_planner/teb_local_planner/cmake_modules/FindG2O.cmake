@@ -30,6 +30,9 @@ IF(UNIX)
     NAMES g2o_core g2o_core_rd
     PATHS /usr/local /usr ${CMAKE_PREFIX_PATH}
     PATH_SUFFIXES lib)
+
+  MESSAGE(STATUS "G2O_CORE_LIB: ${G2O_CORE_LIB}")
+
   FIND_LIBRARY(G2O_STUFF_LIB            
     NAMES g2o_stuff g2o_stuff_rd
     PATHS /usr/local /usr ${CMAKE_PREFIX_PATH}
@@ -54,10 +57,10 @@ IF(UNIX)
     NAMES g2o_solver_csparse g2o_solver_csparse_rd
     PATHS /usr/local /usr 
     PATH_SUFFIXES lib)
-  FIND_LIBRARY(G2O_INCREMENTAL_LIB      
-    NAMES g2o_incremental g2o_incremental_rd
-    PATHS /usr/local /usr ${CMAKE_PREFIX_PATH}
-    PATH_SUFFIXES lib)
+  # FIND_LIBRARY(G2O_INCREMENTAL_LIB      
+  #   NAMES g2o_incremental g2o_incremental_rd
+  #   PATHS /usr/local /usr ${CMAKE_PREFIX_PATH}
+  #   PATH_SUFFIXES lib)
   FIND_LIBRARY(G2O_CSPARSE_EXTENSION_LIB
     NAMES g2o_csparse_extension g2o_csparse_extension_rd
     PATHS /usr/local /usr ${CMAKE_PREFIX_PATH}
@@ -71,9 +74,9 @@ IF(UNIX)
                     ${G2O_SOLVER_CHOLMOD_LIB} 
                     ${G2O_SOLVER_PCG_LIB}     
                     ${G2O_SOLVER_CSPARSE_LIB} 
-                    ${G2O_INCREMENTAL_LIB}                        
+                    # ${G2O_INCREMENTAL_LIB}                        
                     )
-
+  MESSAGE(STATUS "G2O_LIBRARIES: ${G2O_LIBRARIES}")
   IF(G2O_LIBRARIES AND G2O_INCLUDE_DIR)
     SET(G2O_FOUND "YES")
     IF(NOT G2O_FIND_QUIETLY)
