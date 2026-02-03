@@ -1,5 +1,6 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 import os
@@ -10,7 +11,8 @@ def generate_launch_description():
     param_file = os.path.join(grid_map_pcl_dir, 'config', 'parameters.yaml')
     default_rviz_config_path = os.path.join(
         grid_map_pcl_dir, 'rviz', 'gridmap.rviz')
-        
+    rviz_use = LaunchConfiguration('rviz')
+
     # 声明命令行参数
     folder_path_arg = DeclareLaunchArgument(
         'folder_path',
@@ -42,6 +44,12 @@ def generate_launch_description():
         description='Use simulation time'
     )
 
+    declare_rviz_arg = DeclareLaunchArgument(
+        'rviz',
+        default_value='false',
+        description='Launch RViz'
+    )
+
     declare_rviz_config_path_cmd = DeclareLaunchArgument(
         'rviz_cfg', default_value=default_rviz_config_path,
         description='RViz config file path'
@@ -71,7 +79,8 @@ def generate_launch_description():
         name='rviz2',
         output='screen',
         arguments=['-d', LaunchConfiguration('rviz_cfg')],
-        parameters=[{'use_sim_time': LaunchConfiguration('use_sim_time')}]
+        parameters=[{'use_sim_time': LaunchConfiguration('use_sim_time')}],
+        condition=IfCondition(rviz_use)
     )
 
     ld = LaunchDescription()
@@ -82,6 +91,7 @@ def generate_launch_description():
     ld.add_action(map_frame_arg)
     ld.add_action(set_verbosity_arg)
     ld.add_action(use_sim_time_arg)
+    ld.add_action(declare_rviz_arg)
     
     # 添加节点
     ld.add_action(pcl_loader_node)
