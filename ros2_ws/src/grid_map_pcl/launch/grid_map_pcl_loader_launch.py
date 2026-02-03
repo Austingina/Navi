@@ -8,7 +8,9 @@ from ament_index_python.packages import get_package_share_directory
 def generate_launch_description():
     grid_map_pcl_dir = get_package_share_directory('grid_map_pcl')
     param_file = os.path.join(grid_map_pcl_dir, 'config', 'parameters.yaml')
-    
+    default_rviz_config_path = os.path.join(
+        grid_map_pcl_dir, 'rviz', 'gridmap.rviz')
+        
     # 声明命令行参数
     folder_path_arg = DeclareLaunchArgument(
         'folder_path',
@@ -34,6 +36,17 @@ def generate_launch_description():
         description='Enable debug verbosity'
     )
 
+    use_sim_time_arg = DeclareLaunchArgument(
+        'use_sim_time',
+        default_value='false',
+        description='Use simulation time'
+    )
+
+    declare_rviz_config_path_cmd = DeclareLaunchArgument(
+        'rviz_cfg', default_value=default_rviz_config_path,
+        description='RViz config file path'
+    )
+
     # 使用 LaunchConfiguration 获取参数值
     node_params = [
         {'folder_path': LaunchConfiguration('folder_path')},
@@ -51,6 +64,16 @@ def generate_launch_description():
         parameters=node_params
     )
 
+    # RViz node
+    rviz_node = Node(
+        package='rviz2',
+        executable='rviz2',
+        name='rviz2',
+        output='screen',
+        arguments=['-d', LaunchConfiguration('rviz_cfg')],
+        parameters=[{'use_sim_time': LaunchConfiguration('use_sim_time')}]
+    )
+
     ld = LaunchDescription()
 
     # 添加参数声明
@@ -58,8 +81,11 @@ def generate_launch_description():
     ld.add_action(pcd_filename_arg)
     ld.add_action(map_frame_arg)
     ld.add_action(set_verbosity_arg)
+    ld.add_action(use_sim_time_arg)
     
     # 添加节点
     ld.add_action(pcl_loader_node)
+    ld.add_action(declare_rviz_config_path_cmd)
+    ld.add_action(rviz_node)
 
     return ld
