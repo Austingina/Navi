@@ -2,4 +2,7 @@
   <class name="rviz_global_relocalize/GlobalRelocalizeTool" type="rviz_global_relocalize::GlobalRelocalizeTool" base_class_type="rviz_common::Tool">
     <description>Trigger /global_relocalize service by clicking in RViz</description>
   </class>
+  <class name="rviz_global_relocalize/SetBaselinkTool" type="rviz_global_relocalize::SetBaselinkTool" base_class_type="rviz_common::Tool">
+    <description>Click on map to set base_link position and publish map->base_link TF at 5Hz</description>
+  </class>
 </library>

@@ -6,21 +6,34 @@ find_package(Qt5 COMPONENTS Widgets REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(rviz_common REQUIRED)
+find_package(rviz_rendering REQUIRED)
 find_package(pluginlib REQUIRED)
+find_package(tf2_ros REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
 
 include_directories(include)
 
 # Enable automatic moc for Q_OBJECT processing
 set(CMAKE_AUTOMOC ON)
 
-add_library(global_relocalize_tool SHARED src/global_relocalize_tool.cpp
-  include/rviz_global_relocalize/global_relocalize_tool.hpp)
+add_library(global_relocalize_tool SHARED 
+  src/global_relocalize_tool.cpp
+  src/set_baselink_tool.cpp
+  include/rviz_global_relocalize/global_relocalize_tool.hpp
+  include/rviz_global_relocalize/set_baselink_tool.hpp)
 
 ament_target_dependencies(global_relocalize_tool
   rclcpp
   std_srvs
   rviz_common
+  rviz_rendering
   pluginlib
+  tf2_ros
+  tf2_geometry_msgs
+  geometry_msgs
+  nav_msgs
 )
 
 target_link_libraries(global_relocalize_tool 
