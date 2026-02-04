@@ -104,7 +104,7 @@ controller_server:
       stateful: True # 是否有状态
       plugin: "nav2_controller::SimpleGoalChecker" # 目标检查插件类型
       xy_goal_tolerance: 0.60 # 目标点xy容差（米）
-      yaw_goal_tolerance: 0.1 # 目标点yaw容差（弧度）
+      yaw_goal_tolerance: 3.14 # 目标点yaw容差（弧度）
     # DWB parameters
     FollowPath:
       plugin: "dwb_core::DWBLocalPlanner" # 路径跟随插件类型
@@ -392,7 +392,7 @@ global_costmap:
       footprint: "[ [-0.4, -0.4], [-0.4, 0.4],[0.4, 0.4],[0.4, -0.4] ]"
       #footprint: "[ [-0.15, -0.38], [-0.15, 0.38],[0.67,0.38],[0.67, -0.38] ]"
       resolution: 0.05                  #全局地图1像素的分辨率，以米为单位
-      track_unknown_space: false
+      track_unknown_space: true
       plugins: ["static_layer", "obstacle_layer", "inflation_layer"] #插件包括：{“静态层”，“障碍层”，“膨胀层”}
       obstacle_layer:  #障碍层参数
         plugin: "nav2_costmap_2d::ObstacleLayer" #障碍层插件
@@ -407,7 +407,7 @@ global_costmap:
           # queue_size: 10
           max_obstacle_height: 5.0                 #可检测障碍物的最大高度（米）
           min_obstacle_height: -5.0
-          observation_persistence: 3.0
+          # observation_persistence: 3.0
           clearing: True                           #是否启用障碍物清除功能
           marking: True                            #是否启用障碍物标记功能
           data_type: "LaserScan"                   #数据类型
@@ -549,7 +549,7 @@ behavior_server:
       plugin: "nav2_behaviors/DriveOnHeading"
     wait:
       plugin: "nav2_behaviors/Wait"
-    global_frame: odom
+    global_frame: map
     robot_base_frame: base_link
     transform_tolerance: 0.3 #TF 变换容差
     use_sim_time: False
