@@ -7,28 +7,60 @@ import asyncio
 import json
 import time
 import logging
+import sys
+import select
+import termios
+import tty
+from typing import Dict
 from fastmcp import Client
 
 # 设置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+
+class KeyboardHandler:
+    """非阻塞键盘输入处理器"""
+    def __init__(self):
+        self.old_settings = None
+        
+    def __enter__(self):
+        """进入上下文时设置终端为原始模式"""
+        try:
+            self.old_settings = termios.tcgetattr(sys.stdin)
+            tty.setcbreak(sys.stdin.fileno())
+        except:
+            pass
+        return self
+    
+    def __exit__(self, *args):
+        """退出上下文时恢复终端设置"""
+        if self.old_settings:
+            try:
+                termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self.old_settings)
+            except:
+                pass
+    
+    def check_key(self) -> str:
+        """非阻塞检查是否有按键，返回按键字符或空字符串"""
+        try:
+            if select.select([sys.stdin], [], [], 0)[0]:
+                return sys.stdin.read(1)
+        except:
+            pass
+        return ""
+
 class SimplePatrolClient:
     def __init__(self, server_url: str = "http://localhost:9999/mcp"):
         self.server_url = server_url
         self.client = None
-        
-        # 从525.json读取巡检点位（仅用于调试显示）
-        with open("../config/aimei.json", "r", encoding="utf-8") as f:
-            self.patrol_data = json.load(f)
+        self.pose_list = []  # 从服务器获取的点位列表
+        self.is_paused = False  # 暂停状态
         
         # 巡检序列（按顺序）
         self.patrol_sequence = [
+            "机器人巡检起点",
             "违停车辆处",
-            "发现包裹处", 
-            "包裹抓取处",
-            "放置包裹处",
-            "机器人巡检起点"
         ]
 
     async def start_patrol_test(self):
@@ -43,9 +75,11 @@ class SimplePatrolClient:
             pose_list_resp = await client.call_tool("get_pose_list")
             pose_list_data = json.loads(pose_list_resp.content[0].text)
             if pose_list_data.get("success"):
-                logger.info(f"📋 目的地列表: {pose_list_data['keys']}")
+                self.pose_list = pose_list_data['keys']
+                logger.info(f"📋 目的地列表: {self.pose_list}")
             else:
                 logger.error(f"❌ 获取目的地列表失败: {pose_list_data.get('msg')}")
+                return False
 
 
             # 1. 获取初始状态
@@ -102,9 +136,9 @@ class SimplePatrolClient:
                 logger.info(f"\n{'='*50}")
                 logger.info(f"📍 测试点位 {i+1}/{len(self.patrol_sequence)}: {waypoint}")
                 
-                # 检查点位是否存在于525.json中
-                if waypoint not in self.patrol_data:
-                    logger.error(f"❌ 点位 {waypoint} 不存在于525.json中")
+                # 检查点位是否存在于服务器返回的列表中
+                if waypoint not in self.pose_list:
+                    logger.error(f"❌ 点位 {waypoint} 不存在于服务器点位列表中")
                     continue
                 
                 start_time = time.time()
@@ -118,13 +152,6 @@ class SimplePatrolClient:
                 
                 # 下发目标点
                 logger.info(f"🎯 下发目标点: {waypoint}")
-                logger.info(f"🔍 调用参数: {{'target': '{waypoint}'}}")
-                
-                # 调试：检查525.json中这个点位的数据
-                if waypoint in self.patrol_data:
-                    point_data = self.patrol_data[waypoint]
-                    logger.info(f"🔍 点位数据: {point_data}")
-                    logger.info(f"🔍 z坐标类型: {type(point_data['pose']['position']['z'])}, 值: {point_data['pose']['position']['z']}")
                 
                 # 直接发送目标点名称，让服务端处理数据类型转换
                 goal_result = await client.call_tool("set_goal", {"target": waypoint})
@@ -150,14 +177,9 @@ class SimplePatrolClient:
                     # logger.info(f"🏃 当前速度: vx={vel.get('x', 0):.3f}, vy={vel.get('y', 0):.3f}")
                 
                 # 等待到达目标点
-                logger.info(f"⏳ 等待到达目标点 (超时: 60秒)...")
-                wait_result = await client.call_tool("wait_goal_reached", {
-                    "target": waypoint, 
-                    "timeout": 120.0,
-                    "xy_tolerance":0.02,
-                    "yaw_tolerance":0.01,
-                })
-                wait_data = json.loads(wait_result.content[0].text)
+                logger.info(f"⏳ 等待到达目标点 (超时: 120秒)... [按空格键暂停/恢复]")
+                wait_result = await self.wait_goal_with_pause(client, waypoint, timeout=1200.0, xy_tolerance=0.6, yaw_tolerance=3.14)
+                wait_data = wait_result
                 
                 duration = time.time() - start_time
                 
@@ -196,6 +218,70 @@ class SimplePatrolClient:
             # 生成测试报告
             self.generate_report(success_count, len(self.patrol_sequence), total_time)
             return success_count == len(self.patrol_sequence)
+
+    async def wait_goal_with_pause(self, client, waypoint: str, timeout: float = 120.0, 
+                                    xy_tolerance: float = 0.6, yaw_tolerance: float = 3.14) -> Dict:
+        """
+        等待到达目标点，支持空格键暂停/恢复
+        
+        参数:
+            client: MCP客户端
+            waypoint: 目标点名称
+            timeout: 超时时间
+            xy_tolerance: 位置容差
+            yaw_tolerance: 角度容差
+            
+        返回:
+            Dict: 到达结果
+        """
+        start_time = time.time()
+        
+        with KeyboardHandler() as kb:
+            while time.time() - start_time < timeout:
+                # 检查空格键
+                key = kb.check_key()
+                if key == ' ':
+                    if not self.is_paused:
+                        # 暂停导航
+                        self.is_paused = True
+                        logger.info("⏸️  [空格键] 导航已暂停，再次按空格键继续...")
+                        pause_result = await client.call_tool("pause_navigation")
+                        pause_data = json.loads(pause_result.content[0].text)
+                        if not pause_data.get("success"):
+                            logger.warning(f"暂停失败: {pause_data.get('msg')}")
+                    else:
+                        # 恢复导航
+                        self.is_paused = False
+                        logger.info("▶️  [空格键] 导航已恢复...")
+                        resume_result = await client.call_tool("resume_navigation")
+                        resume_data = json.loads(resume_result.content[0].text)
+                        if not resume_data.get("success"):
+                            logger.warning(f"恢复失败: {resume_data.get('msg')}")
+                
+                # 如果暂停中，不检查是否到达，只等待
+                if self.is_paused:
+                    await asyncio.sleep(0.2)
+                    continue
+                
+                # 检查是否到达目标点
+                try:
+                    # 使用短超时轮询检查
+                    wait_result = await client.call_tool("wait_goal_reached", {
+                        "target": waypoint,
+                        "timeout": 0.5,  # 短超时，便于响应键盘
+                        "xy_tolerance": xy_tolerance,
+                        "yaw_tolerance": yaw_tolerance
+                    })
+                    wait_data = json.loads(wait_result.content[0].text)
+                    
+                    if wait_data.get("success"):
+                        return wait_data
+                except Exception as e:
+                    logger.debug(f"等待检查异常: {e}")
+                
+                await asyncio.sleep(0.1)
+        
+        return {"success": False, "msg": "等待超时或未到达"}
 
     def generate_report(self, success_count: int, total_count: int, total_time: float):
         """生成测试报告"""

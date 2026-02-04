@@ -7,17 +7,55 @@ import asyncio
 import json
 import time
 import logging
+import sys
+import select
+import termios
+import tty
+from typing import Dict
 from fastmcp import Client
 
 # 设置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+
+class KeyboardHandler:
+    """非阻塞键盘输入处理器"""
+    def __init__(self):
+        self.old_settings = None
+        
+    def __enter__(self):
+        """进入上下文时设置终端为原始模式"""
+        try:
+            self.old_settings = termios.tcgetattr(sys.stdin)
+            tty.setcbreak(sys.stdin.fileno())
+        except:
+            pass
+        return self
+    
+    def __exit__(self, *args):
+        """退出上下文时恢复终端设置"""
+        if self.old_settings:
+            try:
+                termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self.old_settings)
+            except:
+                pass
+    
+    def check_key(self) -> str:
+        """非阻塞检查是否有按键，返回按键字符或空字符串"""
+        try:
+            if select.select([sys.stdin], [], [], 0)[0]:
+                return sys.stdin.read(1)
+        except:
+            pass
+        return ""
+
 class SimplePatrolClient:
     def __init__(self, server_url: str = "http://localhost:9999/mcp"):
         self.server_url = server_url
         self.client = None
         self.pose_list = []  # 从服务器获取的点位列表
+        self.is_paused = False  # 暂停状态
         
         # 巡检序列（按顺序）
         self.patrol_sequence = [
@@ -161,14 +199,9 @@ class SimplePatrolClient:
                     # logger.info(f"🏃 当前速度: vx={vel.get('x', 0):.3f}, vy={vel.get('y', 0):.3f}")
                 
                 # 等待到达目标点
-                logger.info(f"⏳ 等待到达目标点 (超时: 120秒)...")
-                wait_result = await client.call_tool("wait_goal_reached", {
-                    "target": waypoint, 
-                    "timeout": 1200.0,
-                    "xy_tolerance":0.6,
-                    "yaw_tolerance":3.14
-                })
-                wait_data = json.loads(wait_result.content[0].text)
+                logger.info(f"⏳ 等待到达目标点 (超时: 120秒)... [按空格键暂停/恢复]")
+                wait_result = await self.wait_goal_with_pause(client, waypoint, timeout=1200.0, xy_tolerance=0.6, yaw_tolerance=3.14)
+                wait_data = wait_result
                 
                 duration = time.time() - start_time
                 
@@ -207,6 +240,70 @@ class SimplePatrolClient:
             # 生成测试报告
             self.generate_report(success_count, len(self.patrol_sequence), total_time)
             return success_count == len(self.patrol_sequence)
+
+    async def wait_goal_with_pause(self, client, waypoint: str, timeout: float = 120.0, 
+                                    xy_tolerance: float = 0.6, yaw_tolerance: float = 3.14) -> Dict:
+        """
+        等待到达目标点，支持空格键暂停/恢复
+        
+        参数:
+            client: MCP客户端
+            waypoint: 目标点名称
+            timeout: 超时时间
+            xy_tolerance: 位置容差
+            yaw_tolerance: 角度容差
+            
+        返回:
+            Dict: 到达结果
+        """
+        start_time = time.time()
+        
+        with KeyboardHandler() as kb:
+            while time.time() - start_time < timeout:
+                # 检查空格键
+                key = kb.check_key()
+                if key == ' ':
+                    if not self.is_paused:
+                        # 暂停导航
+                        self.is_paused = True
+                        logger.info("⏸️  [空格键] 导航已暂停，再次按空格键继续...")
+                        pause_result = await client.call_tool("pause_navigation")
+                        pause_data = json.loads(pause_result.content[0].text)
+                        if not pause_data.get("success"):
+                            logger.warning(f"暂停失败: {pause_data.get('msg')}")
+                    else:
+                        # 恢复导航
+                        self.is_paused = False
+                        logger.info("▶️  [空格键] 导航已恢复...")
+                        resume_result = await client.call_tool("resume_navigation")
+                        resume_data = json.loads(resume_result.content[0].text)
+                        if not resume_data.get("success"):
+                            logger.warning(f"恢复失败: {resume_data.get('msg')}")
+                
+                # 如果暂停中，不检查是否到达，只等待
+                if self.is_paused:
+                    await asyncio.sleep(0.2)
+                    continue
+                
+                # 检查是否到达目标点
+                try:
+                    # 使用短超时轮询检查
+                    wait_result = await client.call_tool("wait_goal_reached", {
+                        "target": waypoint,
+                        "timeout": 0.5,  # 短超时，便于响应键盘
+                        "xy_tolerance": xy_tolerance,
+                        "yaw_tolerance": yaw_tolerance
+                    })
+                    wait_data = json.loads(wait_result.content[0].text)
+                    
+                    if wait_data.get("success"):
+                        return wait_data
+                except Exception as e:
+                    logger.debug(f"等待检查异常: {e}")
+                
+                await asyncio.sleep(0.1)
+        
+        return {"success": False, "msg": "等待超时或未到达"}
 
     def generate_report(self, success_count: int, total_count: int, total_time: float):
         """生成测试报告"""
