@@ -19,21 +19,21 @@ class SimplePatrolClient:
         self.client = None
         
         # 从525.json读取巡检点位（仅用于调试显示）
-        with open("../config/525.json", "r", encoding="utf-8") as f:
+        with open("../config/caihong.json", "r", encoding="utf-8") as f:
             self.patrol_data = json.load(f)
         
         # 巡检序列（按顺序）
         self.patrol_sequence = [
-            "charging point start", 
-            "control point 1", 
-            "control point 2", 
-            "control point 3", 
-            "control point 4", 
-            "control point 5", 
-            "control point 6", 
-            "control point 7", 
-            "control point 8", 
-            "control point 9", 
+            "charging point start",
+            "control point 1",
+            "control point 2",
+            "control point 3",
+            "control point 4",
+            "control point 5",
+            "control point 6",
+            "control point 7",
+            "control point 8",
+            "control point 9",
             "control point 10", 
             "control point 11", 
             "control point 12", 
@@ -42,6 +42,11 @@ class SimplePatrolClient:
             "control point 15", 
             "control point 16", 
             "control point 17",
+            "control point 18",
+            "control point 19",
+            "control point 20",
+            "control point 21",
+            "control point 22",
             "charging point end" 
         ]
 
@@ -167,7 +172,7 @@ class SimplePatrolClient:
                 logger.info(f"⏳ 等待到达目标点 (超时: 120秒)...")
                 wait_result = await client.call_tool("wait_goal_reached", {
                     "target": waypoint, 
-                    "timeout": 120.0
+                    "timeout": 1200.0
                 })
                 wait_data = json.loads(wait_result.content[0].text)
                 
