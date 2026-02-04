@@ -10,7 +10,7 @@ git clone -b navi https://gitlab.autel.com/avant/AI-Embodied/Mobility/fast_lio2.
 ## 2. 编译安装 3D BBS
 
 ```bash
-cd ~/Navi/ros2_ws/src/3d_bbs
+cd ~/Navi/ros2_ws/src/3rdparty/3d_bbs
 mkdir build
 cd build
 cmake ..
@@ -19,14 +19,21 @@ sudo make install
 ```
 ## 3 编译安装Livox SDK
 ```bash
-cd ~/Navi/ros2_ws/src/
-git submodule update --init --recursive
-cd Livox-SDK2
+cd ~/Navi/ros2_ws/src/3rdparty/Livox-SDK2
 mkdir build && cd build && cmake ..
 make
 sudo make install
 ```
-## 4. 编译 ROS2 包
+
+## 4 编译安装g2o
+```bash
+cd ~/Navi/ros2_ws/src/3rdparty/g2o
+mkdir build && cd build && cmake ..
+make
+sudo make install
+```
+
+## 5. 编译 ROS2 包
 
 包括 fastlio、cloud_to_laserscan、slope_behavior、livox_ros_driver2、grid_map_pcl(重写了grid_map_pcl) 等。
 
@@ -43,53 +50,10 @@ colcon build --cmake-args -DROS_EDITION=ROS2 -DHUMBLE_ROS=humble -DCMAKE_MESSAGE
 ```
 
 ## (Optional) Building Docker Image
-```bash
-cd ros2_humble_docker
-docker build -t avant-mobilty-ros2:latest .
-```
+参考：
+https://q00enigbkuh.feishu.cn/wiki/BnDVw0KoUiMOW9kuYVXcJkCAnzg?from=from_copylink
 
-### Workspace Structure
-
-First create your own local ROS2 workspace and clone `FAST_LIO2`: 
-```bash
-mkdir -p ~/ros2_ws/src
-cd ~/ros2_ws/src
-git clone -b navi https://gitlab.autel.com/avant/AI-Embodied/Mobility/fast_lio2.git
-```
-Clone respective repos and ensure they follow this exact structure under `ros2_ws/src`:
-```
-ros2_ws/src
-├── fast_lio2
-```
-> **Important**: Maintain this exact structure within `ros_ws/src`
-
-### Docker Container Setup
-```bash
-# Allow Docker GUI access
-xhost +local:docker
-```
-
-Go to `ros2_humble_docker/container_run.sh` and make sure you change exact directory path for `PROJECT_DIR` and `DATASET_DIR`
-```bash
-PROJECT_DIR="/path/to/your/fast_lio2"
-DATASET_DIR="/path/to/your/dataset"
-```
-> **Important**: `PROJECT_DIR` should be the exact directory to `ros2_ws/src`
-
-Then launch docker container using the following:
-```bash
-# Grant access
-cd ros2_humble_docker
-sudo chmod -R 777 container_run.sh
-
-# Start container
-./container_run.sh avant-mobilty-ros2 avant-mobilty-ros2:latest
-
-# Source ROS2
-source /opt/ros/humble/setup.bash
-```
-
-## 5. 运行脚本
+## 6. 运行脚本
 
 ### 启动和结束导航
 
@@ -109,7 +73,7 @@ cd ~/Navi/scripts/
 ```bash
 ./start_mcp.sh
 ```
-## 5. 编译运行环境
+## 7. 编译运行环境
 ### 1. 硬件与系统环境
 **硬件要求：**
 - **Jetson Orin系列**
