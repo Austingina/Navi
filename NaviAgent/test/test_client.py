@@ -103,6 +103,10 @@ class SimplePatrolClient:
                 logger.error(f"❌ 获取目的地列表失败: {pose_list_data.get('msg')}")
                 return False
 
+            # 如果巡检序列为空，使用服务器返回的点位列表
+            if len(self.patrol_sequence) == 0:
+                self.patrol_sequence = self.pose_list.copy()
+                logger.info(f"📋 巡检序列为空，使用服务器点位列表: {' -> '.join(self.patrol_sequence)}")
 
             # 1. 获取初始状态
             logger.info("🔍 检查服务器连接和机器人状态...")
