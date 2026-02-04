@@ -17,10 +17,7 @@ class SimplePatrolClient:
     def __init__(self, server_url: str = "http://localhost:9999/mcp"):
         self.server_url = server_url
         self.client = None
-        
-        # 从525.json读取巡检点位（仅用于调试显示）
-        with open("../config/caihong.json", "r", encoding="utf-8") as f:
-            self.patrol_data = json.load(f)
+        self.pose_list = []  # 从服务器获取的点位列表
         
         # 巡检序列（按顺序）
         self.patrol_sequence = [
@@ -62,9 +59,11 @@ class SimplePatrolClient:
             pose_list_resp = await client.call_tool("get_pose_list")
             pose_list_data = json.loads(pose_list_resp.content[0].text)
             if pose_list_data.get("success"):
-                logger.info(f"📋 目的地列表: {pose_list_data['keys']}")
+                self.pose_list = pose_list_data['keys']
+                logger.info(f"📋 目的地列表: {self.pose_list}")
             else:
                 logger.error(f"❌ 获取目的地列表失败: {pose_list_data.get('msg')}")
+                return False
 
 
             # 1. 获取初始状态
@@ -121,9 +120,9 @@ class SimplePatrolClient:
                 logger.info(f"\n{'='*50}")
                 logger.info(f"📍 测试点位 {i+1}/{len(self.patrol_sequence)}: {waypoint}")
                 
-                # 检查点位是否存在于525.json中
-                if waypoint not in self.patrol_data:
-                    logger.error(f"❌ 点位 {waypoint} 不存在于525.json中")
+                # 检查点位是否存在于服务器返回的列表中
+                if waypoint not in self.pose_list:
+                    logger.error(f"❌ 点位 {waypoint} 不存在于服务器点位列表中")
                     continue
                 
                 start_time = time.time()
@@ -137,13 +136,6 @@ class SimplePatrolClient:
                 
                 # 下发目标点
                 logger.info(f"🎯 下发目标点: {waypoint}")
-                logger.info(f"🔍 调用参数: {{'target': '{waypoint}'}}")
-                
-                # 调试：检查525.json中这个点位的数据
-                if waypoint in self.patrol_data:
-                    point_data = self.patrol_data[waypoint]
-                    logger.info(f"🔍 点位数据: {point_data}")
-                    logger.info(f"🔍 z坐标类型: {type(point_data['pose']['position']['z'])}, 值: {point_data['pose']['position']['z']}")
                 
                 # 直接发送目标点名称，让服务端处理数据类型转换
                 goal_result = await client.call_tool("set_goal", {"target": waypoint})
