@@ -1,37 +1,135 @@
 {
-  "机器人巡检起点": {
-    "desc": "机器人巡检起点",
-    "pose": {
-      "position": {"x": 1.27, "y": 0.32, "z": 0.0},
-      "orientation": {"x": 0.0, "y": 0.0, "z": -0.7071, "w": 0.7071}
+    "charging point start": {
+        "desc": "charging point start",
+        "pose": {
+            "position": {"x": 0.000, "y": -0.800, "z": 0.000},
+            "orientation": {"x": 0.000, "y": 0.000, "z": -1.000, "w": 0.000}
+        }
+    },
+    "control point 1": {
+        "desc": "control point 1",
+        "pose": {
+            "position": {"x": -1.427, "y": 29.681, "z": 0.000},
+            "orientation": {"x": 0.000, "y": 0.000, "z": 0.707, "w": 0.707}
+        }
+    },
+    "control point 2": {
+        "desc": "control point 2",
+        "pose": {
+            "position": {"x": -19.856, "y": 30.042, "z": 0.000},
+            "orientation": {"x": 0.000, "y": 0.000, "z": -1.000, "w": 0.000}
+        }
+    },
+    "control point 3": {
+        "desc": "control point 3",
+        "pose": {
+            "position": {"x": -20.993, "y": 16.285, "z": 0.000},
+            "orientation": {"x": 0.000, "y": 0.000, "z": 0.866, "w": -0.500}
+        }
+    },
+    "control point 4": {
+        "desc": "control point 4",
+        "pose": {
+            "position": {"x": -25.706, "y": -35.615, "z": 0.000},
+            "orientation": {"x": 0.000, "y": 0.000, "z": -0.707, "w": 0.707}
+        }
+    },
+    "control point 5": {
+        "desc": "control point 5",
+        "pose": {
+            "position": {"x": 7.5690, "y": -44.0900, "z": 0.000},
+            "orientation": {"x": 0.000, "y": 0.000, "z": 0.000, "w": 0.000}
+        }
+    },
+    "control point 6": {
+        "desc": "control point 6",
+        "pose": {
+            "position": {"x": 12.1460, "y": -37.4430, "z": 0.000},
+            "orientation": {"x": 0.000, "y": 0.000, "z": 0.707, "w": 0.707}
+        }
+    },
+    "control point 7": {
+        "desc": "control point 7",
+        "pose": {
+            "position": {"x": -16.3950, "y": -44.0770, "z": 0.000},
+            "orientation": {"x": 0.000, "y": 0.000, "z": -1.000, "w": 0.000}
+        }
+    },
+    "control point 8": {
+        "desc": "control point 8",
+        "pose": {
+            "position": {"x": 16.588, "y": -50.393, "z": 0.000},
+            "orientation": {"x": 0.000, "y": 0.000, "z": 0.000, "w": 0.000}
+        }
+    },
+    "control point 9": {
+        "desc": "control point 9",
+        "pose": {
+            "position": {"x": 23.991, "y": 10.557, "z": 0.000},
+            "orientation": {"x": 0.000, "y": 0.000, "z": 0.707, "w": 0.707}
+        }
+    },
+    "control point 10": {
+        "desc": "control point 10",
+        "pose": {
+            "position": {"x": 23.991, "y": 46.692, "z": 0.000},
+            "orientation": {"x": 0.000, "y": 0.000, "z": 0.707, "w": 0.707}
+        }
+    },
+    "control point 11": {
+        "desc": "control point 11",
+        "pose": {
+            "position": {"x": -14.33, "y": 51.245, "z": 0.000},
+            "orientation": {"x": 0.000, "y": 0.000, "z": -1.000, "w": 0.000}
+        }
+    },
+    "control point 12": {
+        "desc": "control point 12",
+        "pose": {
+            "position": {"x": -55.191, "y": 51.245, "z": 0.000},
+            "orientation": {"x": 0.000, "y": 0.000, "z": -1.000, "w": 0.000}
+        }
+    },
+    "control point 13": {
+        "desc": "control point 13",
+        "pose": {
+            "position": {"x": -59.285, "y": 18.17, "z": 0.000},
+            "orientation": {"x": 0.000, "y": 0.000, "z": -0.707, "w": 0.707}
+        }
+    },
+    "control point 14": {
+        "desc": "control point 14",
+        "pose": {
+            "position": {"x": -30.378, "y": 1.182, "z": 0.000},
+            "orientation": {"x": 0.000, "y": 0.000, "z": 0.000, "w": 0.000}
+        }
+    },
+    "control point 15": {
+        "desc": "control point 15",
+        "pose": {
+            "position": {"x": -20.993, "y": 16.285, "z": 0.000},
+            "orientation": {"x": 0.000, "y": 0.000, "z": 0.500, "w": 0.866}
+        }
+    },
+    "control point 16": {
+        "desc": "control point 16",
+        "pose": {
+            "position": {"x": -19.856, "y": 30.042, "z": 0.000},
+            "orientation": {"x": 0.000, "y": 0.000, "z": 0.000, "w": 0.000}
+        }
+    },
+    "control point 17": {
+        "desc": "control point 17",
+        "pose": {
+            "position": {"x": -1.427, "y": 29.681, "z": 0.000},
+            "orientation": {"x": 0.000, "y": 0.000, "z": -0.707, "w": 0.707}
+        }
+    },
+    "charging point end": {
+        "desc": "charging point end",
+        "pose": {
+            "position": {"x": 0.000, "y": -0.800, "z": 0.000},
+            "orientation": {"x": 0.000, "y": 0.000, "z": -1.000, "w": 0.000}
+        }
     }
-  },
-  "违停车辆处": {
-    "desc": "违停车辆处",
-    "pose": {
-      "position": {"x": 4.00, "y": -18.90, "z": 0.0},
-      "orientation": {"x": 0.0, "y": 0.0, "z": 1.0, "w": 0.0}
-    }
-  },
-  "发现包裹处": {
-    "desc": "发现包裹处",
-    "pose": {
-      "position": {"x": 1.20, "y": -11.42, "z": 0.0},
-      "orientation": {"x": 0.0, "y": 0.0, "z": 0.7071, "w": 0.7071}
-    }
-  },
-  "包裹抓取处": {
-    "desc": "包裹抓取处",
-    "pose": {
-      "position": {"x": 0.68, "y": -5.83, "z": 0.0},
-      "orientation": {"x": 0.0, "y": 0.0, "z": 1.0, "w": 0.0}
-    }
-  },
-  "放置包裹处": {
-    "desc": "放置包裹处",
-    "pose": {
-      "position": {"x": 0.76, "y": -3.22, "z": 0.0},
-      "orientation": {"x": 0.0, "y": 0.0, "z": 1.0, "w": 0.0}
-    }
-  }
 }

@@ -24,8 +24,25 @@ class SimplePatrolClient:
         
         # 巡检序列（按顺序）
         self.patrol_sequence = [
-            "违停车辆处", 
-            "机器人巡检起点", 
+            "charging point start", 
+            "control point 1", 
+            "control point 2", 
+            "control point 3", 
+            "control point 4", 
+            "control point 5", 
+            "control point 6", 
+            "control point 7", 
+            "control point 8", 
+            "control point 9", 
+            "control point 10", 
+            "control point 11", 
+            "control point 12", 
+            "control point 13", 
+            "control point 14", 
+            "control point 15", 
+            "control point 16", 
+            "control point 17",
+            "charging point end" 
         ]
 
     async def start_patrol_test(self):
