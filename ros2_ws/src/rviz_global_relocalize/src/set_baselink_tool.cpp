@@ -84,9 +84,28 @@ void SetBaselinkTool::timerCallback()
     return;
   }
   
+  auto now = node_->now();
+  
+  // Publish map -> odom static transform (identity)
+  geometry_msgs::msg::TransformStamped map_to_odom;
+  map_to_odom.header.stamp = now;
+  map_to_odom.header.frame_id = map_frame_;
+  map_to_odom.child_frame_id = "odom";
+  
+  map_to_odom.transform.translation.x = 0.0;
+  map_to_odom.transform.translation.y = 0.0;
+  map_to_odom.transform.translation.z = 0.0;
+  map_to_odom.transform.rotation.x = 0.0;
+  map_to_odom.transform.rotation.y = 0.0;
+  map_to_odom.transform.rotation.z = 0.0;
+  map_to_odom.transform.rotation.w = 1.0;
+  
+  tf_broadcaster_->sendTransform(map_to_odom);
+  
+  // Publish odom -> base_link transform
   geometry_msgs::msg::TransformStamped t;
-  t.header.stamp = node_->now();
-  t.header.frame_id = map_frame_;
+  t.header.stamp = now;
+  t.header.frame_id = "odom";
   t.child_frame_id = "base_link";
   
   t.transform.translation.x = position_x_;
