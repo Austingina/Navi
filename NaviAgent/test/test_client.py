@@ -164,7 +164,9 @@ class SimplePatrolClient:
                 logger.info(f"⏳ 等待到达目标点 (超时: 120秒)...")
                 wait_result = await client.call_tool("wait_goal_reached", {
                     "target": waypoint, 
-                    "timeout": 1200.0
+                    "timeout": 1200.0,
+                    "xy_tolerance":0.6,
+                    "yaw_tolerance":3.14
                 })
                 wait_data = json.loads(wait_result.content[0].text)
                 
