@@ -1,4 +1,5 @@
 #include "rviz_global_relocalize/set_baselink_tool.hpp"
+#include "rviz_global_relocalize/tf_publisher_state.hpp"
 
 #include <pluginlib/class_list_macros.hpp>
 #include <rviz_common/display_context.hpp>
@@ -101,7 +102,10 @@ void SetBaselinkTool::timerCallback()
   map_to_odom.transform.rotation.w = 1.0;
   
   tf_broadcaster_->sendTransform(map_to_odom);
-  
+  // If MockNaviTool is publishing TF, stop publishing from this tool
+  if (TfPublisherState::instance().isMockNaviActive()) {
+    return;
+  }
   // Publish odom -> base_link transform
   geometry_msgs::msg::TransformStamped t;
   t.header.stamp = now;

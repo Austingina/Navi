@@ -21,8 +21,10 @@ set(CMAKE_AUTOMOC ON)
 add_library(global_relocalize_tool SHARED 
   src/global_relocalize_tool.cpp
   src/set_baselink_tool.cpp
+  src/mock_navi_tool.cpp
   include/rviz_global_relocalize/global_relocalize_tool.hpp
-  include/rviz_global_relocalize/set_baselink_tool.hpp)
+  include/rviz_global_relocalize/set_baselink_tool.hpp
+  include/rviz_global_relocalize/mock_navi_tool.hpp)
 
 ament_target_dependencies(global_relocalize_tool
   rclcpp

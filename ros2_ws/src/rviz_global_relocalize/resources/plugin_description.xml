@@ -5,4 +5,7 @@
   <class name="rviz_global_relocalize/SetBaselinkTool" type="rviz_global_relocalize::SetBaselinkTool" base_class_type="rviz_common::Tool">
     <description>Click on map to set base_link position and publish map->base_link TF at 5Hz</description>
   </class>
+  <class name="rviz_global_relocalize/MockNaviTool" type="rviz_global_relocalize::MockNaviTool" base_class_type="rviz_common::Tool">
+    <description>Mock navigation tool: subscribe to /plan and simulate robot movement along path, publishing TF. Click to pause/resume.</description>
+  </class>
 </library>
