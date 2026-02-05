@@ -23,138 +23,110 @@
     "control point 3": {
         "desc": "control point 3",
         "pose": {
-            "position": {"x": -11.2890, "y": 30.042, "z": 0.000},
-            "orientation": {"x": 0.000, "y": 0.000, "z": 0.000, "w": 0.000}
+            "position": {"x": -20.993, "y": 16.285, "z": 0.000},
+            "orientation": {"x": 0.000, "y": 0.000, "z": 0.866, "w": -0.500}
         }
     },
     "control point 4": {
         "desc": "control point 4",
         "pose": {
-            "position": {"x": -20.0350, "y": 22.9740, "z": 0.000},
+            "position": {"x": -25.7200, "y": -46.4000, "z": 0.000},
             "orientation": {"x": 0.000, "y": 0.000, "z": -0.707, "w": 0.707}
         }
     },
     "control point 5": {
         "desc": "control point 5",
         "pose": {
-            "position": {"x": -20.993, "y": 16.285, "z": 0.000},
-            "orientation": {"x": 0.000, "y": 0.000, "z": 0.866, "w": -0.500}
+            "position": {"x": 4.6020, "y": -46.4000, "z": 0.000},
+            "orientation": {"x": 0.000, "y": 0.000, "z": 0.000, "w": 0.000}
         }
     },
     "control point 6": {
         "desc": "control point 6",
         "pose": {
-            "position": {"x": -25.7200, "y": -46.4000, "z": 0.000},
-            "orientation": {"x": 0.000, "y": 0.000, "z": -0.707, "w": 0.707}
+            "position": {"x": 15.5640, "y": -37.0220, "z": 0.000},
+            "orientation": {"x": 0.000, "y": 0.000, "z": 0.707, "w": 0.707}
         }
     },
     "control point 7": {
         "desc": "control point 7",
         "pose": {
-            "position": {"x": 8.1210, "y": -46.4000, "z": 0.000},
-            "orientation": {"x": 0.000, "y": 0.000, "z": 0.000, "w": 0.000}
+            "position": {"x": 4.6020, "y": -46.4000, "z": 0.000},
+            "orientation": {"x": 0.000, "y": 0.000, "z": -1.000, "w": 0.000}
         }
     },
     "control point 8": {
         "desc": "control point 8",
         "pose": {
-            "position": {"x": 15.5640, "y": -37.0220, "z": 0.000},
-            "orientation": {"x": 0.000, "y": 0.000, "z": 0.707, "w": 0.707}
+            "position": {"x": -18.67, "y": -47.03, "z": 0.000},
+            "orientation": {"x": 0.000, "y": 0.000, "z": -1.000, "w": 0.000}
         }
     },
     "control point 9": {
         "desc": "control point 9",
         "pose": {
-            "position": {"x": 8.1210, "y": -46.4000, "z": 0.000},
-            "orientation": {"x": 0.000, "y": 0.000, "z": -1.000, "w": 0.000}
+            "position": {"x": 16.588, "y": -48.393, "z": 0.000},
+            "orientation": {"x": 0.000, "y": 0.000, "z": 0.000, "w": 0.000}
         }
     },
     "control point 10": {
         "desc": "control point 10",
         "pose": {
-            "position": {"x": -16.3950, "y": -46.4000, "z": 0.000},
-            "orientation": {"x": 0.000, "y": 0.000, "z": -1.000, "w": 0.000}
+            "position": {"x": 21.6460, "y": 10.557, "z": 0.000},
+            "orientation": {"x": 0.000, "y": 0.000, "z": 0.707, "w": 0.707}
         }
     },
     "control point 11": {
         "desc": "control point 11",
         "pose": {
-            "position": {"x": 16.588, "y": -48.393, "z": 0.000},
-            "orientation": {"x": 0.000, "y": 0.000, "z": 0.000, "w": 0.000}
+            "position": {"x": 17.5600, "y": 51.8790, "z": 0.000},
+            "orientation": {"x": 0.000, "y": 0.000, "z": -1.000, "w": 0.000}
         }
     },
     "control point 12": {
         "desc": "control point 12",
         "pose": {
-            "position": {"x": 21.6460, "y": 10.557, "z": 0.000},
-            "orientation": {"x": 0.000, "y": 0.000, "z": 0.707, "w": 0.707}
+            "position": {"x": -14.33, "y": 53.2310, "z": 0.000},
+            "orientation": {"x": 0.000, "y": 0.000, "z": -1.000, "w": 0.000}
         }
     },
     "control point 13": {
         "desc": "control point 13",
         "pose": {
-            "position": {"x": 20.7900, "y": 47.0360, "z": 0.000},
-            "orientation": {"x": 0.000, "y": 0.000, "z": 0.707, "w": 0.707}
+            "position": {"x": -55.191, "y": 53.245, "z": 0.000},
+            "orientation": {"x": 0.000, "y": 0.000, "z": -1.000, "w": 0.000}
         }
     },
     "control point 14": {
         "desc": "control point 14",
         "pose": {
-            "position": {"x": -14.33, "y": 49.2310, "z": 0.000},
-            "orientation": {"x": 0.000, "y": 0.000, "z": -1.000, "w": 0.000}
+            "position": {"x": -57.2020, "y": 6.3660, "z": 0.000},
+            "orientation": {"x": 0.000, "y": 0.000, "z": -0.707, "w": 0.707}
         }
     },
     "control point 15": {
         "desc": "control point 15",
         "pose": {
-            "position": {"x": -55.191, "y": 48.245, "z": 0.000},
-            "orientation": {"x": 0.000, "y": 0.000, "z": -1.000, "w": 0.000}
+            "position": {"x": -30.1330, "y": -1.0300, "z": 0.000},
+            "orientation": {"x": 0.000, "y": 0.000, "z": 0.000, "w": 0.000}
         }
     },
     "control point 16": {
         "desc": "control point 16",
         "pose": {
-            "position": {"x": -59.2020, "y": 3.3660, "z": 0.000},
-            "orientation": {"x": 0.000, "y": 0.000, "z": -0.707, "w": 0.707}
+            "position": {"x": -20.993, "y": 16.285, "z": 0.000},
+            "orientation": {"x": 0.000, "y": 0.000, "z": 0.500, "w": 0.866}
         }
     },
     "control point 17": {
         "desc": "control point 17",
         "pose": {
-            "position": {"x": -30.1330, "y": -1.0300, "z": 0.000},
+            "position": {"x": -19.856, "y": 30.042, "z": 0.000},
             "orientation": {"x": 0.000, "y": 0.000, "z": 0.000, "w": 0.000}
         }
     },
     "control point 18": {
         "desc": "control point 18",
-        "pose": {
-            "position": {"x": -20.993, "y": 16.285, "z": 0.000},
-            "orientation": {"x": 0.000, "y": 0.000, "z": 0.500, "w": 0.866}
-        }
-    },
-    "control point 19": {
-        "desc": "control point 19",
-        "pose": {
-            "position": {"x": -20.0350, "y": 22.9740, "z": 0.000},
-            "orientation": {"x": 0.000, "y": 0.000, "z": 0.707, "w": 0.707}
-        }
-    },
-    "control point 20": {
-        "desc": "control point 20",
-        "pose": {
-            "position": {"x": -19.856, "y": 30.042, "z": 0.000},
-            "orientation": {"x": 0.000, "y": 0.000, "z": 0.000, "w": 0.000}
-        }
-    },
-    "control point 21": {
-        "desc": "control point 21",
-        "pose": {
-            "position": {"x": -11.2890, "y": 30.042, "z": 0.000},
-            "orientation": {"x": 0.000, "y": 0.000, "z": -1.000, "w": 0.000}
-        }
-    },
-    "control point 22": {
-        "desc": "control point 22",
         "pose": {
             "position": {"x": -1.427, "y": 29.681, "z": 0.000},
             "orientation": {"x": 0.000, "y": 0.000, "z": -0.707, "w": 0.707}
