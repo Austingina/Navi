@@ -55,11 +55,11 @@ void MockNaviTool::onInitialize()
   
   // Create RViz properties for velocity parameters
   linear_velocity_property_ = new rviz_common::properties::FloatProperty(
-    "Linear Velocity", 1.0,
+    "Linear Velocity", 5.0,
     "Linear velocity in m/s for simulated movement",
     getPropertyContainer(), nullptr, this);
-  linear_velocity_property_->setMin(0.01);
-  linear_velocity_property_->setMax(5.0);
+  linear_velocity_property_->setMin(0.5);
+  linear_velocity_property_->setMax(50.0);
   
   // Create TF broadcaster
   tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(node_);
