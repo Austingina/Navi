@@ -371,7 +371,7 @@ class NavigationToolManager:
             try:
                 # 获取当前里程计数据
                 odom = self.ros_node.current_pose
-                print(f"odom:{odom}")
+                print(f"get_status: return odom:{odom.pose.position, odom.pose.orientation}")
                 if not odom:
                     return {"success": False, "msg": "无实时位姿数据"}
                 
@@ -499,6 +499,7 @@ class NavigationToolManager:
                 transport="streamable-http",  # 使用流式HTTP传输
                 host="0.0.0.0",  # 监听所有网络接口
                 port=port,  # 监听端口8000
+                log_level="warning"  # 设置日志级别为WARNING
             )
         except Exception as e:
             logging.error(f"MCP服务启动失败: {e}")
@@ -562,7 +563,9 @@ async def main():
 if __name__ == "__main__":
     # 设置日志级别为INFO
     # 设置日志
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=logging.WARNING)
+    # 关闭 httpx 的请求日志
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     
     # 运行异步主函数
     # 使用asyncio运行异步主函数

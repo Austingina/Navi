@@ -18,6 +18,9 @@ from fastmcp import Client
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# 关闭 httpx 的请求日志
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 
 class KeyboardHandler:
     """非阻塞键盘输入处理器"""
