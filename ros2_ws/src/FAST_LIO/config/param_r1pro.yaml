@@ -110,13 +110,13 @@ controller_server:
       plugin: "dwb_core::DWBLocalPlanner" # 路径跟随插件类型
       debug_trajectory_details: True # 是否调试轨迹细节
       min_vel_x: 0.0 # x方向最小速度
-      max_vel_x: 0.3 # x方向最大速度
+      max_vel_x: 0.5 # x方向最大速度
       min_vel_y: -0.1 # y方向最小速度
       max_vel_y: 0.1 # y方向最大速度
       min_vel_theta: -0.5 # 最小角速度
       max_vel_theta: 0.5 # 最大角速度
       # min_speed_xy: -0.26 # xy平面最小速度
-      max_speed_xy: 0.3 # xy平面最大速度
+      max_speed_xy: 0.5 # xy平面最大速度
       # Add high threshold velocity for turtlebot 3 issue.
       # https://github.com/ROBOTIS-GIT/turtlebot3_simulations/issues/75
       acc_lim_x: 2.5 # x方向最大加速度
