@@ -89,6 +89,11 @@ private:
   std::atomic<bool> is_following_path_;  // Currently following a path
   std::atomic<bool> is_paused_;          // Movement paused
   
+  // Cooldown after manual position set (5 seconds)
+  rclcpp::Time last_position_set_time_;
+  bool in_cooldown_;
+  static constexpr double POSITION_SET_COOLDOWN = 5.0;  // seconds
+  
   std::mutex mutex_;
 };
 

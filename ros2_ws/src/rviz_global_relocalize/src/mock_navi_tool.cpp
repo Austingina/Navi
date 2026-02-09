@@ -26,6 +26,7 @@ MockNaviTool::MockNaviTool()
   , linear_velocity_(1.0)
   , is_following_path_(false)
   , is_paused_(false)
+  , in_cooldown_(false)
 {
   shortcut_key_ = 'm';
 }
@@ -160,8 +161,17 @@ void MockNaviTool::timerCallback()
   // Time step (50ms = 0.05s)
   const double dt = 0.05;
   
-  // If following path and not paused, update position
-  if (is_following_path_ && !is_paused_ && !path_.empty()) {
+  // Check if in cooldown period after manual position set
+  if (in_cooldown_) {
+    double elapsed = (node_->now() - last_position_set_time_).seconds();
+    if (elapsed >= POSITION_SET_COOLDOWN) {
+      in_cooldown_ = false;
+      RCLCPP_INFO(node_->get_logger(), "Cooldown ended, ready to follow path");
+    }
+  }
+  
+  // If following path and not paused and not in cooldown, update position
+  if (is_following_path_ && !is_paused_ && !in_cooldown_ && !path_.empty()) {
     if (current_path_index_ < path_.size()) {
       const auto & target = path_[current_path_index_].pose;
       double target_x = target.position.x;
@@ -314,15 +324,16 @@ int MockNaviTool::processMouseEvent(rviz_common::ViewportMouseEvent & event)
     current_yaw_ = 0.0;
     has_position_ = true;
     
-    // Stop following path when manually setting position
-    is_following_path_ = false;
+    // Enter cooldown period - don't follow path for 5 seconds
+    in_cooldown_ = true;
+    last_position_set_time_ = node_->now();
+    
+    // Don't clear path, just pause following
     is_paused_ = false;
-    path_.clear();
-    current_path_index_ = 0;
     
     RCLCPP_INFO(node_->get_logger(), 
-      "Set position to (%.3f, %.3f) in frame '%s'. Waiting for /plan to start navigation.",
-      current_x_, current_y_, map_frame_.c_str());
+      "Set position to (%.3f, %.3f) in frame '%s'. Holding for %.0f seconds.",
+      current_x_, current_y_, map_frame_.c_str(), POSITION_SET_COOLDOWN);
   }
   
   // Switch back to Interact tool
