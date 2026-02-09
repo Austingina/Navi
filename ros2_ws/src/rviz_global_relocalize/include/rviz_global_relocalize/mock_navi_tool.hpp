@@ -9,6 +9,7 @@
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <nav_msgs/msg/occupancy_grid.hpp>
+#include <geometry_msgs/msg/twist.hpp>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2/LinearMath/Matrix3x3.h>
 #include <OgreRay.h>
@@ -52,6 +53,7 @@ public:
 private:
   void mapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg);
   void planCallback(const nav_msgs::msg::Path::SharedPtr msg);
+  void cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg);
   void timerCallback();
   void switchToInteractTool();
   bool getPointOnPlane(rviz_common::ViewportMouseEvent & event, Ogre::Vector3 & point);
@@ -65,6 +67,7 @@ private:
   std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
   rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_sub_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr plan_sub_;
+  rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_sub_;
   rclcpp::TimerBase::SharedPtr timer_;
   
   // Map state
@@ -93,6 +96,11 @@ private:
   rclcpp::Time last_position_set_time_;
   bool in_cooldown_;
   static constexpr double POSITION_SET_COOLDOWN = 5.0;  // seconds
+  
+  // cmd_vel monitoring
+  rclcpp::Time last_cmd_vel_time_;
+  bool cmd_vel_active_;
+  static constexpr double CMD_VEL_TIMEOUT = 0.5;  // seconds without cmd_vel to stop
   
   std::mutex mutex_;
 };

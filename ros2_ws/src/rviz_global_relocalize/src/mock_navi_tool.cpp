@@ -27,6 +27,7 @@ MockNaviTool::MockNaviTool()
   , is_following_path_(false)
   , is_paused_(false)
   , in_cooldown_(false)
+  , cmd_vel_active_(false)
 {
   shortcut_key_ = 'm';
 }
@@ -75,6 +76,11 @@ void MockNaviTool::onInitialize()
   plan_sub_ = node_->create_subscription<nav_msgs::msg::Path>(
     "/plan", rclcpp::QoS(1),
     std::bind(&MockNaviTool::planCallback, this, std::placeholders::_1));
+  
+  // Subscribe to /cmd_vel topic to monitor if navigation is active
+  cmd_vel_sub_ = node_->create_subscription<geometry_msgs::msg::Twist>(
+    "/cmd_vel", rclcpp::QoS(10),
+    std::bind(&MockNaviTool::cmdVelCallback, this, std::placeholders::_1));
   
   // Create timer to update position at 20Hz (50ms)
   timer_ = node_->create_wall_timer(
@@ -131,6 +137,24 @@ void MockNaviTool::planCallback(const nav_msgs::msg::Path::SharedPtr msg)
     path_.size(), current_x_, current_y_);
 }
 
+void MockNaviTool::cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  
+  // Check if there's actual velocity command (not zero)
+  bool has_velocity = (std::abs(msg->linear.x) > 0.001 || 
+                       std::abs(msg->linear.y) > 0.001 || 
+                       std::abs(msg->angular.z) > 0.001);
+  
+  if (has_velocity) {
+    last_cmd_vel_time_ = node_->now();
+    if (!cmd_vel_active_) {
+      cmd_vel_active_ = true;
+      RCLCPP_INFO(node_->get_logger(), "cmd_vel active, resuming path following");
+    }
+  }
+}
+
 double MockNaviTool::normalizeAngle(double angle)
 {
   while (angle > M_PI) angle -= 2.0 * M_PI;
@@ -170,8 +194,17 @@ void MockNaviTool::timerCallback()
     }
   }
   
-  // If following path and not paused and not in cooldown, update position
-  if (is_following_path_ && !is_paused_ && !in_cooldown_ && !path_.empty()) {
+  // Check if cmd_vel has timed out
+  if (cmd_vel_active_) {
+    double cmd_vel_elapsed = (node_->now() - last_cmd_vel_time_).seconds();
+    if (cmd_vel_elapsed >= CMD_VEL_TIMEOUT) {
+      cmd_vel_active_ = false;
+      RCLCPP_INFO(node_->get_logger(), "cmd_vel timeout (%.1fs), stopping path following", CMD_VEL_TIMEOUT);
+    }
+  }
+  
+  // If following path and not paused and not in cooldown and cmd_vel active, update position
+  if (is_following_path_ && !is_paused_ && !in_cooldown_ && cmd_vel_active_ && !path_.empty()) {
     if (current_path_index_ < path_.size()) {
       const auto & target = path_[current_path_index_].pose;
       double target_x = target.position.x;
