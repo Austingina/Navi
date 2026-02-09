@@ -1,10 +1,13 @@
 #include "rviz_global_relocalize/mock_navi_tool.hpp"
-#include "rviz_global_relocalize/tf_publisher_state.hpp"
 
 #include <pluginlib/class_list_macros.hpp>
 #include <rviz_common/display_context.hpp>
 #include <rviz_common/tool_manager.hpp>
+#include <rviz_common/view_controller.hpp>
+#include <rviz_common/view_manager.hpp>
 #include <rviz_common/properties/property_tree_model.hpp>
+#include <OgreCamera.h>
+#include <OgreViewport.h>
 #include <cmath>
 
 using namespace std::chrono_literals;
@@ -13,25 +16,23 @@ namespace rviz_global_relocalize
 {
 
 MockNaviTool::MockNaviTool()
-  : current_path_index_(0)
+  : has_map_(false)
+  , has_position_(false)
   , current_x_(0.0)
   , current_y_(0.0)
   , current_yaw_(0.0)
   , map_frame_("map")
+  , current_path_index_(0)
   , linear_velocity_(1.0)
-  , is_running_(false)
-  , has_path_(false)
-  , click_count_(0)
+  , is_following_path_(false)
+  , is_paused_(false)
 {
   shortcut_key_ = 'm';
 }
 
 MockNaviTool::~MockNaviTool()
 {
-  is_running_ = false;
-  
-  // Reset state so SetBaselinkTool can publish again
-  TfPublisherState::instance().setMockNaviActive(false);
+  is_following_path_ = false;
   
   if (timer_) {
     timer_->cancel();
@@ -64,6 +65,11 @@ void MockNaviTool::onInitialize()
   // Create TF broadcaster
   tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(node_);
   
+  // Subscribe to map topic to check if map is available
+  map_sub_ = node_->create_subscription<nav_msgs::msg::OccupancyGrid>(
+    "/map", rclcpp::QoS(1).transient_local(),
+    std::bind(&MockNaviTool::mapCallback, this, std::placeholders::_1));
+  
   // Subscribe to /plan topic
   plan_sub_ = node_->create_subscription<nav_msgs::msg::Path>(
     "/plan", rclcpp::QoS(1),
@@ -80,7 +86,15 @@ void MockNaviTool::onInitialize()
     executor_->spin();
   });
   
-  RCLCPP_INFO(node_->get_logger(), "MockNaviTool initialized - subscribe to /plan, shortcut key: 'm'");
+  RCLCPP_INFO(node_->get_logger(), "MockNaviTool initialized - click to set position, subscribe to /plan for path following");
+}
+
+void MockNaviTool::mapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg)
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  has_map_ = true;
+  map_frame_ = msg->header.frame_id;
+  RCLCPP_INFO_ONCE(node_->get_logger(), "Received map in frame: %s", map_frame_.c_str());
 }
 
 void MockNaviTool::planCallback(const nav_msgs::msg::Path::SharedPtr msg)
@@ -93,7 +107,9 @@ void MockNaviTool::planCallback(const nav_msgs::msg::Path::SharedPtr msg)
   }
   
   path_ = msg->poses;
-  map_frame_ = msg->header.frame_id.empty() ? "map" : msg->header.frame_id;
+  if (!msg->header.frame_id.empty()) {
+    map_frame_ = msg->header.frame_id;
+  }
   current_path_index_ = 0;
   
   // Initialize position to start of path
@@ -105,15 +121,13 @@ void MockNaviTool::planCallback(const nav_msgs::msg::Path::SharedPtr msg)
     path_[0].pose.orientation.z,
     path_[0].pose.orientation.w);
   
-  has_path_ = true;
-  is_running_ = true;
-  
-  // Notify that MockNaviTool is now publishing TF
-  TfPublisherState::instance().setMockNaviActive(true);
+  has_position_ = true;
+  is_following_path_ = true;
+  is_paused_ = false;
   
   RCLCPP_INFO(node_->get_logger(), 
-    "Received path with %zu poses in frame '%s'. Starting from (%.2f, %.2f)",
-    path_.size(), map_frame_.c_str(), current_x_, current_y_);
+    "Received path with %zu poses. Starting from (%.2f, %.2f)",
+    path_.size(), current_x_, current_y_);
 }
 
 double MockNaviTool::normalizeAngle(double angle)
@@ -138,57 +152,56 @@ void MockNaviTool::timerCallback()
   
   std::lock_guard<std::mutex> lock(mutex_);
   
-  if (!has_path_ || !is_running_ || path_.empty()) {
+  // Must have position to publish TF
+  if (!has_position_) {
     return;
   }
   
   // Time step (50ms = 0.05s)
   const double dt = 0.05;
   
-  // Get target pose
-  if (current_path_index_ >= path_.size()) {
-    // Reached end of path
-    RCLCPP_INFO_ONCE(node_->get_logger(), "Reached end of path at (%.2f, %.2f)", current_x_, current_y_);
-    // Keep publishing the final position
-    goto publish_tf;
-  }
-  
-  {
-    const auto & target = path_[current_path_index_].pose;
-    double target_x = target.position.x;
-    double target_y = target.position.y;
-    
-    // Calculate distance and direction to target
-    double dx = target_x - current_x_;
-    double dy = target_y - current_y_;
-    double distance = std::sqrt(dx * dx + dy * dy);
-    
-    const double distance_threshold = 0.05;  // 5cm
-    
-    if (distance > distance_threshold) {
-      // Always face the direction of movement
-      current_yaw_ = std::atan2(dy, dx);
+  // If following path and not paused, update position
+  if (is_following_path_ && !is_paused_ && !path_.empty()) {
+    if (current_path_index_ < path_.size()) {
+      const auto & target = path_[current_path_index_].pose;
+      double target_x = target.position.x;
+      double target_y = target.position.y;
       
-      // Move towards target
-      double move = linear_velocity_ * dt;
-      if (distance < move) {
-        current_x_ = target_x;
-        current_y_ = target_y;
+      // Calculate distance and direction to target
+      double dx = target_x - current_x_;
+      double dy = target_y - current_y_;
+      double distance = std::sqrt(dx * dx + dy * dy);
+      
+      const double distance_threshold = 0.05;  // 5cm
+      
+      if (distance > distance_threshold) {
+        // Always face the direction of movement
+        current_yaw_ = std::atan2(dy, dx);
+        
+        // Move towards target
+        double move = linear_velocity_ * dt;
+        if (distance < move) {
+          current_x_ = target_x;
+          current_y_ = target_y;
+        } else {
+          current_x_ += move * std::cos(current_yaw_);
+          current_y_ += move * std::sin(current_yaw_);
+        }
       } else {
-        current_x_ += move * std::cos(current_yaw_);
-        current_y_ += move * std::sin(current_yaw_);
-      }
-    } else {
-      // Reached current waypoint, move to next
-      current_path_index_++;
-      if (current_path_index_ < path_.size()) {
-        RCLCPP_DEBUG(node_->get_logger(), "Moving to waypoint %zu/%zu", 
-          current_path_index_ + 1, path_.size());
+        // Reached current waypoint, move to next
+        current_path_index_++;
+        if (current_path_index_ < path_.size()) {
+          RCLCPP_DEBUG(node_->get_logger(), "Moving to waypoint %zu/%zu", 
+            current_path_index_ + 1, path_.size());
+        } else {
+          RCLCPP_INFO(node_->get_logger(), "Reached end of path at (%.2f, %.2f)", 
+            current_x_, current_y_);
+          is_following_path_ = false;
+        }
       }
     }
   }
   
-publish_tf:
   // Publish TF: map -> odom (identity) and odom -> base_link
   auto now = node_->now();
   
@@ -225,40 +238,96 @@ publish_tf:
   tf_broadcaster_->sendTransform(odom_to_base);
 }
 
+bool MockNaviTool::getPointOnPlane(rviz_common::ViewportMouseEvent & event, Ogre::Vector3 & point)
+{
+  // Get the camera and viewport
+  Ogre::Camera * camera = context_->getViewManager()->getCurrent()->getCamera();
+  if (!camera) {
+    return false;
+  }
+  
+  Ogre::Viewport * viewport = camera->getViewport();
+  if (!viewport) {
+    return false;
+  }
+  
+  // Convert screen coordinates to normalized device coordinates
+  float screen_x = static_cast<float>(event.x) / static_cast<float>(viewport->getActualWidth());
+  float screen_y = static_cast<float>(event.y) / static_cast<float>(viewport->getActualHeight());
+  
+  // Create ray from camera through the clicked point
+  Ogre::Ray ray = camera->getCameraToViewportRay(screen_x, screen_y);
+  
+  // Create a plane at z=0 (ground plane where the map is)
+  Ogre::Plane ground_plane(Ogre::Vector3::UNIT_Z, 0.0);
+  
+  // Find intersection
+  auto result = ray.intersects(ground_plane);
+  if (result.first) {
+    point = ray.getPoint(result.second);
+    return true;
+  }
+  
+  return false;
+}
+
 void MockNaviTool::activate()
 {
-  click_count_++;
-  
-  if (click_count_ % 2 == 1) {
-    // Odd click: start/resume
-    if (has_path_) {
-      is_running_ = true;
-      RCLCPP_INFO(node_->get_logger(), 
-        "MockNaviTool activated - RUNNING (click %d). Position: (%.2f, %.2f, yaw=%.2f)",
-        click_count_, current_x_, current_y_, current_yaw_);
-    } else {
-      RCLCPP_INFO(node_->get_logger(), 
-        "MockNaviTool activated - waiting for /plan message");
-    }
-  } else {
-    // Even click: pause and switch to Interact
-    is_running_ = false;
-    RCLCPP_INFO(node_->get_logger(), 
-      "MockNaviTool PAUSED (click %d). Position: (%.2f, %.2f). Click again to resume.",
-      click_count_, current_x_, current_y_);
-    switchToInteractTool();
-  }
+  RCLCPP_INFO(node_->get_logger(), 
+    "MockNaviTool activated - click on map to set position, or wait for /plan");
 }
 
 void MockNaviTool::deactivate()
 {
-  // Keep state - don't stop running on deactivate
+  // Keep state - don't stop on deactivate
 }
 
 int MockNaviTool::processMouseEvent(rviz_common::ViewportMouseEvent & event)
 {
-  // We don't need mouse events for this tool
-  (void)event;
+  // Only process left mouse button release
+  if (!event.leftUp()) {
+    return 0;
+  }
+  
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!has_map_) {
+      RCLCPP_WARN(node_->get_logger(), "No map received yet. Please wait for a map to be published on /map");
+      switchToInteractTool();
+      return 0;
+    }
+  }
+  
+  // Get the 3D point on the ground plane
+  Ogre::Vector3 point;
+  if (!getPointOnPlane(event, point)) {
+    RCLCPP_WARN(node_->get_logger(), "Failed to get point on ground plane");
+    switchToInteractTool();
+    return 0;
+  }
+  
+  // Set the position
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    current_x_ = point.x;
+    current_y_ = point.y;
+    current_yaw_ = 0.0;
+    has_position_ = true;
+    
+    // Stop following path when manually setting position
+    is_following_path_ = false;
+    is_paused_ = false;
+    path_.clear();
+    current_path_index_ = 0;
+    
+    RCLCPP_INFO(node_->get_logger(), 
+      "Set position to (%.3f, %.3f) in frame '%s'. Waiting for /plan to start navigation.",
+      current_x_, current_y_, map_frame_.c_str());
+  }
+  
+  // Switch back to Interact tool
+  switchToInteractTool();
+  
   return 0;
 }
 
