@@ -9,8 +9,6 @@ Panels:
         - /GridMap1
         - /TF1/Frames1
         - /TF1/Tree1
-        - /TF1/Tree1/map1
-        - /TF1/Tree1/map1/odom1
       Splitter Ratio: 0.5
     Tree Height: 655
   - Class: rviz_common/Selection
@@ -232,7 +230,6 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /clicked_point
-    - Class: rviz_global_relocalize/SetBaselinkTool
     - Class: rviz_global_relocalize/MockNaviTool
       Linear Velocity: 5
   Transformation:
