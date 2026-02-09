@@ -60,6 +60,7 @@
 #include <tf2_ros/transform_broadcaster.h>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <geometry_msgs/msg/vector3.hpp>
+#include <geometry_msgs/msg/pose_stamped.hpp>
 #include <livox_ros_driver2/msg/custom_msg.hpp>
 #include "preprocess.h"
 #include <ikd-Tree/ikd_Tree.h>
@@ -146,6 +147,13 @@ nav_msgs::msg::Path path;
 nav_msgs::msg::Odometry odomAftMapped;
 geometry_msgs::msg::Quaternion geoQuat;
 geometry_msgs::msg::PoseStamped msg_body_pose;
+
+// Relocalize search range parameters
+bool use_relocalize_hint = false;  // Whether to use hint position for search range
+Eigen::Vector3f relocalize_hint_pos(0.0f, 0.0f, 0.0f);  // Hint position for relocalize
+float relocalize_xy_range = 5.0f;  // XY search range (±5m)
+Eigen::Vector3f map_min_z(0.0f, 0.0f, 0.0f);  // Map min z from point cloud
+Eigen::Vector3f map_max_z(0.0f, 0.0f, 0.0f);  // Map max z from point cloud
 
 shared_ptr<Preprocess> p_pre(new Preprocess());
 shared_ptr<ImuProcess> p_imu(new ImuProcess());
@@ -835,6 +843,16 @@ bool load_map(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLas
     bbs3d_ptr->set_trans_search_range(tar_points);
     bbs3d_ptr->set_angular_search_range({-0.02,-0.02,0.0}, {0.02,0.02,6.28});
     bbs3d_ptr->set_score_threshold_percentage(bbs3d_score_threshold);
+    
+    // Store map z range for relocalize with hint
+    map_min_z = Eigen::Vector3f::Constant(std::numeric_limits<float>::max());
+    map_max_z = Eigen::Vector3f::Constant(std::numeric_limits<float>::lowest());
+    for (const auto& p : tar_points) {
+        map_min_z = map_min_z.cwiseMin(p);
+        map_max_z = map_max_z.cwiseMax(p);
+    }
+    std::cout << "Map z range: [" << map_min_z.z() << ", " << map_max_z.z() << "]" << std::endl;
+    
     std::cout << "3D BBS initialized! voxel_size: " << bbs3d_voxel_size << ", min_level_res: " << bbs3d_min_level_res << ", score_threshold: " << bbs3d_score_threshold << std::endl;
     // num_threads
     // int num_threads = 4;
@@ -867,6 +885,26 @@ bool global_localize(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr
     if (src_points.size() < 10) return false;
 
     double t0 = rclcpp::Clock().now().seconds();
+
+    // Set search range based on hint position if available
+    if (use_relocalize_hint) {
+        Eigen::Vector3f min_xyz(
+            relocalize_hint_pos.x() - relocalize_xy_range,
+            relocalize_hint_pos.y() - relocalize_xy_range,
+            map_min_z.z()  // Use full map z range
+        );
+        Eigen::Vector3f max_xyz(
+            relocalize_hint_pos.x() + relocalize_xy_range,
+            relocalize_hint_pos.y() + relocalize_xy_range,
+            map_max_z.z()  // Use full map z range
+        );
+        bbs3d_ptr->set_trans_search_range(min_xyz, max_xyz);
+        std::cout << "[Relocalize] Using hint position (" << relocalize_hint_pos.x() << ", " 
+                  << relocalize_hint_pos.y() << "), search range: xy=[" 
+                  << min_xyz.x() << "~" << max_xyz.x() << ", " 
+                  << min_xyz.y() << "~" << max_xyz.y() << "], z=[" 
+                  << min_xyz.z() << "~" << max_xyz.z() << "]" << std::endl;
+    }
 
     bbs3d_ptr->set_src_points(src_points);
     bbs3d_ptr->localize();
@@ -1135,7 +1173,10 @@ public:
         //------------------------------------------------------------------------------------------------------
         auto period_ms = std::chrono::milliseconds(static_cast<int64_t>(1000.0 / 100.0)); // 10ms, 100hz
         timer_ = rclcpp::create_timer(this, this->get_clock(), period_ms, std::bind(&LaserOdometryNode::timer_callback, this));
-	relocalize_srv_ = this->create_service<std_srvs::srv::Trigger>("global_relocalize", std::bind(&LaserOdometryNode::relocalize_callback, this, std::placeholders::_1, std::placeholders::_2));
+	    relocalize_srv_ = this->create_service<std_srvs::srv::Trigger>("global_relocalize", std::bind(&LaserOdometryNode::relocalize_callback, this, std::placeholders::_1, std::placeholders::_2));
+        relocalize_pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(
+            "relocalize_pose", 10, 
+            std::bind(&LaserOdometryNode::relocalize_pose_callback, this, std::placeholders::_1));
 
         RCLCPP_INFO(this->get_logger(), "Node init finished.");
     }
@@ -1318,10 +1359,24 @@ private:
 
     void relocalize_callback(const std::shared_ptr<std_srvs::srv::Trigger::Request> req, std::shared_ptr<std_srvs::srv::Trigger::Response> res)
     {
-        RCLCPP_INFO(this->get_logger(), "trigger global relocalization...");
+        RCLCPP_INFO(this->get_logger(), "trigger global relocalization (full map search)...");
+        use_relocalize_hint = false;  // Full map search
         flg_first_scan = true;
         res->success = true;
-        res->message = "relocalize mode trigged";
+        res->message = "relocalize mode trigged (full map search)";
+    }
+
+    void relocalize_pose_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg)
+    {
+        RCLCPP_INFO(this->get_logger(), "trigger global relocalization with hint position (%.2f, %.2f)...", 
+                    msg->pose.position.x, msg->pose.position.y);
+        use_relocalize_hint = true;
+        relocalize_hint_pos = Eigen::Vector3f(
+            static_cast<float>(msg->pose.position.x),
+            static_cast<float>(msg->pose.position.y),
+            0.0f  // z is ignored, we use full map z range
+        );
+        flg_first_scan = true;
     }
 
 private:
@@ -1338,6 +1393,7 @@ private:
     std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
     rclcpp::TimerBase::SharedPtr timer_;
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr relocalize_srv_;
+    rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr relocalize_pose_sub_;
 
     bool effect_pub_en = false, map_pub_en = false;
     int effect_feat_num = 0, frame_num = 0;
