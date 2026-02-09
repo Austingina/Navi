@@ -20,7 +20,7 @@ from geometry_msgs.msg import PoseStamped  # 位姿消息类型
 import argparse  # 添加在文件顶部
 # 加载地图配置文件的函数
 # 直接在此定义 load_intent_pose_map，兼容 intent_pose_map.json 的多种结构
-
+from functools import cached_property
 
 # 导航工具管理器类
 class NavigationToolManager:
@@ -58,6 +58,8 @@ class NavigationToolManager:
             logging.error(f"ROS初始化失败: {e}")
             raise
 
+        self._routes = {}
+
         # 注册MCP工具函数
         self.register_tools()
 
@@ -75,6 +77,16 @@ class NavigationToolManager:
             self.executor.spin()
         except Exception as e:
             logging.error(f"ROS spin线程出错: {e}")
+
+
+
+    @cached_property
+    def routes(self) -> Dict[str, Any]:
+        self._routes = {
+            "线路A":list(self.semantic_map.pose_map.keys())
+        }
+        return self._routes
+
 
     def register_tools(self):
         """
@@ -358,6 +370,30 @@ class NavigationToolManager:
                 return {"success": True, "keys": keys, "count": len(keys)}
             except Exception as e:
                 return {"success": False, "msg": f"获取pose列表失败: {str(e)}"}
+
+
+
+
+        @self.mcp.tool()
+        def get_route(route_name: str) -> Dict[str, Any]:
+            """
+            根据路线名称获取路线点位列表。
+
+            Args:
+                route_name: 路线名称（如 线路A）
+
+            Returns:
+            str: JSON 格式的路线点位列表
+            """
+            try:
+                if route_name not in self.routes:
+                    return {"success": False, "msg": f"目前还没有: {route_name}"}
+ 
+                points = self.routes[route_name]
+                return {"success": True, "points": list(points), "count": len(points)}
+            except Exception as e:
+                return {"success": False, "msg": f"获取路线失败: {str(e)}"}
+        
                 
         @self.mcp.tool()
         def get_status() -> Dict[str, Any]:
