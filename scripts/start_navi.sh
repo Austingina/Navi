@@ -10,5 +10,5 @@ if [[ "$1" == "-c" ]]; then
     echo "caihong" > $NAVI_ROOT_DIR/NaviAgent/config/mapuse.txt
 else
     tmuxp load -d "$NAVI_SCRIPT_DIR/navi.yaml"
-    echo "525" >$NAVI_ROOT_DIR/NaviAgent/config/mapuse.txt
+    echo "caihong" >$NAVI_ROOT_DIR/NaviAgent/config/mapuse.txt
 fi
