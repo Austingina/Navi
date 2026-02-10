@@ -1,0 +1,1169 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MCP Navigation Test Client</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #1a1a2e;
+            color: #eee;
+            height: 100vh;
+            overflow: hidden;
+        }
+        .container {
+            display: flex;
+            height: 100vh;
+        }
+        /* 左侧控制面板 */
+        .sidebar {
+            width: 320px;
+            background-color: #16213e;
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            overflow-y: auto;
+        }
+        .panel {
+            background-color: #1a1a2e;
+            border: 1px solid #0f3460;
+            border-radius: 8px;
+            padding: 15px;
+        }
+        .panel-title {
+            color: #e94560;
+            font-size: 16px;
+            font-weight: bold;
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #0f3460;
+        }
+        .form-group {
+            margin-bottom: 12px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: #aaa;
+            font-size: 13px;
+        }
+        select, input[type="text"], input[type="number"] {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #0f3460;
+            border-radius: 4px;
+            background-color: #16213e;
+            color: #eee;
+            font-size: 14px;
+        }
+        select:focus, input:focus {
+            outline: none;
+            border-color: #e94560;
+        }
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        .btn-primary {
+            background-color: #e94560;
+            color: white;
+        }
+        .btn-primary:hover {
+            background-color: #ff6b6b;
+        }
+        .btn-secondary {
+            background-color: #0f3460;
+            color: #eee;
+        }
+        .btn-secondary:hover {
+            background-color: #16213e;
+        }
+        .btn-danger {
+            background-color: #c0392b;
+            color: white;
+        }
+        .btn-danger:hover {
+            background-color: #e74c3c;
+        }
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .btn-group {
+            display: flex;
+            gap: 8px;
+        }
+        .waypoint-list {
+            max-height: 150px;
+            overflow-y: auto;
+            background-color: #16213e;
+            border: 1px solid #0f3460;
+            border-radius: 4px;
+            padding: 8px;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+        .waypoint-item {
+            padding: 2px 0;
+        }
+        .waypoint-item.active {
+            color: #e94560;
+            font-weight: bold;
+        }
+        .waypoint-item.completed {
+            color: #27ae60;
+        }
+        .status-text {
+            font-size: 13px;
+            color: #aaa;
+            margin-top: 8px;
+        }
+        .status-text.success {
+            color: #27ae60;
+        }
+        .status-text.error {
+            color: #e74c3c;
+        }
+        .nav-btn-row {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 8px;
+            align-items: center;
+        }
+        .nav-btn-row .btn {
+            flex-shrink: 0;
+        }
+        .nav-btn-row select {
+            flex: 1;
+        }
+        .hint-text {
+            font-size: 12px;
+            color: #666;
+            font-style: italic;
+        }
+        /* 右侧地图区域 */
+        .map-container {
+            flex: 1;
+            position: relative;
+            background-color: #0a0a0a;
+        }
+        #mapCanvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+        .map-overlay {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        .map-overlay .btn {
+            width: 40px;
+            height: 40px;
+            font-size: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .robot-info {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background-color: rgba(22, 33, 62, 0.9);
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-size: 13px;
+        }
+        .robot-info div {
+            margin: 3px 0;
+        }
+        .connection-status {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        .connection-status.connected {
+            background-color: rgba(39, 174, 96, 0.8);
+        }
+        .connection-status.disconnected {
+            background-color: rgba(192, 57, 43, 0.8);
+        }
+        .select-mode-indicator {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(233, 69, 96, 0.9);
+            padding: 15px 25px;
+            border-radius: 8px;
+            font-size: 16px;
+            display: none;
+        }
+        .select-mode-indicator.active {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- 左侧控制面板 -->
+        <div class="sidebar">
+            <!-- 服务器设置 -->
+            <div class="panel">
+                <div class="panel-title">🔌 服务器连接</div>
+                <div class="form-group">
+                    <label>MCP服务器地址</label>
+                    <input type="text" id="serverUrl" value="http://localhost:9999/mcp">
+                </div>
+                <button class="btn btn-primary" onclick="connectServer()">连接</button>
+                <div class="status-text" id="serverStatus">状态: 未连接</div>
+            </div>
+
+            <!-- 路线巡检 -->
+            <div class="panel">
+                <div class="panel-title">🛤️ 路线巡检</div>
+                <div class="form-group">
+                    <label>选择路线</label>
+                    <select id="routeSelect">
+                        <option value="线路A">线路A</option>
+                    </select>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-primary" id="patrolStartBtn" onclick="startPatrol()">开始巡检</button>
+                    <button class="btn btn-danger" id="patrolStopBtn" onclick="stopPatrol()" disabled>停止</button>
+                </div>
+                <div class="form-group" style="margin-top: 12px;">
+                    <label>巡检点位</label>
+                    <div class="waypoint-list" id="waypointList">
+                        <div class="hint-text">点击"开始巡检"获取路线</div>
+                    </div>
+                </div>
+                <div class="status-text" id="patrolStatus">状态: 空闲</div>
+            </div>
+
+            <!-- API导航 -->
+            <div class="panel">
+                <div class="panel-title">🎯 API导航</div>
+                
+                <!-- set_goal -->
+                <div class="nav-btn-row">
+                    <button class="btn btn-secondary" onclick="sendSetGoal()">set_goal</button>
+                    <select id="goalSelect">
+                        <option value="">-- 选择目标点 --</option>
+                    </select>
+                </div>
+                
+                <!-- set_goal_by_xy -->
+                <div class="nav-btn-row">
+                    <button class="btn btn-secondary" id="xySelectBtn" onclick="toggleXYSelectMode()">set_goal_by_xy</button>
+                    <span class="hint-text" id="xyHint">点击按钮后在地图选点</span>
+                </div>
+                
+                <!-- set_goal_by_lonlat -->
+                <div class="nav-btn-row">
+                    <button class="btn btn-secondary" disabled>set_goal_by_lonlat</button>
+                    <span class="hint-text">(暂不可用)</span>
+                </div>
+                
+                <hr style="border-color: #0f3460; margin: 15px 0;">
+                
+                <div class="status-text" id="navStatus">导航状态: 空闲</div>
+            </div>
+        </div>
+
+        <!-- 右侧地图区域 -->
+        <div class="map-container">
+            <canvas id="mapCanvas"></canvas>
+            
+            <!-- 地图控制按钮 -->
+            <div class="map-overlay">
+                <button class="btn btn-secondary" onclick="zoomIn()">+</button>
+                <button class="btn btn-secondary" onclick="zoomOut()">−</button>
+                <button class="btn btn-secondary" onclick="resetView()">⟲</button>
+            </div>
+            
+            <!-- 连接状态 -->
+            <div class="connection-status disconnected" id="connectionStatus">未连接</div>
+            
+            <!-- 机器人信息 -->
+            <div class="robot-info">
+                <div>📍 位置: <span id="robotPosDisplay">(-, -)</span></div>
+                <div>🧭 朝向: <span id="robotYawDisplay">-°</span></div>
+            </div>
+            
+            <!-- 选点模式提示 -->
+            <div class="select-mode-indicator" id="selectModeIndicator">
+                🎯 点击地图选择目标点 (ESC取消)
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ==================== 全局变量 ====================
+        let gl = null;
+        let canvas = null;
+        let isConnected = false;
+        let serverUrl = '';
+        
+        // 地图数据
+        let mapData = null;
+        let mapInfo = null;
+        let mapBound = null;
+        let mapTexture = null;
+        
+        // 机器人状态
+        let robotPose = { x: 0, y: 0, yaw: 0 };
+        
+        // 目标点
+        let targetPoint = null;
+        
+        // 点位列表
+        let poseList = [];
+        
+        // 视图参数
+        let viewCenter = { x: 0, y: 0 };
+        let viewScale = 1.0;
+        
+        // 巡检状态
+        let isPatrolling = false;
+        let patrolWaypoints = [];
+        let currentWaypointIdx = 0;
+        
+        // 选点模式
+        let xySelectMode = false;
+        
+        // WebGL着色器程序
+        let shaderProgram = null;
+        let robotShaderProgram = null;
+        
+        // 定时器
+        let statusUpdateInterval = null;
+        
+        // ==================== 初始化 ====================
+        window.onload = function() {
+            initWebGL();
+            setupEventListeners();
+            render();
+        };
+        
+        function initWebGL() {
+            canvas = document.getElementById('mapCanvas');
+            gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+            
+            if (!gl) {
+                alert('WebGL不支持');
+                return;
+            }
+            
+            // 设置canvas大小
+            resizeCanvas();
+            window.addEventListener('resize', resizeCanvas);
+            
+            // 初始化着色器
+            initShaders();
+        }
+        
+        function resizeCanvas() {
+            const container = canvas.parentElement;
+            canvas.width = container.clientWidth;
+            canvas.height = container.clientHeight;
+            if (gl) {
+                gl.viewport(0, 0, canvas.width, canvas.height);
+            }
+        }
+        
+        function initShaders() {
+            // 顶点着色器
+            const vsSource = `
+                attribute vec2 aPosition;
+                attribute vec2 aTexCoord;
+                uniform mat4 uProjection;
+                varying vec2 vTexCoord;
+                void main() {
+                    gl_Position = uProjection * vec4(aPosition, 0.0, 1.0);
+                    vTexCoord = aTexCoord;
+                }
+            `;
+            
+            // 片段着色器 - 地图
+            const fsMapSource = `
+                precision mediump float;
+                varying vec2 vTexCoord;
+                uniform sampler2D uTexture;
+                void main() {
+                    gl_FragColor = texture2D(uTexture, vTexCoord);
+                }
+            `;
+            
+            // 片段着色器 - 纯色
+            const fsColorSource = `
+                precision mediump float;
+                uniform vec4 uColor;
+                void main() {
+                    gl_FragColor = uColor;
+                }
+            `;
+            
+            shaderProgram = createShaderProgram(vsSource, fsMapSource);
+            robotShaderProgram = createShaderProgram(vsSource, fsColorSource);
+        }
+        
+        function createShaderProgram(vsSource, fsSource) {
+            const vertexShader = compileShader(gl.VERTEX_SHADER, vsSource);
+            const fragmentShader = compileShader(gl.FRAGMENT_SHADER, fsSource);
+            
+            const program = gl.createProgram();
+            gl.attachShader(program, vertexShader);
+            gl.attachShader(program, fragmentShader);
+            gl.linkProgram(program);
+            
+            if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+                console.error('Shader program link error:', gl.getProgramInfoLog(program));
+                return null;
+            }
+            
+            return program;
+        }
+        
+        function compileShader(type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                console.error('Shader compile error:', gl.getShaderInfoLog(shader));
+                gl.deleteShader(shader);
+                return null;
+            }
+            
+            return shader;
+        }
+        
+        function setupEventListeners() {
+            // 鼠标拖拽
+            let isDragging = false;
+            let lastMousePos = { x: 0, y: 0 };
+            
+            canvas.addEventListener('mousedown', (e) => {
+                if (xySelectMode && e.button === 0) {
+                    handleMapClick(e);
+                    return;
+                }
+                if (e.button === 0) {
+                    isDragging = true;
+                    lastMousePos = { x: e.clientX, y: e.clientY };
+                }
+            });
+            
+            canvas.addEventListener('mousemove', (e) => {
+                if (isDragging) {
+                    const dx = e.clientX - lastMousePos.x;
+                    const dy = e.clientY - lastMousePos.y;
+                    pan(dx, dy);
+                    lastMousePos = { x: e.clientX, y: e.clientY };
+                    render();
+                }
+            });
+            
+            canvas.addEventListener('mouseup', () => {
+                isDragging = false;
+            });
+            
+            canvas.addEventListener('mouseleave', () => {
+                isDragging = false;
+            });
+            
+            // 鼠标滚轮缩放
+            canvas.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                const factor = e.deltaY > 0 ? 0.9 : 1.1;
+                viewScale *= factor;
+                viewScale = Math.max(0.1, Math.min(10, viewScale));
+                render();
+            });
+            
+            // ESC键取消选点模式
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && xySelectMode) {
+                    toggleXYSelectMode();
+                }
+            });
+        }
+        
+        // ==================== 服务器连接 ====================
+        async function connectServer() {
+            serverUrl = document.getElementById('serverUrl').value;
+            
+            try {
+                updateStatus('serverStatus', '连接中...', '');
+                
+                // 获取地图
+                const mapResult = await callMCPTool('get_map');
+                if (mapResult.success) {
+                    mapInfo = mapResult.info;
+                    mapBound = mapResult.bound;
+                    mapData = mapResult.data;
+                    createMapTexture();
+                    resetView();
+                    console.log('地图加载成功:', mapInfo.width, 'x', mapInfo.height);
+                }
+                
+                // 获取点位列表
+                const poseResult = await callMCPTool('get_pose_list');
+                if (poseResult.success) {
+                    poseList = poseResult.keys;
+                    updateGoalSelect();
+                    console.log('点位列表:', poseList);
+                }
+                
+                isConnected = true;
+                updateStatus('serverStatus', '已连接', 'success');
+                document.getElementById('connectionStatus').textContent = '已连接';
+                document.getElementById('connectionStatus').className = 'connection-status connected';
+                
+                // 启动状态更新
+                startStatusUpdate();
+                
+                render();
+            } catch (error) {
+                console.error('连接失败:', error);
+                isConnected = false;
+                updateStatus('serverStatus', '连接失败: ' + error.message, 'error');
+                document.getElementById('connectionStatus').textContent = '连接失败';
+                document.getElementById('connectionStatus').className = 'connection-status disconnected';
+            }
+        }
+        
+        async function callMCPTool(toolName, params = {}) {
+            const response = await fetch(serverUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    jsonrpc: '2.0',
+                    id: Date.now(),
+                    method: 'tools/call',
+                    params: {
+                        name: toolName,
+                        arguments: params
+                    }
+                })
+            });
+            
+            const data = await response.json();
+            
+            if (data.error) {
+                throw new Error(data.error.message);
+            }
+            
+            if (data.result && data.result.content && data.result.content[0]) {
+                return JSON.parse(data.result.content[0].text);
+            }
+            
+            return data.result;
+        }
+        
+        function startStatusUpdate() {
+            if (statusUpdateInterval) {
+                clearInterval(statusUpdateInterval);
+            }
+            
+            statusUpdateInterval = setInterval(async () => {
+                if (!isConnected) return;
+                
+                try {
+                    const status = await callMCPTool('get_status');
+                    if (status.success) {
+                        robotPose.x = status.position.x;
+                        robotPose.y = status.position.y;
+                        
+                        // 四元数转yaw
+                        const ori = status.orientation;
+                        robotPose.yaw = Math.atan2(
+                            2.0 * (ori.w * ori.z + ori.x * ori.y),
+                            1.0 - 2.0 * (ori.y * ori.y + ori.z * ori.z)
+                        );
+                        
+                        // 更新显示
+                        document.getElementById('robotPosDisplay').textContent = 
+                            `(${robotPose.x.toFixed(2)}, ${robotPose.y.toFixed(2)})`;
+                        document.getElementById('robotYawDisplay').textContent = 
+                            `${(robotPose.yaw * 180 / Math.PI).toFixed(1)}°`;
+                        
+                        render();
+                    }
+                } catch (error) {
+                    console.error('获取状态失败:', error);
+                }
+            }, 1000);  // 1Hz
+        }
+        
+        // ==================== 地图渲染 ====================
+        function createMapTexture() {
+            if (!mapData || !mapInfo) return;
+            
+            const width = mapInfo.width;
+            const height = mapInfo.height;
+            
+            // 创建RGBA数据
+            const textureData = new Uint8Array(width * height * 4);
+            
+            for (let i = 0; i < mapData.length; i++) {
+                const val = mapData[i];
+                let r, g, b, a;
+                
+                if (val === -1) {
+                    // 未知区域 - 灰色
+                    r = g = b = 128;
+                } else if (val === 0) {
+                    // 空闲区域 - 白色
+                    r = g = b = 240;
+                } else {
+                    // 占用区域 - 深色
+                    const intensity = Math.floor(255 - (val * 255 / 100));
+                    r = g = b = intensity;
+                }
+                a = 255;
+                
+                textureData[i * 4 + 0] = r;
+                textureData[i * 4 + 1] = g;
+                textureData[i * 4 + 2] = b;
+                textureData[i * 4 + 3] = a;
+            }
+            
+            // 创建WebGL纹理
+            if (mapTexture) {
+                gl.deleteTexture(mapTexture);
+            }
+            
+            mapTexture = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, mapTexture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, textureData);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            gl.bindTexture(gl.TEXTURE_2D, null);
+        }
+        
+        function render() {
+            if (!gl) return;
+            
+            gl.clearColor(0.1, 0.1, 0.15, 1.0);
+            gl.clear(gl.COLOR_BUFFER_BIT);
+            
+            if (!mapBound) return;
+            
+            // 计算投影矩阵
+            const projection = createProjectionMatrix();
+            
+            // 绘制地图
+            if (mapTexture) {
+                drawMap(projection);
+            }
+            
+            // 绘制网格
+            drawGrid(projection);
+            
+            // 绘制目标点
+            if (targetPoint) {
+                drawTarget(projection);
+            }
+            
+            // 绘制机器人
+            drawRobot(projection);
+        }
+        
+        function createProjectionMatrix() {
+            const aspect = canvas.width / canvas.height;
+            const mapWidth = mapBound.xmax - mapBound.xmin;
+            const halfWidth = mapWidth / 2.0 / viewScale;
+            const halfHeight = halfWidth / aspect;
+            
+            const left = viewCenter.x - halfWidth;
+            const right = viewCenter.x + halfWidth;
+            const bottom = viewCenter.y - halfHeight;
+            const top = viewCenter.y + halfHeight;
+            
+            // 正交投影矩阵
+            return new Float32Array([
+                2 / (right - left), 0, 0, 0,
+                0, 2 / (top - bottom), 0, 0,
+                0, 0, -1, 0,
+                -(right + left) / (right - left), -(top + bottom) / (top - bottom), 0, 1
+            ]);
+        }
+        
+        function drawMap(projection) {
+            gl.useProgram(shaderProgram);
+            
+            // 顶点数据
+            const vertices = new Float32Array([
+                mapBound.xmin, mapBound.ymin, 0, 0,
+                mapBound.xmax, mapBound.ymin, 1, 0,
+                mapBound.xmax, mapBound.ymax, 1, 1,
+                mapBound.xmin, mapBound.ymin, 0, 0,
+                mapBound.xmax, mapBound.ymax, 1, 1,
+                mapBound.xmin, mapBound.ymax, 0, 1
+            ]);
+            
+            const buffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+            gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+            
+            const aPosition = gl.getAttribLocation(shaderProgram, 'aPosition');
+            const aTexCoord = gl.getAttribLocation(shaderProgram, 'aTexCoord');
+            const uProjection = gl.getUniformLocation(shaderProgram, 'uProjection');
+            const uTexture = gl.getUniformLocation(shaderProgram, 'uTexture');
+            
+            gl.enableVertexAttribArray(aPosition);
+            gl.enableVertexAttribArray(aTexCoord);
+            gl.vertexAttribPointer(aPosition, 2, gl.FLOAT, false, 16, 0);
+            gl.vertexAttribPointer(aTexCoord, 2, gl.FLOAT, false, 16, 8);
+            
+            gl.uniformMatrix4fv(uProjection, false, projection);
+            
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, mapTexture);
+            gl.uniform1i(uTexture, 0);
+            
+            gl.drawArrays(gl.TRIANGLES, 0, 6);
+            
+            gl.deleteBuffer(buffer);
+        }
+        
+        function drawGrid(projection) {
+            gl.useProgram(robotShaderProgram);
+            
+            const uProjection = gl.getUniformLocation(robotShaderProgram, 'uProjection');
+            const uColor = gl.getUniformLocation(robotShaderProgram, 'uColor');
+            
+            gl.uniformMatrix4fv(uProjection, false, projection);
+            gl.uniform4f(uColor, 0.3, 0.3, 0.4, 0.5);
+            
+            // 生成网格线
+            const gridSize = 1.0;
+            const lines = [];
+            
+            for (let x = Math.floor(mapBound.xmin); x <= mapBound.xmax; x += gridSize) {
+                lines.push(x, mapBound.ymin, 0, 0);
+                lines.push(x, mapBound.ymax, 0, 0);
+            }
+            for (let y = Math.floor(mapBound.ymin); y <= mapBound.ymax; y += gridSize) {
+                lines.push(mapBound.xmin, y, 0, 0);
+                lines.push(mapBound.xmax, y, 0, 0);
+            }
+            
+            const buffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(lines), gl.STATIC_DRAW);
+            
+            const aPosition = gl.getAttribLocation(robotShaderProgram, 'aPosition');
+            gl.enableVertexAttribArray(aPosition);
+            gl.vertexAttribPointer(aPosition, 2, gl.FLOAT, false, 16, 0);
+            
+            gl.drawArrays(gl.LINES, 0, lines.length / 4);
+            gl.deleteBuffer(buffer);
+        }
+        
+        function drawRobot(projection) {
+            gl.useProgram(robotShaderProgram);
+            
+            const uProjection = gl.getUniformLocation(robotShaderProgram, 'uProjection');
+            const uColor = gl.getUniformLocation(robotShaderProgram, 'uColor');
+            const aPosition = gl.getAttribLocation(robotShaderProgram, 'aPosition');
+            
+            gl.uniformMatrix4fv(uProjection, false, projection);
+            
+            const x = robotPose.x;
+            const y = robotPose.y;
+            const yaw = robotPose.yaw;
+            const radius = 0.3;
+            
+            // 绘制机器人圆形 (红色)
+            gl.uniform4f(uColor, 1.0, 0.2, 0.3, 1.0);
+            
+            const circleVertices = [x, y, 0, 0];
+            const segments = 32;
+            for (let i = 0; i <= segments; i++) {
+                const angle = (i / segments) * Math.PI * 2;
+                circleVertices.push(x + radius * Math.cos(angle), y + radius * Math.sin(angle), 0, 0);
+            }
+            
+            const circleBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, circleBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(circleVertices), gl.STATIC_DRAW);
+            
+            gl.enableVertexAttribArray(aPosition);
+            gl.vertexAttribPointer(aPosition, 2, gl.FLOAT, false, 16, 0);
+            gl.drawArrays(gl.TRIANGLE_FAN, 0, segments + 2);
+            gl.deleteBuffer(circleBuffer);
+            
+            // 绘制方向箭头 (黄色)
+            gl.uniform4f(uColor, 1.0, 1.0, 0.2, 1.0);
+            
+            const arrowLen = 0.5;
+            const arrowHeadSize = 0.15;
+            const endX = x + arrowLen * Math.cos(yaw);
+            const endY = y + arrowLen * Math.sin(yaw);
+            
+            const arrowVertices = new Float32Array([
+                x, y, 0, 0,
+                endX, endY, 0, 0,
+                endX, endY, 0, 0,
+                endX - arrowHeadSize * Math.cos(yaw - 0.5), endY - arrowHeadSize * Math.sin(yaw - 0.5), 0, 0,
+                endX, endY, 0, 0,
+                endX - arrowHeadSize * Math.cos(yaw + 0.5), endY - arrowHeadSize * Math.sin(yaw + 0.5), 0, 0
+            ]);
+            
+            const arrowBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, arrowBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, arrowVertices, gl.STATIC_DRAW);
+            
+            gl.vertexAttribPointer(aPosition, 2, gl.FLOAT, false, 16, 0);
+            gl.lineWidth(3);
+            gl.drawArrays(gl.LINES, 0, 6);
+            gl.deleteBuffer(arrowBuffer);
+        }
+        
+        function drawTarget(projection) {
+            gl.useProgram(robotShaderProgram);
+            
+            const uProjection = gl.getUniformLocation(robotShaderProgram, 'uProjection');
+            const uColor = gl.getUniformLocation(robotShaderProgram, 'uColor');
+            const aPosition = gl.getAttribLocation(robotShaderProgram, 'aPosition');
+            
+            gl.uniformMatrix4fv(uProjection, false, projection);
+            gl.uniform4f(uColor, 0.2, 1.0, 0.3, 1.0);  // 绿色
+            
+            const x = targetPoint.x;
+            const y = targetPoint.y;
+            const size = 0.3;
+            
+            // 十字标记
+            const crossVertices = new Float32Array([
+                x - size, y, 0, 0,
+                x + size, y, 0, 0,
+                x, y - size, 0, 0,
+                x, y + size, 0, 0
+            ]);
+            
+            const buffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+            gl.bufferData(gl.ARRAY_BUFFER, crossVertices, gl.STATIC_DRAW);
+            
+            gl.enableVertexAttribArray(aPosition);
+            gl.vertexAttribPointer(aPosition, 2, gl.FLOAT, false, 16, 0);
+            gl.drawArrays(gl.LINES, 0, 4);
+            
+            // 圆形
+            const circleVertices = [];
+            const segments = 24;
+            for (let i = 0; i <= segments; i++) {
+                const angle = (i / segments) * Math.PI * 2;
+                circleVertices.push(x + size * 0.7 * Math.cos(angle), y + size * 0.7 * Math.sin(angle), 0, 0);
+            }
+            
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(circleVertices), gl.STATIC_DRAW);
+            gl.drawArrays(gl.LINE_LOOP, 0, segments + 1);
+            
+            gl.deleteBuffer(buffer);
+        }
+        
+        // ==================== 视图控制 ====================
+        function pan(dx, dy) {
+            if (!mapBound) return;
+            const mapWidth = mapBound.xmax - mapBound.xmin;
+            const scale = mapWidth / viewScale / canvas.width;
+            viewCenter.x -= dx * scale;
+            viewCenter.y += dy * scale;
+        }
+        
+        function zoomIn() {
+            viewScale *= 1.2;
+            viewScale = Math.min(10, viewScale);
+            render();
+        }
+        
+        function zoomOut() {
+            viewScale *= 0.8;
+            viewScale = Math.max(0.1, viewScale);
+            render();
+        }
+        
+        function resetView() {
+            if (mapBound) {
+                viewCenter.x = (mapBound.xmin + mapBound.xmax) / 2;
+                viewCenter.y = (mapBound.ymin + mapBound.ymax) / 2;
+            } else {
+                viewCenter.x = 0;
+                viewCenter.y = 0;
+            }
+            viewScale = 1.0;
+            render();
+        }
+        
+        // ==================== 屏幕坐标转地图坐标 ====================
+        function screenToMap(screenX, screenY) {
+            if (!mapBound) return null;
+            
+            const rect = canvas.getBoundingClientRect();
+            const x = screenX - rect.left;
+            const y = screenY - rect.top;
+            
+            const aspect = canvas.width / canvas.height;
+            const mapWidth = mapBound.xmax - mapBound.xmin;
+            const halfWidth = mapWidth / 2.0 / viewScale;
+            const halfHeight = halfWidth / aspect;
+            
+            const normX = x / canvas.width;
+            const normY = 1.0 - y / canvas.height;
+            
+            const mapX = viewCenter.x - halfWidth + normX * 2 * halfWidth;
+            const mapY = viewCenter.y - halfHeight + normY * 2 * halfHeight;
+            
+            return { x: mapX, y: mapY };
+        }
+        
+        // ==================== 路线巡检 ====================
+        async function startPatrol() {
+            if (!isConnected) {
+                alert('请先连接服务器');
+                return;
+            }
+            
+            const routeName = document.getElementById('routeSelect').value;
+            
+            try {
+                updateStatus('patrolStatus', '获取路线...', '');
+                
+                const result = await callMCPTool('get_route', { route_name: routeName });
+                if (!result.success) {
+                    updateStatus('patrolStatus', '获取路线失败: ' + result.msg, 'error');
+                    return;
+                }
+                
+                patrolWaypoints = result.points;
+                currentWaypointIdx = 0;
+                isPatrolling = true;
+                
+                // 更新UI
+                updateWaypointList();
+                document.getElementById('patrolStartBtn').textContent = '暂停';
+                document.getElementById('patrolStopBtn').disabled = false;
+                
+                // 开始巡检
+                executePatrol();
+                
+            } catch (error) {
+                updateStatus('patrolStatus', '错误: ' + error.message, 'error');
+            }
+        }
+        
+        async function executePatrol() {
+            const startTime = Date.now();
+            let successCount = 0;
+            
+            while (currentWaypointIdx < patrolWaypoints.length && isPatrolling) {
+                const waypoint = patrolWaypoints[currentWaypointIdx];
+                
+                updateStatus('patrolStatus', `前往: ${waypoint} (${currentWaypointIdx + 1}/${patrolWaypoints.length})`, '');
+                updateWaypointList();
+                
+                try {
+                    // 发送目标
+                    const goalResult = await callMCPTool('set_goal', { target: waypoint });
+                    if (!goalResult.success) {
+                        console.error('发送目标失败:', goalResult.msg);
+                        currentWaypointIdx++;
+                        continue;
+                    }
+                    
+                    // 等待到达
+                    let reached = false;
+                    const waypointStartTime = Date.now();
+                    
+                    while (!reached && isPatrolling && (Date.now() - waypointStartTime) < 120000) {
+                        await sleep(1000);
+                        
+                        const waitResult = await callMCPTool('wait_goal_reached', {
+                            target: waypoint,
+                            timeout: 1.0,
+                            xy_tolerance: 0.6,
+                            yaw_tolerance: 3.14
+                        });
+                        
+                        if (waitResult.success) {
+                            reached = true;
+                            successCount++;
+                            console.log(`✓ 到达 ${waypoint}`);
+                        }
+                    }
+                    
+                } catch (error) {
+                    console.error('巡检点错误:', error);
+                }
+                
+                currentWaypointIdx++;
+                updateWaypointList();
+                
+                // 点位间等待
+                if (isPatrolling && currentWaypointIdx < patrolWaypoints.length) {
+                    await sleep(2000);
+                }
+            }
+            
+            // 巡检完成
+            const totalTime = (Date.now() - startTime) / 1000;
+            const report = `
+巡检完成!
+路线: ${document.getElementById('routeSelect').value}
+总点位: ${patrolWaypoints.length}
+成功: ${successCount}
+失败: ${patrolWaypoints.length - successCount}
+耗时: ${totalTime.toFixed(1)}秒
+            `;
+            console.log(report);
+            alert(report);
+            
+            stopPatrol();
+        }
+        
+        function stopPatrol() {
+            isPatrolling = false;
+            document.getElementById('patrolStartBtn').textContent = '开始巡检';
+            document.getElementById('patrolStopBtn').disabled = true;
+            updateStatus('patrolStatus', '状态: 已停止', '');
+            
+            // 取消导航
+            callMCPTool('cancel_navigation').catch(console.error);
+        }
+        
+        function updateWaypointList() {
+            const listEl = document.getElementById('waypointList');
+            listEl.innerHTML = patrolWaypoints.map((wp, idx) => {
+                let className = 'waypoint-item';
+                if (idx < currentWaypointIdx) className += ' completed';
+                else if (idx === currentWaypointIdx) className += ' active';
+                return `<div class="${className}">${idx + 1}. ${wp}</div>`;
+            }).join('');
+        }
+        
+        // ==================== API导航 ====================
+        function updateGoalSelect() {
+            const select = document.getElementById('goalSelect');
+            select.innerHTML = '<option value="">-- 选择目标点 --</option>';
+            poseList.forEach(pose => {
+                const option = document.createElement('option');
+                option.value = pose;
+                option.textContent = pose;
+                select.appendChild(option);
+            });
+        }
+        
+        async function sendSetGoal() {
+            const target = document.getElementById('goalSelect').value;
+            if (!target) {
+                alert('请选择目标点');
+                return;
+            }
+            
+            try {
+                updateStatus('navStatus', `导航到: ${target}...`, '');
+                const result = await callMCPTool('set_goal', { target: target });
+                if (result.success) {
+                    updateStatus('navStatus', `正在前往: ${target}`, 'success');
+                } else {
+                    updateStatus('navStatus', `失败: ${result.msg}`, 'error');
+                }
+            } catch (error) {
+                updateStatus('navStatus', `错误: ${error.message}`, 'error');
+            }
+        }
+        
+        function toggleXYSelectMode() {
+            xySelectMode = !xySelectMode;
+            
+            const btn = document.getElementById('xySelectBtn');
+            const indicator = document.getElementById('selectModeIndicator');
+            const hint = document.getElementById('xyHint');
+            
+            if (xySelectMode) {
+                btn.textContent = '取消选点';
+                btn.classList.add('btn-danger');
+                btn.classList.remove('btn-secondary');
+                indicator.classList.add('active');
+                hint.textContent = '点击地图选择目标点';
+                canvas.style.cursor = 'crosshair';
+            } else {
+                btn.textContent = 'set_goal_by_xy';
+                btn.classList.remove('btn-danger');
+                btn.classList.add('btn-secondary');
+                indicator.classList.remove('active');
+                hint.textContent = '点击按钮后在地图选点';
+                canvas.style.cursor = 'default';
+            }
+        }
+        
+        async function handleMapClick(event) {
+            const mapPos = screenToMap(event.clientX, event.clientY);
+            if (!mapPos) return;
+            
+            console.log('选择点位:', mapPos);
+            
+            // 设置目标点显示
+            targetPoint = { x: mapPos.x, y: mapPos.y };
+            render();
+            
+            // 退出选点模式
+            toggleXYSelectMode();
+            
+            // 发送导航请求
+            try {
+                updateStatus('navStatus', `导航到: (${mapPos.x.toFixed(2)}, ${mapPos.y.toFixed(2)})...`, '');
+                const result = await callMCPTool('set_goal_by_xy', { 
+                    x: mapPos.x, 
+                    y: mapPos.y, 
+                    distance: 0.5 
+                });
+                if (result.success) {
+                    updateStatus('navStatus', `正在前往: (${mapPos.x.toFixed(2)}, ${mapPos.y.toFixed(2)})`, 'success');
+                } else {
+                    updateStatus('navStatus', `失败: ${result.msg}`, 'error');
+                }
+            } catch (error) {
+                updateStatus('navStatus', `错误: ${error.message}`, 'error');
+            }
+        }
+        
+        // ==================== 辅助函数 ====================
+        function updateStatus(elementId, text, className) {
+            const el = document.getElementById(elementId);
+            el.textContent = text;
+            el.className = 'status-text' + (className ? ' ' + className : '');
+        }
+        
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+    </script>
+</body>
+</html>
