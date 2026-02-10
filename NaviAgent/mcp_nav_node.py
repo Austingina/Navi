@@ -49,6 +49,7 @@ class MCPNavNode(Node):
             "ymax": 10.0
         }
         self.map_received = False  # 标记是否已接收到地图
+        self.current_map = None  # 保存完整的地图消息
 
         try:
             # 创建navigate_to_pose action client
@@ -95,6 +96,9 @@ class MCPNavNode(Node):
         msg: OccupancyGrid消息，包含地图数据和元信息
         """
         try:
+            # 保存完整的地图消息
+            self.current_map = msg
+            
             # 获取地图元信息
             map_info = msg.info
             resolution = map_info.resolution  # 地图分辨率（米/像素）

@@ -407,7 +407,7 @@ class NavigationToolManager:
             try:
                 # 获取当前里程计数据
                 odom = self.ros_node.current_pose
-                print(f"get_status: return odom:{odom.pose.position, odom.pose.orientation}")
+                # print(f"get_status: return odom:{odom.pose.position, odom.pose.orientation}")
                 if not odom:
                     return {"success": False, "msg": "无实时位姿数据"}
                 
@@ -520,6 +520,48 @@ class NavigationToolManager:
                 }
             except Exception as e:
                 return {"success": False, "msg": f"获取最近点失败: {str(e)}"}
+
+        @self.mcp.tool()
+        def get_map() -> Dict[str, Any]:
+            """
+            获取当前栅格地图
+            
+            返回:
+            Dict: 包含地图信息的字典，包括:
+                - info: 地图元信息（分辨率、尺寸、原点）
+                - data: 栅格数据（-1=未知, 0=空闲, 100=占用）
+                - bound: 地图边界
+            """
+            try:
+                map_msg = self.ros_node.current_map
+                if map_msg is None:
+                    return {"success": False, "msg": "尚未接收到地图数据，请等待/map话题发布"}
+                
+                # 获取地图元信息
+                info = map_msg.info
+                
+                # 将地图数据转换为列表（原始数据是int8数组）
+                # 注意：地图数据可能很大，按需返回
+                map_data = list(map_msg.data)
+                logging.info(f"获取地图数据: size={len(map_data)}, width={info.width}, height={info.height}, resolution={info.resolution}")
+                return {
+                    "success": True,
+                    "info": {
+                        "resolution": info.resolution,  # 米/像素
+                        "width": info.width,            # 像素
+                        "height": info.height,          # 像素
+                        "origin": {
+                            "x": info.origin.position.x,
+                            "y": info.origin.position.y,
+                            "z": info.origin.position.z
+                        }
+                    },
+                    "bound": self.ros_node.map_bound,
+                    "data": map_data,  # 栅格数据: -1=未知, 0=空闲, 1-100=占用概率
+                    "msg": f"地图大小: {info.width}x{info.height}, 分辨率: {info.resolution}m/pixel"
+                }
+            except Exception as e:
+                return {"success": False, "msg": f"获取地图失败: {str(e)}"}
 
     async def start(self, port=8000):
         """
