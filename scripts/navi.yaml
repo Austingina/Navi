@@ -6,16 +6,10 @@ windows:
     layout: tiled
     panes:
       - shell_command:
-          - sleep 20
-          - bash $NAVI_SCRIPT_DIR/start_r1pro.bash
+          - sleep 2
+          - bash $NAVI_SCRIPT_DIR/start_gridmap.bash -v
       - shell_command:
-          - sleep 30 
-          - bash $NAVI_SCRIPT_DIR/start_lidar.bash
-      - shell_command:
-          - sleep 31
-          - bash $NAVI_SCRIPT_DIR/start_localization.bash
-      - shell_command:
-          - sleep 32
+          - sleep 3
           - bash $NAVI_SCRIPT_DIR/start_navigation.launch
 
   - window_name: monitoring
