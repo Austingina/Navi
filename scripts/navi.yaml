@@ -11,7 +11,10 @@ windows:
       - shell_command:
           - sleep 3
           - bash $NAVI_SCRIPT_DIR/start_navigation.launch
-
+      - shell_command:
+          - sleep 4
+          - bash $NAVI_SCRIPT_DIR/start_mcp.sh
+          
   - window_name: monitoring
     panes:
       - shell_command:

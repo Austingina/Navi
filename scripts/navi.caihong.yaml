@@ -15,6 +15,9 @@ windows:
           - bash $NAVI_SCRIPT_DIR/start_localization.bash.caihong
       - shell_command:
           - sleep 12
+          - bash $NAVI_SCRIPT_DIR/start_mcp.sh
+      - shell_command:
+          - sleep 12
           - bash $NAVI_SCRIPT_DIR/start_navigation.launch
 
   - window_name: monitoring
