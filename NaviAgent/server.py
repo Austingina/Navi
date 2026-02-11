@@ -372,12 +372,24 @@ class NavigationToolManager:
                 return {"success": False, "msg": f"获取pose列表失败: {str(e)}"}
 
 
+        @self.mcp.tool()
+        def get_route_names() -> Dict[str, Any]:
+            """
+            获取所有巡逻线路名称
 
+            返回:
+            Dict: {"success": True, "keys": [...], "count": N}
+            """
+            try:
+                keys = list(self.routes.keys())
+                return {"success": True, "route_names": keys, "count": len(keys)}
+            except Exception as e:
+                return {"success": False, "msg": f"获取patrol列表失败: {str(e)}"}
 
         @self.mcp.tool()
         def get_route(route_name: str) -> Dict[str, Any]:
             """
-            根据路线名称获取路线点位列表。
+            根据路线名称获取巡逻点位列表。
 
             Args:
                 route_name: 路线名称（如 线路A）
@@ -388,7 +400,7 @@ class NavigationToolManager:
             try:
                 if route_name not in self.routes:
                     return {"success": False, "msg": f"目前还没有: {route_name}"}
- 
+
                 points = self.routes[route_name]
                 return {"success": True, "points": list(points), "count": len(points)}
             except Exception as e:
