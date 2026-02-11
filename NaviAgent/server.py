@@ -583,6 +583,7 @@ class NavigationToolManager:
         1. 以异步方式启动MCP HTTP服务
         2. 监听指定主机和端口
         """
+        print(f"启动MCP服务，监听端口: {port}")
         try:
             # 启动MCP异步HTTP服务
             await self.mcp.run_async(
