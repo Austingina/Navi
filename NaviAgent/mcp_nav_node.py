@@ -9,6 +9,8 @@ import logging  # 日志记录库
 import threading  # 线程处理库
 import time
 import math  # 数学库
+import os  # 文件路径处理
+import subprocess  # 用于播放音频
 # 添加tf2相关导入
 import tf2_ros
 from tf2_ros import TransformException
@@ -82,6 +84,14 @@ class MCPNavNode(Node):
             # PID控制状态
             self.pid_control_active = False
             self.pid_rotation_phase = True  # True为旋转阶段，False为移动阶段
+            
+            # TF状态跟踪
+            self.tf_ready = False  # TF是否可用（定位是否成功）
+            self.tf_fail_count = 0  # TF连续失败计数
+            self.tf_fail_threshold = 10  # 连续失败多少次认为定位丢失
+            
+            # 音频文件路径
+            self.audio_dir = os.path.join(os.path.dirname(__file__), 'audio')
 
             self.get_logger().info("ROS节点初始化成功")
         except Exception as e:
@@ -167,10 +177,53 @@ class MCPNavNode(Node):
             # 添加调试日志
             self.get_logger().debug(f"更新机器人位姿: x={pose_stamped.pose.position.x:.3f}, y={pose_stamped.pose.position.y:.3f}")
             
+            # 重置失败计数
+            self.tf_fail_count = 0
+            
+            # 检测状态变化：从 not ready 变为 ready
+            if not self.tf_ready:
+                self.tf_ready = True
+                self.get_logger().info("✓ TF定位成功，进入ready状态")
+                self.play_audio("success.mp3")
+            
         except TransformException as ex:
             self.get_logger().debug(f"无法获取tf变换: {ex}")
+            self.tf_fail_count += 1
+            
+            # 检测状态变化：从 ready 变为 not ready（连续失败超过阈值）
+            if self.tf_ready and self.tf_fail_count >= self.tf_fail_threshold:
+                self.tf_ready = False
+                self.get_logger().warn("✗ TF定位丢失，进入not ready状态")
+                self.play_audio("fail.mp3")
+                
         except Exception as e:
             self.get_logger().error(f"更新机器人位姿时出错: {e}")
+
+    def play_audio(self, filename):
+        """
+        播放音频文件（异步，不阻塞主线程）
+        
+        参数:
+        filename: 音频文件名（如 success.mp3 或 fail.mp3）
+        """
+        audio_path = os.path.join(self.audio_dir, filename)
+        if not os.path.exists(audio_path):
+            self.get_logger().warn(f"音频文件不存在: {audio_path}")
+            return
+        
+        def play():
+            try:
+                subprocess.run(
+                        ['ffplay', '-nodisp', '-autoexit', '-loglevel', 'quiet', audio_path],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=10
+                    )
+            except Exception as e:
+                self.get_logger().debug(f"播放音频失败: {e}")
+        
+        # 在后台线程播放，避免阻塞ROS回调
+        threading.Thread(target=play, daemon=True).start()
 
     def goal_status_callback(self, future):
         """
