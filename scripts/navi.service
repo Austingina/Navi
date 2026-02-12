@@ -5,10 +5,10 @@ Requires=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/home/nvidia/work/Navi/scripts/start_navi.sh
-ExecStop=/home/nvidia/work/Navi/scripts/stop_navi.sh
+ExecStart=/home/nvidia/Navi/scripts/start_navi.sh -c
+ExecStop=/home/nvidia/Navi/scripts/stop_navi.sh
 User=nvidia
-WorkingDirectory=/home/nvidia/work/Navi/scripts
+WorkingDirectory=/home/nvidia/Navi/scripts
 Environment=HOME=/home/nvidia
 Environment=USER=nvidia
 Environment=XDG_RUNTIME_DIR=/run/user/1000

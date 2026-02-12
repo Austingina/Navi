@@ -8,16 +8,16 @@ windows:
       - shell_command:
           - bash $NAVI_SCRIPT_DIR/start_r1pro.bash
       - shell_command:
-          - sleep 10 
+          - sleep 25 
           - bash $NAVI_SCRIPT_DIR/start_lidar.bash
       - shell_command:
-          - sleep 11
+          - sleep 31
           - bash $NAVI_SCRIPT_DIR/start_localization.bash.caihong
       - shell_command:
-          - sleep 12
+          - sleep 32
           - bash $NAVI_SCRIPT_DIR/start_mcp.sh
       - shell_command:
-          - sleep 12
+          - sleep 33
           - bash $NAVI_SCRIPT_DIR/start_navigation.launch
 
   - window_name: monitoring
