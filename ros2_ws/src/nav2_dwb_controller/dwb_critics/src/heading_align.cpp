@@ -94,9 +94,21 @@ double HeadingAlignCritic::scoreTrajectory(const dwb_msgs::msg::Trajectory2D & t
   // Calculate angular difference between robot heading and path direction
   double heading_diff = angles::shortest_angular_distance(end_pose.theta, path_direction);
 
-  // Return absolute angular difference (0 to pi)
+  // Base score: absolute angular difference (0 to pi)
   // This penalizes trajectories where robot doesn't face along the path
-  return fabs(heading_diff);
+  double score = fabs(heading_diff);
+
+  // When turning (angular velocity > 0.1), penalize high xy velocity
+  // to encourage slower linear speed during turns
+  double angular_vel = fabs(traj.velocity.theta);
+  if (angular_vel > 0.1) {
+    double xy_vel = std::sqrt(traj.velocity.x * traj.velocity.x + traj.velocity.y * traj.velocity.y);
+    // Subtract penalty: higher xy_vel and angular_vel means lower score (less preferred)
+    // This effectively increases cost for high-speed turns
+    score += xy_vel * angular_vel;
+  }
+
+  return score;
 }
 
 double HeadingAlignCritic::getPathDirection(const geometry_msgs::msg::Pose2D & pose)
