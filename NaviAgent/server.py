@@ -139,6 +139,104 @@ class NavigationToolManager:
                 return {"success": False, "msg": f"设置目标失败: {str(e)}"}
 
         @self.mcp.tool()
+        async def set_goal_by_multipose(target: str, timeout_per_pose: float = 120.0, xy_tolerance: float = 0.04, yaw_tolerance: float = 0.05) -> Dict[str, Any]:
+            """
+            导航到multi_pose类型点位的所有位姿，依次到达每个位姿点
+            使用PID控制直接到达目标，跳过nav2导航
+            
+            参数:
+            target: 目标点名称（必须是multi_pose类型）
+            timeout_per_pose: 每个位姿点的超时时间（秒），默认120秒
+            xy_tolerance: 位置容差（米），默认0.04米
+            yaw_tolerance: 姿态容差（弧度），默认0.05弧度
+            
+            返回:
+            Dict: 包含操作结果的字典，包括每个位姿点的到达状态
+            """
+            try:
+                # 检查目标点是否在预设地图中
+                if target not in self.semantic_map.pose_map:
+                    return {"success": False, "msg": f"目标点 {target} 不在白名单中"}
+                
+                # 检查是否为multi_pose类型
+                if not self.semantic_map.is_multi_pose(target):
+                    return {"success": False, "msg": f"目标点 {target} 不是multi_pose类型，请使用set_goal接口"}
+                
+                # 获取所有位姿
+                poses_list = self.semantic_map.get_all_poses(target)
+                if not poses_list:
+                    return {"success": False, "msg": f"目标点 {target} 缺少位姿信息"}
+                
+                total_poses = len(poses_list)
+                results = []
+                
+                # 依次导航到每个位姿点
+                for idx, pose_info in enumerate(poses_list):
+                    # 创建PoseStamped消息
+                    pose = PoseStamped()
+                    pose.header.frame_id = "odom"
+                    pose.pose.position.x = pose_info["position"]["x"]
+                    pose.pose.position.y = pose_info["position"]["y"]
+                    pose.pose.position.z = pose_info["position"]["z"]
+                    pose.pose.orientation.x = pose_info["orientation"]["x"]
+                    pose.pose.orientation.y = pose_info["orientation"]["y"]
+                    pose.pose.orientation.z = pose_info["orientation"]["z"]
+                    pose.pose.orientation.w = pose_info["orientation"]["w"]
+                    
+                    # 直接设置last_goal，跳过nav2导航
+                    self.ros_node.last_goal = pose
+                    self.ros_node.pid_control_active = True
+                    self.ros_node.pid_rotation_phase = True  # 先调整yaw角度
+                    
+                    logging.info(f"[multipose] 开始PID控制到位姿点 {idx+1}/{total_poses}: x={pose_info['position']['x']}, y={pose_info['position']['y']}")
+                    
+                    # 使用PID控制到达当前位姿点
+                    start_time = time.time()
+                    reached = False
+                    while time.time() - start_time < timeout_per_pose:
+                        await asyncio.sleep(0.05)  # 50ms控制周期
+                        # 执行一步PID控制
+                        if self.ros_node.pid_control_step(yaw_tolerance, xy_tolerance):
+                            reached = True
+                            break
+                    
+                    # 停止机器人
+                    self.ros_node.pid_control_active = False
+                    
+                    pose_result = {
+                        "pose_index": idx,
+                        "position": pose_info["position"],
+                        "reached": reached,
+                        "elapsed_time": round(time.time() - start_time, 2)
+                    }
+                    results.append(pose_result)
+                    
+                    logging.info(f"[multipose] 位姿点 {idx+1}/{total_poses} {'到达' if reached else '超时'}, 耗时: {pose_result['elapsed_time']}s")
+                    
+                    # 如果未到达当前位姿点，返回部分结果
+                    if not reached:
+                        return {
+                            "success": False,
+                            "msg": f"在位姿点 {idx + 1}/{total_poses} 超时未到达",
+                            "target": target,
+                            "total_poses": total_poses,
+                            "completed_poses": idx,
+                            "results": results
+                        }
+                
+                # 所有位姿点都已到达
+                return {
+                    "success": True,
+                    "msg": f"已完成 {target} 的所有 {total_poses} 个位姿点导航",
+                    "target": target,
+                    "total_poses": total_poses,
+                    "completed_poses": total_poses,
+                    "results": results
+                }
+            except Exception as e:
+                return {"success": False, "msg": f"多位姿导航失败: {str(e)}"}
+
+        @self.mcp.tool()
         def set_goal_by_lonlat(lon: float, lat: float, distance: float = 1.5) -> Dict[str, Any]:
             """
             根据输入的经纬度导航到目标点附近
