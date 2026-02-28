@@ -2,7 +2,7 @@
 import rclpy  # ROS2 Python客户端库
 from rclpy.node import Node  # ROS节点基类
 from rclpy.executors import SingleThreadedExecutor  # 单线程执行器
-from geometry_msgs.msg import PoseStamped, Twist  # 位姿消息类型和速度控制消息类型
+from geometry_msgs.msg import PoseStamped, Twist, TwistStamped  # 位姿消息类型和速度控制消息类型
 from nav_msgs.msg import OccupancyGrid  # 占据网格消息类型
 from action_msgs.msg import GoalStatus, GoalStatusArray  # Action状态消息
 import logging  # 日志记录库
@@ -89,6 +89,20 @@ class MCPNavNode(Node):
             self.tf_ready = False  # TF是否可用（定位是否成功）
             self.tf_fail_count = 0  # TF连续失败计数
             self.tf_fail_threshold = 10  # 连续失败多少次认为定位丢失
+            
+            # 底盘速度反馈订阅（用于检测卡住状态）
+            self.chassis_speed = None  # 当前底盘速度反馈
+            self.chassis_speed_sub = self.create_subscription(
+                TwistStamped,
+                '/motion_control/chassis_speed',
+                self.chassis_speed_callback,
+                10
+            )
+            # 卡住检测相关变量
+            self.stuck_check_threshold = 0.01  # 速度阈值，低于此值认为没有移动
+            self.cmd_vel_sent = None  # 最近发送的速度命令
+            self.stuck_count = 0  # 连续卡住计数
+            self.stuck_count_threshold = 10  # 连续多少次认为卡住（约0.5秒@50ms周期）
             
             # 音频文件路径
             self.audio_dir = os.path.join(os.path.dirname(__file__), 'audio')
@@ -198,6 +212,49 @@ class MCPNavNode(Node):
                 
         except Exception as e:
             self.get_logger().error(f"更新机器人位姿时出错: {e}")
+
+    def chassis_speed_callback(self, msg: TwistStamped):
+        """
+        底盘速度反馈回调函数
+        
+        参数:
+        msg: TwistStamped消息，包含底盘实际速度
+        """
+        self.chassis_speed = msg.twist
+
+    def is_robot_stuck(self) -> bool:
+        """
+        检测机器人是否被卡住
+        
+        返回:
+        bool: True表示机器人被卡住，False表示正常
+        """
+        # 如果没有发送过速度命令或没有底盘反馈，不认为卡住
+        if self.cmd_vel_sent is None or self.chassis_speed is None:
+            return False
+        
+        # 计算发送的速度幅值
+        cmd_linear = (self.cmd_vel_sent.linear.x**2 + self.cmd_vel_sent.linear.y**2) ** 0.5
+        cmd_angular = abs(self.cmd_vel_sent.angular.z)
+        
+        # 计算反馈的速度幅值
+        feedback_linear = (self.chassis_speed.linear.x**2 + self.chassis_speed.linear.y**2) ** 0.5
+        feedback_angular = abs(self.chassis_speed.angular.z)
+        
+        # 如果发送了速度但反馈接近0，认为可能卡住
+        cmd_magnitude = cmd_linear + cmd_angular
+        feedback_magnitude = feedback_linear + feedback_angular
+        
+        if cmd_magnitude > self.stuck_check_threshold and feedback_magnitude < self.stuck_check_threshold:
+            self.stuck_count += 1
+            if self.stuck_count >= self.stuck_count_threshold:
+                self.get_logger().warn(f"检测到机器人卡住: 发送速度={cmd_magnitude:.3f}, 反馈速度={feedback_magnitude:.3f}")
+                return True
+        else:
+            # 速度正常，重置计数
+            self.stuck_count = 0
+        
+        return False
 
     def play_audio(self, filename):
         """
@@ -460,6 +517,19 @@ class MCPNavNode(Node):
 
         # 发布速度控制指令
         self.cmd_vel_pub.publish(cmd_vel)
+        # 记录发送的速度命令（用于卡住检测）
+        self.cmd_vel_sent = cmd_vel
+        
+        # 检测是否卡住
+        if self.is_robot_stuck():
+            self.get_logger().error("机器人被卡住，停止PID控制")
+            # 发送停止命令
+            stop_cmd = Twist()
+            self.cmd_vel_pub.publish(stop_cmd)
+            self.cmd_vel_sent = None
+            self.stuck_count = 0
+            self.pid_control_active = False
+            return False
 
         # # 设置10ms后停止的定时器
         # if self.stop_timer is not None:
