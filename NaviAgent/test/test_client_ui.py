@@ -344,6 +344,7 @@ class MCPClientUI:
 
     def start_patrol(self):
         """开始巡检"""
+        logger.info("开始巡检")
         self.is_patrolling = True
         self.patrol_btn.configure(text="暂停")
         self.stop_patrol_btn.configure(state=tk.NORMAL)
@@ -351,6 +352,7 @@ class MCPClientUI:
 
     def pause_patrol(self):
         """暂停巡检"""
+        logger.info("暂停巡检")
         self.is_patrolling = False
         self.patrol_btn.configure(text="继续")
         self.schedule_async(self._async_pause_navigation())

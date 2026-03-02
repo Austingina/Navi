@@ -18,6 +18,9 @@ from fastmcp import Client
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# 关闭 httpx 的请求日志
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 
 class KeyboardHandler:
     """非阻塞键盘输入处理器"""
@@ -59,8 +62,26 @@ class SimplePatrolClient:
         
         # 巡检序列（按顺序）
         self.patrol_sequence = [
-            "机器人巡检起点",
-            "违停车辆处",
+            "东门-出门方向",
+            # "control point 1",
+            # "control point 2",
+            # "control point 3",
+            # "control point 4",
+            # "control point 5",
+            # "control point 6",
+            # "control point 7",
+            # "control point 8",
+            # "control point 9",
+            # "control point 10", 
+            # "control point 11", 
+            # "control point 12", 
+            # "control point 13", 
+            # "control point 14", 
+            # "control point 15", 
+            # "control point 16", 
+            # "control point 17",
+            # "control point 18",
+            # "charging point end" 
         ]
 
     async def start_patrol_test(self):
@@ -85,7 +106,6 @@ class SimplePatrolClient:
             if len(self.patrol_sequence) == 0:
                 self.patrol_sequence = self.pose_list.copy()
                 logger.info(f"📋 巡检序列为空，使用服务器点位列表: {' -> '.join(self.patrol_sequence)}")
-
 
             # 1. 获取初始状态
             logger.info("🔍 检查服务器连接和机器人状态...")
@@ -159,7 +179,7 @@ class SimplePatrolClient:
                 logger.info(f"🎯 下发目标点: {waypoint}")
                 
                 # 直接发送目标点名称，让服务端处理数据类型转换
-                goal_result = await client.call_tool("set_goal", {"target": waypoint})
+                goal_result = await client.call_tool("set_goal_by_multipose", {"target": waypoint})
                 goal_data = json.loads(goal_result.content[0].text)
                 
                 if not goal_data.get("success"):
