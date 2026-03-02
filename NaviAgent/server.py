@@ -139,7 +139,7 @@ class NavigationToolManager:
                 return {"success": False, "msg": f"设置目标失败: {str(e)}"}
 
         @self.mcp.tool()
-        async def set_goal_by_multipose(target: str, timeout_per_pose: float = 120.0, xy_tolerance: float = 0.04, yaw_tolerance: float = 0.05) -> Dict[str, Any]:
+        async def set_goal_by_multipose(target: str, timeout_per_pose: float = 60.0, xy_tolerance: float = 0.04, yaw_tolerance: float = 0.05) -> Dict[str, Any]:
             """
             导航到multi_pose类型点位的所有位姿，依次到达每个位姿点
             使用PID控制直接到达目标，跳过nav2导航

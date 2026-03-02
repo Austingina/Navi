@@ -436,6 +436,8 @@ class MCPNavNode(Node):
         返回:
         bool: True表示已到达目标，False表示仍在调整
         """
+        if not self.pid_control_active:
+            return False
         timestamp = self.get_clock().now().to_msg()
 
         if not (self.current_pose and self.last_goal):
