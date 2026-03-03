@@ -1,0 +1,4 @@
+# Ignore 3d_bbs build directory
+__pycache__/
+datasets/
+
