@@ -152,6 +152,7 @@ geometry_msgs::msg::PoseStamped msg_body_pose;
 bool use_relocalize_hint = false;  // Whether to use hint position for search range
 Eigen::Vector3f relocalize_hint_pos(0.0f, 0.0f, 0.0f);  // Hint position for relocalize
 float relocalize_xy_range = 5.0f;  // XY search range (±5m)
+float relocalize_z_range = 1.0f;   // Z search range (±1m)
 Eigen::Vector3f map_min_z(0.0f, 0.0f, 0.0f);  // Map min z from point cloud
 Eigen::Vector3f map_max_z(0.0f, 0.0f, 0.0f);  // Map max z from point cloud
 
@@ -888,19 +889,23 @@ bool global_localize(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr
 
     // Set search range based on hint position if available
     if (use_relocalize_hint) {
+        // Calculate z search range, clamp to map bounds
+        float z_min = std::max(relocalize_hint_pos.z() - relocalize_z_range, map_min_z.z());
+        float z_max = std::min(relocalize_hint_pos.z() + relocalize_z_range, map_max_z.z());
+        
         Eigen::Vector3f min_xyz(
             relocalize_hint_pos.x() - relocalize_xy_range,
             relocalize_hint_pos.y() - relocalize_xy_range,
-            map_min_z.z()  // Use full map z range
+            z_min  // Use hint z with range
         );
         Eigen::Vector3f max_xyz(
             relocalize_hint_pos.x() + relocalize_xy_range,
             relocalize_hint_pos.y() + relocalize_xy_range,
-            map_max_z.z()  // Use full map z range
+            z_max  // Use hint z with range
         );
         bbs3d_ptr->set_trans_search_range(min_xyz, max_xyz);
         std::cout << "[Relocalize] Using hint position (" << relocalize_hint_pos.x() << ", " 
-                  << relocalize_hint_pos.y() << "), search range: xy=[" 
+                  << relocalize_hint_pos.y() << ", " << relocalize_hint_pos.z() << "), search range: xy=[" 
                   << min_xyz.x() << "~" << max_xyz.x() << ", " 
                   << min_xyz.y() << "~" << max_xyz.y() << "], z=[" 
                   << min_xyz.z() << "~" << max_xyz.z() << "]" << std::endl;
@@ -1061,6 +1066,8 @@ public:
         this->declare_parameter<double>("bbs3d.score_threshold", 0.8);
         this->declare_parameter<double>("bbs3d.voxel_size", 0.15);
         this->declare_parameter<double>("bbs3d.min_level_res", 0.6);
+        this->declare_parameter<float>("bbs3d.xy_range", 5.0);
+        this->declare_parameter<float>("bbs3d.z_range", 1.0);
 
         this->get_parameter_or<bool>("publish.path_en", path_en, true);
         this->get_parameter_or<bool>("publish.effect_map_en", effect_pub_en, false);
@@ -1101,6 +1108,8 @@ public:
         this->get_parameter_or<double>("bbs3d.score_threshold", bbs3d_score_threshold, 0.8);
         this->get_parameter_or<double>("bbs3d.voxel_size", bbs3d_voxel_size, 0.15);
         this->get_parameter_or<double>("bbs3d.min_level_res", bbs3d_min_level_res, 0.6);
+        this->get_parameter_or<float>("bbs3d.xy_range", relocalize_xy_range, 5.0f);
+        this->get_parameter_or<float>("bbs3d.z_range", relocalize_z_range, 1.0f);
 
 	pcd_save_en = false;
 
@@ -1368,13 +1377,13 @@ private:
 
     void relocalize_pose_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg)
     {
-        RCLCPP_INFO(this->get_logger(), "trigger global relocalization with hint position (%.2f, %.2f)...", 
-                    msg->pose.position.x, msg->pose.position.y);
+        RCLCPP_INFO(this->get_logger(), "trigger global relocalization with hint position (%.2f, %.2f, %.2f)...", 
+                    msg->pose.position.x, msg->pose.position.y, msg->pose.position.z);
         use_relocalize_hint = true;
         relocalize_hint_pos = Eigen::Vector3f(
             static_cast<float>(msg->pose.position.x),
             static_cast<float>(msg->pose.position.y),
-            0.0f  // z is ignored, we use full map z range
+            static_cast<float>(msg->pose.position.z)  // Use z value for search range
         );
         flg_first_scan = true;
     }
