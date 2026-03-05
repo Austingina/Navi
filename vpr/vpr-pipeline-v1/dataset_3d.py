@@ -87,11 +87,30 @@ class VPRDataset(data.Dataset):
                 [(path.split("@")[1], path.split("@")[2], path.split("@")[3]) for path in self.queries_paths]
             ).astype(float)
 
+            # 分别用 xy 平面距离和 z 差异来判断正样本
+            # 条件：xy 距离 <= positive_dist_threshold 且 |z差| <= 1.0
+            database_xy = self.database_utms[:, :2]
+            database_z = self.database_utms[:, 2]
+            queries_xy = self.queries_utms[:, :2]
+            queries_z = self.queries_utms[:, 2]
+
+            # 用 xy 坐标做 knn 搜索
             knn = NearestNeighbors(n_jobs=-1)
-            knn.fit(self.database_utms)
-            self.positives_per_query = knn.radius_neighbors(
-                self.queries_utms, radius=positive_dist_threshold, return_distance=False
+            knn.fit(database_xy)
+            xy_neighbors = knn.radius_neighbors(
+                queries_xy, radius=positive_dist_threshold, return_distance=False
             )
+
+            # 过滤：只保留 z 差异在 1.0 以内的
+            z_threshold = 1.0
+            self.positives_per_query = []
+            for qi, db_indices in enumerate(xy_neighbors):
+                valid_indices = [
+                    idx for idx in db_indices
+                    if abs(queries_z[qi] - database_z[idx]) <= z_threshold
+                ]
+                self.positives_per_query.append(np.array(valid_indices))
+            self.positives_per_query = np.array(self.positives_per_query, dtype=object)
 
         transformations = [
             transforms.ToTensor(),

@@ -97,7 +97,7 @@ def load_poses_from_imgpose_file(path, prefix="left"):
         left_0001 -0.000113 -0.000093 0.000036 0 0 0 0 0 0 1 1772004062.900
 
     Only reads lines where index starts with the given prefix (default: 'left').
-    Returns list of (x, y, timestamp) tuples in file order.
+    Returns list of (x, y, z, timestamp) tuples in file order.
     """
     poses = []
     with open(path) as f:
@@ -112,9 +112,9 @@ def load_poses_from_imgpose_file(path, prefix="left"):
             # 只读取 prefix 开头的行
             if not index.startswith(prefix):
                 continue
-            x, y = float(parts[1]), float(parts[2])
+            x, y, z = float(parts[1]), float(parts[2]), float(parts[3])
             timestamp = float(parts[11])
-            poses.append((x, y, timestamp))
+            poses.append((x, y, z, timestamp))
     return poses
 
 
@@ -245,12 +245,12 @@ def extract_from_ros1(args):
                 unmatched += 1
                 continue
 
-            x, y, pose_ts = poses[frame_index]
+            x, y, z, pose_ts = poses[frame_index]
             role = sampler.classify(x, y)
             if role == "skip":
                 continue
 
-            fname = f"@{x:.6f}@{y:.6f}@{timestamp}@.jpg"
+            fname = f"@{x:.6f}@{y:.6f}@{z:.6f}@{timestamp}@.jpg"
             out_dir = db_dir if role == "database" else q_dir
             path = os.path.join(out_dir, fname)
 
