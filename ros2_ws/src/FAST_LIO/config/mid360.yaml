@@ -47,6 +47,8 @@
             voxel_size: 0.15 # used for gicp 
             score_threshold: 0.9
             min_level_res: 0.8 #userd for bbs3d min level resolution
+            xy_range: 25.0
+            z_range: 1.0
         pcd_save:
             pcd_save_en: true
             interval: -1                 # how many LiDAR frames saved in each pcd file; 
