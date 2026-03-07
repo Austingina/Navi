@@ -96,6 +96,7 @@ double ndt_thresh = 1.0;
 double bbs3d_score_threshold = 0.8;
 double bbs3d_voxel_size = 0.15;
 double bbs3d_min_level_res = 0.6;
+int bbs3d_max_level = 6;
 double res_mean_last = 0.05, total_residual = 0.0;
 double last_timestamp_lidar = 0, last_timestamp_imu = -1.0;
 double gyr_cov = 0.1, acc_cov = 0.1, b_gyr_cov = 0.0001, b_acc_cov = 0.0001;
@@ -840,7 +841,7 @@ bool load_map(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLas
     // teaser::FPFHEstimation fpfh;
     // scene_descriptors = fpfh.computeFPFHFeatures(tgt_cloud, voxel_size * 2, voxel_size * 5);
 
-    bbs3d_ptr->set_tar_points(tar_points, bbs3d_min_level_res, 6);
+    bbs3d_ptr->set_tar_points(tar_points, bbs3d_min_level_res, bbs3d_max_level);
     bbs3d_ptr->set_trans_search_range(tar_points);
     bbs3d_ptr->set_angular_search_range({-0.02,-0.02,0.0}, {0.02,0.02,6.28});
     bbs3d_ptr->set_score_threshold_percentage(bbs3d_score_threshold);
@@ -1066,6 +1067,7 @@ public:
         this->declare_parameter<double>("bbs3d.score_threshold", 0.8);
         this->declare_parameter<double>("bbs3d.voxel_size", 0.15);
         this->declare_parameter<double>("bbs3d.min_level_res", 0.6);
+        this->declare_parameter<int>("bbs3d.max_level", 6);
         this->declare_parameter<float>("bbs3d.xy_range", 5.0);
         this->declare_parameter<float>("bbs3d.z_range", 1.0);
 
@@ -1108,6 +1110,7 @@ public:
         this->get_parameter_or<double>("bbs3d.score_threshold", bbs3d_score_threshold, 0.8);
         this->get_parameter_or<double>("bbs3d.voxel_size", bbs3d_voxel_size, 0.15);
         this->get_parameter_or<double>("bbs3d.min_level_res", bbs3d_min_level_res, 0.6);
+        this->get_parameter_or<int>("bbs3d.max_level", bbs3d_max_level, 6);
         this->get_parameter_or<float>("bbs3d.xy_range", relocalize_xy_range, 5.0f);
         this->get_parameter_or<float>("bbs3d.z_range", relocalize_z_range, 1.0f);
 
