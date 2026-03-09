@@ -376,6 +376,118 @@ def extract_from_ros2(args):
 
 
 # ---------------------------------------------------------------------------
+# Source: ROS2 bag from R1Pro (Odometry + CompressedImage)
+# ---------------------------------------------------------------------------
+
+def extract_from_ros2_of_r1pro(args):
+    """Extract images from a R1Pro ROS2 bag with Odometry and CompressedImage topics.
+    
+    Args:
+        args: Namespace with attributes:
+            - bag_path: Path to the ROS2 bag directory
+            - pose_topic: Odometry topic name (nav_msgs/msg/Odometry)
+            - image_topic: CompressedImage topic name (sensor_msgs/msg/CompressedImage)
+            - output_dir: Output directory for extracted images
+            - db_distance: Minimum distance between database images
+            - query_distance: Minimum distance between query images
+            - num_workers: Number of parallel workers for image saving
+    """
+    import rosbag2_py
+    from rclpy.serialization import deserialize_message
+    from sensor_msgs.msg import CompressedImage
+    from nav_msgs.msg import Odometry
+
+    db_dir, q_dir = _make_output_dirs(args.output_dir)
+    bag_path = args.bag_path
+    if bag_path.endswith(".db3"):
+        bag_path = os.path.dirname(bag_path) or "."
+
+    def _create_reader(uri):
+        reader = rosbag2_py.SequentialReader()
+        opts = rosbag2_py.StorageOptions(uri=uri, storage_id="sqlite3")
+        conv = rosbag2_py.ConverterOptions(
+            input_serialization_format="cdr", output_serialization_format="cdr"
+        )
+        reader.open(opts, conv)
+        return reader
+
+    # Pass 1: extract poses from Odometry topic
+    print(f"[1/2] Reading poses from {args.pose_topic} ...")
+    t0 = time.time()
+    reader = _create_reader(bag_path)
+    reader.set_filter(rosbag2_py.StorageFilter(topics=[args.pose_topic]))
+
+    poses = []
+    while reader.has_next():
+        topic, data, t = reader.read_next()
+        odom_msg = deserialize_message(data, Odometry)
+        ts = odom_msg.header.stamp.sec * 10**9 + odom_msg.header.stamp.nanosec
+        x = odom_msg.pose.pose.position.x
+        y = odom_msg.pose.pose.position.y
+        z = odom_msg.pose.pose.position.z
+        poses.append((ts, x, y, z))
+    poses.sort(key=lambda p: p[0])
+    pose_timestamps = [p[0] for p in poses]
+    print(f"  Found {len(poses)} poses in {time.time() - t0:.1f}s")
+
+    if not poses:
+        raise RuntimeError(f"No poses found on {args.pose_topic}")
+
+    def find_nearest_pose_3d(query_ts):
+        """Binary search for the pose closest in time to query_ts."""
+        idx = bisect.bisect_left(pose_timestamps, query_ts)
+        candidates = []
+        if idx > 0:
+            candidates.append(idx - 1)
+        if idx < len(pose_timestamps):
+            candidates.append(idx)
+        if not candidates:
+            return None
+        best = min(candidates, key=lambda i: abs(pose_timestamps[i] - query_ts))
+        return poses[best]
+
+    # Pass 2: extract images from CompressedImage topic
+    print(f"[2/2] Extracting images from {args.image_topic} ...")
+    reader = _create_reader(bag_path)
+    reader.set_filter(rosbag2_py.StorageFilter(topics=[args.image_topic]))
+
+    sampler = DistanceSampler(args.db_distance, args.query_distance)
+    raw_count = 0
+    futures = []
+
+    with ProcessPoolExecutor(max_workers=args.num_workers) as pool:
+        while reader.has_next():
+            topic, data, t = reader.read_next()
+            img_msg = deserialize_message(data, CompressedImage)
+            img_ts = img_msg.header.stamp.sec * 10**9 + img_msg.header.stamp.nanosec
+            
+            pose = find_nearest_pose_3d(img_ts)
+            if pose is None:
+                continue
+                
+            _, x, y, z = pose
+            raw_count += 1
+
+            role = sampler.classify(x, y)
+            if role == "skip":
+                continue
+
+            fname = f"@{x:.6f}@{y:.6f}@{z:.6f}@{img_ts}@.jpg"
+            out_dir = db_dir if role == "database" else q_dir
+            path = os.path.join(out_dir, fname)
+            
+            img_data = bytes(img_msg.data)
+            futures.append(pool.submit(save_compressed_bytes, img_data, path))
+
+            if raw_count % 500 == 0:
+                _print_progress(raw_count, sampler, t0)
+
+        _wait_for_futures(futures)
+
+    _print_summary(raw_count, sampler, 0, t0, db_dir, q_dir)
+
+
+# ---------------------------------------------------------------------------
 # Source: plain image folder
 # ---------------------------------------------------------------------------
 
@@ -539,7 +651,7 @@ def main():
     elif args.source == "ros2":
         if not args.bag_path:
             parser.error("--source=ros2 requires --bag_path")
-        extract_from_ros2(args)
+        extract_from_ros2_of_r1pro(args)
 
     elif args.source == "folder":
         if not args.image_dir or not args.pose_file:
