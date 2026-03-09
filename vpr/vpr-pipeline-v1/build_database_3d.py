@@ -186,6 +186,67 @@ def save_compressed_bytes(img_bytes, path, quality=90):
     return path
 
 
+# R1Pro camera intrinsics and distortion coefficients
+R1PRO_CAMERA_MATRIX = np.array([
+    [1012.5934446010, 0, 959.1535002056],
+    [0, 1012.7695042461, 538.7995847097],
+    [0, 0, 1]
+], dtype=np.float64)
+
+R1PRO_DIST_COEFFS = np.array([
+    0.3278033404,   # K1
+    -0.1678714011,  # K2
+    0.0000012166,   # P1
+    0.0000388473,   # P2
+    -0.0124574817,  # K3
+    0.7233630949,   # K4
+    -0.1359816721,  # K5
+    -0.0630068024   # K6
+], dtype=np.float64)
+
+# Precomputed undistortion maps (will be initialized on first use)
+_r1pro_undistort_maps = None
+
+def undistort_r1pro_image(img_array):
+    """Undistort image using R1Pro camera parameters (rational model)."""
+    global _r1pro_undistort_maps
+    
+    h, w = img_array.shape[:2]
+    
+    if _r1pro_undistort_maps is None:
+        # Compute optimal new camera matrix
+        new_camera_matrix, roi = cv2.getOptimalNewCameraMatrix(
+            R1PRO_CAMERA_MATRIX, R1PRO_DIST_COEFFS, (w, h), 1, (w, h)
+        )
+        # Precompute undistortion maps for efficiency
+        map1, map2 = cv2.initUndistortRectifyMap(
+            R1PRO_CAMERA_MATRIX, R1PRO_DIST_COEFFS, None,
+            new_camera_matrix, (w, h), cv2.CV_16SC2
+        )
+        _r1pro_undistort_maps = (map1, map2, roi)
+    
+    map1, map2, roi = _r1pro_undistort_maps
+    undistorted = cv2.remap(img_array, map1, map2, cv2.INTER_LINEAR)
+    
+    # Optionally crop to ROI
+    # x, y, w, h = roi
+    # undistorted = undistorted[y:y+h, x:x+w]
+    
+    return undistorted
+
+
+def save_compressed_bytes_undistorted(img_bytes, path, quality=90):
+    """Decode compressed image bytes, undistort, and save as JPEG."""
+    # Decode image
+    img_array = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
+    # Undistort
+    undistorted = undistort_r1pro_image(img_array)
+    # Convert BGR to RGB and save
+    rgb = cv2.cvtColor(undistorted, cv2.COLOR_BGR2RGB)
+    Image.fromarray(rgb).save(path, quality=quality)
+    return path
+
+
 def undistort_and_save(img_bytes, undistorter, path, quality=90):
     """Decode, undistort fisheye, save as JPEG."""
     rgb = undistorter.undistort_bytes(img_bytes)
@@ -477,7 +538,7 @@ def extract_from_ros2_of_r1pro(args):
             path = os.path.join(out_dir, fname)
             
             img_data = bytes(img_msg.data)
-            futures.append(pool.submit(save_compressed_bytes, img_data, path))
+            futures.append(pool.submit(save_compressed_bytes_undistorted, img_data, path))
 
             if raw_count % 500 == 0:
                 _print_progress(raw_count, sampler, t0)
