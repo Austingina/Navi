@@ -204,35 +204,9 @@ R1PRO_DIST_COEFFS = np.array([
     -0.0630068024   # K6
 ], dtype=np.float64)
 
-# Precomputed undistortion maps (will be initialized on first use)
-_r1pro_undistort_maps = None
-
 def undistort_r1pro_image(img_array):
     """Undistort image using R1Pro camera parameters (rational model)."""
-    global _r1pro_undistort_maps
-    
-    h, w = img_array.shape[:2]
-    
-    if _r1pro_undistort_maps is None:
-        # Compute optimal new camera matrix
-        new_camera_matrix, roi = cv2.getOptimalNewCameraMatrix(
-            R1PRO_CAMERA_MATRIX, R1PRO_DIST_COEFFS, (w, h), 1, (w, h)
-        )
-        # Precompute undistortion maps for efficiency
-        map1, map2 = cv2.initUndistortRectifyMap(
-            R1PRO_CAMERA_MATRIX, R1PRO_DIST_COEFFS, None,
-            new_camera_matrix, (w, h), cv2.CV_16SC2
-        )
-        _r1pro_undistort_maps = (map1, map2, roi)
-    
-    map1, map2, roi = _r1pro_undistort_maps
-    undistorted = cv2.remap(img_array, map1, map2, cv2.INTER_LINEAR)
-    
-    # Optionally crop to ROI
-    # x, y, w, h = roi
-    # undistorted = undistorted[y:y+h, x:x+w]
-    
-    return undistorted
+    return cv2.undistort(img_array, R1PRO_CAMERA_MATRIX, R1PRO_DIST_COEFFS)
 
 
 def save_compressed_bytes_undistorted(img_bytes, path, quality=90):
@@ -241,9 +215,8 @@ def save_compressed_bytes_undistorted(img_bytes, path, quality=90):
     img_array = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
     # Undistort
     undistorted = undistort_r1pro_image(img_array)
-    # Convert BGR to RGB and save
-    rgb = cv2.cvtColor(undistorted, cv2.COLOR_BGR2RGB)
-    Image.fromarray(rgb).save(path, quality=quality)
+    # Save as JPEG (OpenCV uses BGR, no conversion needed)
+    cv2.imwrite(path, undistorted)
     return path
 
 
@@ -514,36 +487,34 @@ def extract_from_ros2_of_r1pro(args):
 
     sampler = DistanceSampler(args.db_distance, args.query_distance)
     raw_count = 0
-    futures = []
+    saved_count = 0
 
-    with ProcessPoolExecutor(max_workers=args.num_workers) as pool:
-        while reader.has_next():
-            topic, data, t = reader.read_next()
-            img_msg = deserialize_message(data, CompressedImage)
-            img_ts = img_msg.header.stamp.sec * 10**9 + img_msg.header.stamp.nanosec
+    while reader.has_next():
+        topic, data, t = reader.read_next()
+        img_msg = deserialize_message(data, CompressedImage)
+        img_ts = img_msg.header.stamp.sec * 10**9 + img_msg.header.stamp.nanosec
+        
+        pose = find_nearest_pose_3d(img_ts)
+        if pose is None:
+            continue
             
-            pose = find_nearest_pose_3d(img_ts)
-            if pose is None:
-                continue
-                
-            _, x, y, z = pose
-            raw_count += 1
+        _, x, y, z = pose
+        raw_count += 1
 
-            role = sampler.classify(x, y)
-            if role == "skip":
-                continue
+        role = sampler.classify(x, y)
+        if role == "skip":
+            continue
 
-            fname = f"@{x:.6f}@{y:.6f}@{z:.6f}@{img_ts}@.jpg"
-            out_dir = db_dir if role == "database" else q_dir
-            path = os.path.join(out_dir, fname)
-            
-            img_data = bytes(img_msg.data)
-            futures.append(pool.submit(save_compressed_bytes_undistorted, img_data, path))
+        fname = f"@{x:.6f}@{y:.6f}@{z:.6f}@{img_ts}@.jpg"
+        out_dir = db_dir if role == "database" else q_dir
+        path = os.path.join(out_dir, fname)
+        
+        img_data = bytes(img_msg.data)
+        save_compressed_bytes_undistorted(img_data, path)
+        saved_count += 1
 
-            if raw_count % 500 == 0:
-                _print_progress(raw_count, sampler, t0)
-
-        _wait_for_futures(futures)
+        if raw_count % 500 == 0:
+            _print_progress(raw_count, sampler, t0)
 
     _print_summary(raw_count, sampler, 0, t0, db_dir, q_dir)
 
