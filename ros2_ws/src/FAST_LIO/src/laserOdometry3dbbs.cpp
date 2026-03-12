@@ -57,6 +57,7 @@
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 #include <std_srvs/srv/trigger.hpp>
+#include <std_msgs/msg/string.hpp>
 #include <tf2_ros/transform_broadcaster.h>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <geometry_msgs/msg/vector3.hpp>
@@ -1190,6 +1191,10 @@ public:
             "relocalize_pose", 10, 
             std::bind(&LaserOdometryNode::relocalize_pose_callback, this, std::placeholders::_1));
 
+        change_map_sub_ = this->create_subscription<std_msgs::msg::String>(
+            "change_map", 10,
+            std::bind(&LaserOdometryNode::change_map_callback, this, std::placeholders::_1));
+
         RCLCPP_INFO(this->get_logger(), "Node init finished.");
     }
 
@@ -1391,6 +1396,29 @@ private:
         flg_first_scan = true;
     }
 
+    void change_map_callback(const std_msgs::msg::String::SharedPtr msg)
+    {
+        std::string new_map_path = msg->data;
+        RCLCPP_INFO(this->get_logger(), "Received change_map request: %s", new_map_path.c_str());
+
+        // Clear existing ikdtree by rebuilding with empty point cloud
+        PointVector empty_cloud;
+        ikdtree.Build(empty_cloud);
+
+        // Load new map
+        if (!load_map(pubLaserCloudMap_, new_map_path)) {
+            RCLCPP_ERROR(this->get_logger(), "Failed to load new map: %s", new_map_path.c_str());
+            return;
+        }
+
+        // Update map file path
+        map_file_path = new_map_path;
+
+        // Trigger relocalization
+        flg_first_scan = true;
+        RCLCPP_INFO(this->get_logger(), "Map switched to: %s, relocalization triggered.", new_map_path.c_str());
+    }
+
 private:
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudFull_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudFull_body_;
@@ -1406,6 +1434,7 @@ private:
     rclcpp::TimerBase::SharedPtr timer_;
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr relocalize_srv_;
     rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr relocalize_pose_sub_;
+    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr change_map_sub_;
 
     bool effect_pub_en = false, map_pub_en = false;
     int effect_feat_num = 0, frame_num = 0;
