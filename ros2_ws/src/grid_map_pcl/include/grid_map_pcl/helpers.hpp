@@ -29,21 +29,21 @@ constexpr const char* kElevationLayer = "elevation";
 constexpr const char* kSlopeLayer = "slope";
 constexpr const char* kTraversabilityLayer = "traversability";  
 
-void setVerbosityLevelToDebugIfFlagSet(rclcpp::Node::SharedPtr & node);
+void setVerbosityLevelToDebugIfFlagSet(const rclcpp::Node::SharedPtr & node);
 
-std::string getParameterPath(rclcpp::Node::SharedPtr & node);
+std::string getParameterPath(const rclcpp::Node::SharedPtr & node);
 
-std::string getOutputBagPath(rclcpp::Node::SharedPtr & node);
+std::string getOutputBagPath(const rclcpp::Node::SharedPtr & node);
 
-std::string getPcdFilePath(rclcpp::Node::SharedPtr & node);
+std::string getPcdFilePath(const rclcpp::Node::SharedPtr & node);
 
-std::string getMapFrame(rclcpp::Node::SharedPtr & node);
+std::string getMapFrame(const rclcpp::Node::SharedPtr & node);
 
-std::string getMapRosbagTopic(rclcpp::Node::SharedPtr & node);
+std::string getMapRosbagTopic(const rclcpp::Node::SharedPtr & node);
 
 
 void saveGridMap(
-  const grid_map::GridMap & gridMap, rclcpp::Node::SharedPtr & node,
+  const grid_map::GridMap & gridMap, const rclcpp::Node::SharedPtr & node,
   const std::string & mapTopic);
 
 inline void printTimeElapsedToRosInfoStream(
@@ -59,7 +59,7 @@ inline void printTimeElapsedToRosInfoStream(
 
 void processPointcloud(
   grid_map::GridMapPclLoader * gridMapPclLoader,
-  rclcpp::Node::SharedPtr & node);
+  const rclcpp::Node::SharedPtr & node);
 
 using Point = ::pcl::PointXYZ;
 using Pointcloud = ::pcl::PointCloud<Point>;

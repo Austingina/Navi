@@ -33,9 +33,14 @@ namespace grid_map_pcl
 {
 
 
-void setVerbosityLevelToDebugIfFlagSet(rclcpp::Node::SharedPtr & node)
+void setVerbosityLevelToDebugIfFlagSet(const rclcpp::Node::SharedPtr & node)
 {
-  bool isSetVerbosityLevelToDebug = node->declare_parameter("set_verbosity_to_debug", false);
+  bool isSetVerbosityLevelToDebug = false;
+  if (!node->has_parameter("set_verbosity_to_debug")) {
+    isSetVerbosityLevelToDebug = node->declare_parameter("set_verbosity_to_debug", false);
+  } else {
+    node->get_parameter("set_verbosity_to_debug", isSetVerbosityLevelToDebug);
+  }
 
   if (!isSetVerbosityLevelToDebug) {
     return;
@@ -51,24 +56,28 @@ void setVerbosityLevelToDebugIfFlagSet(rclcpp::Node::SharedPtr & node)
   }
 }
 
-std::string getParameterPath(rclcpp::Node::SharedPtr & node)
+std::string getParameterPath(const rclcpp::Node::SharedPtr & node)
 {
   // Default path: package share directory + config/parameters.yaml
   std::string defaultPath = ament_index_cpp::get_package_share_directory("grid_map_pcl") +
     "/config/parameters.yaml";
-  node->declare_parameter("config_file_path", defaultPath);
+  if (!node->has_parameter("config_file_path")) {
+    node->declare_parameter("config_file_path", defaultPath);
+  }
   
   std::string filePath;
   node->get_parameter("config_file_path", filePath);
   return filePath;
 }
 
-std::string getOutputBagPath(rclcpp::Node::SharedPtr & node)
+std::string getOutputBagPath(const rclcpp::Node::SharedPtr & node)
 {
   if (!node->has_parameter("folder_path")) {
     node->declare_parameter("folder_path", std::string(""));
   }
-  node->declare_parameter("output_grid_map", "output_grid_map.bag");
+  if (!node->has_parameter("output_grid_map")) {
+    node->declare_parameter("output_grid_map", "output_grid_map.bag");
+  }
 
   std::string outputRosbagName, folderPath;
   node->get_parameter("folder_path", folderPath);
@@ -77,12 +86,14 @@ std::string getOutputBagPath(rclcpp::Node::SharedPtr & node)
   return pathToOutputBag;
 }
 
-std::string getPcdFilePath(rclcpp::Node::SharedPtr & node)
+std::string getPcdFilePath(const rclcpp::Node::SharedPtr & node)
 {
   if (!node->has_parameter("folder_path")) {
     node->declare_parameter("folder_path", std::string(""));
   }
-  node->declare_parameter("pcd_filename", "input_cloud");
+  if (!node->has_parameter("pcd_filename")) {
+    node->declare_parameter("pcd_filename", "input_cloud");
+  }
 
   std::string inputCloudName, folderPath;
   node->get_parameter("folder_path", folderPath);
@@ -91,18 +102,22 @@ std::string getPcdFilePath(rclcpp::Node::SharedPtr & node)
   return pathToCloud;
 }
 
-std::string getMapFrame(rclcpp::Node::SharedPtr & node)
+std::string getMapFrame(const rclcpp::Node::SharedPtr & node)
 {
-  node->declare_parameter("map_frame", std::string("map"));
+  if (!node->has_parameter("map_frame")) {
+    node->declare_parameter("map_frame", std::string("map"));
+  }
 
   std::string mapFrame;
   node->get_parameter("map_frame", mapFrame);
   return mapFrame;
 }
 
-std::string getMapRosbagTopic(rclcpp::Node::SharedPtr & node)
+std::string getMapRosbagTopic(const rclcpp::Node::SharedPtr & node)
 {
-  node->declare_parameter("map_rosbag_topic", std::string("grid_map"));
+  if (!node->has_parameter("map_rosbag_topic")) {
+    node->declare_parameter("map_rosbag_topic", std::string("grid_map"));
+  }
 
   std::string mapRosbagTopic;
   node->get_parameter("map_rosbag_topic", mapRosbagTopic);
@@ -110,7 +125,7 @@ std::string getMapRosbagTopic(rclcpp::Node::SharedPtr & node)
 }
 
 void saveGridMap(
-  const grid_map::GridMap & gridMap, rclcpp::Node::SharedPtr & node,
+  const grid_map::GridMap & gridMap, const rclcpp::Node::SharedPtr & node,
   const std::string & mapTopic)
 {
   std::string pathToOutputBag = getOutputBagPath(node);
@@ -123,7 +138,7 @@ void saveGridMap(
 
 void processPointcloud(
   grid_map::GridMapPclLoader * gridMapPclLoader,
-  rclcpp::Node::SharedPtr & node)
+  const rclcpp::Node::SharedPtr & node)
 {
   const auto start = std::chrono::high_resolution_clock::now();
   gridMapPclLoader->preProcessInputCloud();
