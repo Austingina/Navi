@@ -1413,6 +1413,8 @@ private:
 
         // Update map file path
         map_file_path = new_map_path;
+        // 同步更新 ROS2 参数服务器
+        this->set_parameter(rclcpp::Parameter("map_file_path", new_map_path));
 
         // Trigger relocalization
         flg_first_scan = true;
