@@ -57,12 +57,66 @@ class NavigationToolManager:
             # 创建后台守护线程运行ROS消息循环
             self.ros_thread = threading.Thread(target=self._ros_spin_thread, daemon=True)
             self.ros_thread.start()
+            
+            # 同步地图状态：检查 MapManager 与 ROS 节点的当前地图是否一致
+            self._sync_map_state()
         except Exception as e:
             logging.error(f"ROS初始化失败: {e}")
             raise
 
         # 注册MCP工具函数
         self.register_tools()
+
+    def _sync_map_state(self):
+        """
+        同步地图状态
+        
+        检查 MapManager 的当前 submap 与 ROS 节点的当前地图是否一致，
+        如果不一致则调用 change_map 切换到 MapManager 配置的地图
+        """
+        if not self.map_manager:
+            logging.info("未配置 MapManager，跳过地图同步")
+            return
+        
+        try:
+            # 等待一小段时间让 ROS 节点初始化完成
+            import time
+            time.sleep(1.0)
+            
+            # 获取 MapManager 配置的当前 submap
+            expected_submap_id = self.map_manager.get_current_submap()
+            if not expected_submap_id:
+                logging.warning("MapManager 未设置当前 submap，跳过地图同步")
+                return
+            
+            # 获取 ROS 节点当前加载的地图路径
+            current_map_path = self.ros_node.get_current_map_path()
+            
+            if current_map_path:
+                # 根据地图路径获取 submap ID
+                current_submap_id = self.map_manager.get_submap_id_by_map_file(current_map_path)
+                
+                if current_submap_id == expected_submap_id:
+                    logging.info(f"地图状态一致，当前地图: {expected_submap_id}")
+                    return
+                else:
+                    logging.info(f"地图状态不一致: ROS={current_submap_id}, MapManager={expected_submap_id}")
+            else:
+                logging.info(f"无法获取 ROS 节点当前地图路径，将切换到 MapManager 配置的地图: {expected_submap_id}")
+            
+            # 获取目标地图的完整路径并切换
+            target_map_path = self.map_manager.get_submap_full_map_path(expected_submap_id)
+            if target_map_path:
+                success = self.ros_node.change_map(target_map_path)
+                if success:
+                    logging.info(f"已切换地图到: {expected_submap_id} ({target_map_path})")
+                else:
+                    logging.error(f"切换地图失败: {target_map_path}")
+            else:
+                logging.error(f"无法获取 submap {expected_submap_id} 的地图路径")
+                
+        except Exception as e:
+            logging.error(f"同步地图状态失败: {e}")
 
     def _ros_spin_thread(self):
         """
@@ -460,6 +514,44 @@ class NavigationToolManager:
                 return {"success": True, "keys": keys, "count": len(keys)}
             except Exception as e:
                 return {"success": False, "msg": f"获取pose列表失败: {str(e)}"}
+
+        @self.mcp.tool()
+        def get_submap_list() -> Dict[str, Any]:
+            """
+            获取所有子地图 ID 列表
+
+            返回:
+            Dict: {"success": True, "submaps": [...], "count": N}
+            """
+            try:
+                submaps = self.map_manager.get_submap_list()
+                return {"success": True, "submaps": submaps, "count": len(submaps)}
+            except Exception as e:
+                return {"success": False, "msg": f"获取子地图列表失败: {str(e)}"}
+
+        @self.mcp.tool()
+        def get_submap_info(submap_id: str) -> Dict[str, Any]:
+            """
+            获取指定子地图的详细信息
+
+            参数:
+            submap_id: 子地图 ID（如 floor, underground, 5floor）
+
+            返回:
+            Dict: {"success": True, "submap_id": "...", "info": {...}}
+            """
+            try:
+                info = self.map_manager.get_submap_info(submap_id)
+                if info is None:
+                    submaps = self.map_manager.get_submap_list()
+                    return {"success": False, "msg": f"子地图 {submap_id} 不存在，可用子地图: {submaps}"}
+                return {
+                    "success": True,
+                    "submap_id": submap_id,
+                    "info": info
+                }
+            except Exception as e:
+                return {"success": False, "msg": f"获取子地图信息失败: {str(e)}"}
 
         @self.mcp.tool()
         def get_current_map_id() -> Dict[str, Any]:
