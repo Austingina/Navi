@@ -154,6 +154,9 @@ private:
         RCLCPP_DEBUG(this->get_logger(), "Re-published occupancy grid");
       });
 
+    // 同步更新 ROS2 参数服务器
+    this->set_parameter(rclcpp::Parameter("map_file_path", pathToCloud));
+
     RCLCPP_INFO(this->get_logger(), "Map processing completed for: %s", pathToCloud.c_str());
   }
 
