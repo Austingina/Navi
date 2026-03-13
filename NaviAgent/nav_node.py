@@ -22,9 +22,9 @@ import tf2_geometry_msgs
 # 导入action相关库
 from nav2_msgs.action import NavigateToPose
 from rclpy.action import ActionClient
-class MCPNavNode(Node):
+class NavNode(Node):
     """
-    MCP导航节点类
+    导航节点类
     
     功能：
     1. 发布导航目标点到ROS话题
@@ -38,7 +38,7 @@ class MCPNavNode(Node):
             rclpy.init()
         
         # 调用父类构造函数，设置节点名称
-        super().__init__('mcp_nav_node')
+        super().__init__('nav_node')
 
         # 初始化执行器和线程属性
         self.executor = None

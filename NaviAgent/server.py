@@ -9,8 +9,8 @@ import threading  # 线程处理库
 import numpy as np  # 数值计算库
 # 导入自定义模块
 from wgs84 import WGS84Converter 
-from mcp_nav_node import MCPNavNode  # 导入导航节点类
-from semantic_map import MapManager  # 导入多楼层地图管理器
+from nav_node import NavNode  # 导入导航节点类
+from map_manager import MapManager  # 导入多楼层地图管理器
 # 导入FastMCP框架
 from fastmcp import FastMCP
 # 导入ROS相关的库
@@ -47,7 +47,7 @@ class NavigationToolManager:
         # 初始化ROS
         try:
             # # 创建导航节点实例
-            self.ros_node = MCPNavNode()
+            self.ros_node = NavNode()
             # 创建单线程执行器
             self.executor = SingleThreadedExecutor()
             # 将节点添加到执行器
@@ -524,7 +524,7 @@ class NavigationToolManager:
                 if not target_map_path:
                     return {"success": False, "msg": f"无法获取地图 {map_id} 的路径"}
                 
-                # 通过 MCPNavNode 切换地图
+                # 通过 NavNode 切换地图
                 success = self.ros_node.change_map(target_map_path)
                 if not success:
                     return {"success": False, "msg": f"切换地图失败: {target_map_path}"}
