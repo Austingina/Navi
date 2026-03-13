@@ -1,9 +1,11 @@
 # ROS导航节点类
 import rclpy  # ROS2 Python客户端库
 from rclpy.node import Node  # ROS节点基类
+from rcl_interfaces.srv import GetParameters  # 参数服务
 from rclpy.executors import SingleThreadedExecutor  # 单线程执行器
 from geometry_msgs.msg import PoseStamped, Twist, TwistStamped  # 位姿消息类型和速度控制消息类型
 from nav_msgs.msg import OccupancyGrid  # 占据网格消息类型
+from std_msgs.msg import String  # 字符串消息类型
 from action_msgs.msg import GoalStatus, GoalStatusArray  # Action状态消息
 import logging  # 日志记录库
 import threading  # 线程处理库
@@ -64,6 +66,9 @@ class MCPNavNode(Node):
 
             # 创建速度控制发布者，发布到/cmd_vel_nav话题
             self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+
+            # 创建地图切换发布者，发布到/change_map话题
+            self.change_map_pub = self.create_publisher(String, '/change_map', 10)
 
             # 创建地图订阅者，用于获取地图边界
             self.map_sub = self.create_subscription(
@@ -612,3 +617,73 @@ class MCPNavNode(Node):
             
         # 导航仍在进行中
         return False
+
+    def get_current_map_path(self, timeout_sec: float = 2.0) -> str:
+        """
+        从 /grid_map_pcl_loader_node 节点获取 map_file_path 参数
+        
+        参数:
+        timeout_sec: 服务调用超时时间（秒）
+        
+        返回:
+        str: 当前地图文件路径，如果获取失败返回空字符串
+        """
+        try:
+            # 创建参数服务客户端
+            client = self.create_client(
+                GetParameters,
+                '/grid_map_pcl_loader_node/get_parameters'
+            )
+            
+            # 等待服务可用
+            if not client.wait_for_service(timeout_sec=timeout_sec):
+                self.get_logger().warning('参数服务不可用: /grid_map_pcl_loader_node/get_parameters')
+                return ''
+            
+            # 创建请求
+            request = GetParameters.Request()
+            request.names = ['map_file_path']
+            
+            # 发送请求
+            future = client.call_async(request)
+            
+            # 等待响应
+            rclpy.spin_until_future_complete(self, future, timeout_sec=timeout_sec)
+            
+            if future.result() is not None:
+                result = future.result()
+                if result.values and len(result.values) > 0:
+                    map_path = result.values[0].string_value
+                    self.get_logger().info(f'当前地图路径: {map_path}')
+                    return map_path
+                else:
+                    self.get_logger().warning('未找到 map_file_path 参数')
+                    return ''
+            else:
+                self.get_logger().error('获取参数失败')
+                return ''
+                
+        except Exception as e:
+            self.get_logger().error(f'获取当前地图路径失败: {e}')
+            return ''
+
+    def change_map(self, map_file_path: str) -> bool:
+        """
+        切换地图，向 /change_map 主题发送新地图路径
+        /grid_map_pcl_loader_node 和 /laser_mapping 节点会接收并处理
+        
+        参数:
+        map_file_path: 新地图文件的完整路径
+        
+        返回:
+        bool: 发送成功返回 True，失败返回 False
+        """
+        try:
+            msg = String()
+            msg.data = map_file_path
+            self.change_map_pub.publish(msg)
+            self.get_logger().info(f'已发送地图切换请求: {map_file_path}')
+            return True
+        except Exception as e:
+            self.get_logger().error(f'发送地图切换请求失败: {e}')
+            return False
