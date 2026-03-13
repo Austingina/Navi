@@ -86,7 +86,7 @@ class MapManager:
         """获取当前 submap ID"""
         return self.current_submap
     
-    def get_semantic_points(self, submap_id: str = None) -> Dict:
+    def get_semantic_points_in_submap(self, submap_id: str = None) -> Dict:
         """获取指定 submap 的所有语义点位"""
         submap_id = submap_id or self.current_submap
         if not submap_id or submap_id not in self.submaps:
@@ -102,7 +102,7 @@ class MapManager:
         :return: 位姿字典
         """
         submap_id = submap_id or self.current_submap
-        semantic_points = self.get_semantic_points(submap_id)
+        semantic_points = self.get_semantic_points_in_submap(submap_id)
         point_info = semantic_points.get(pose_name)
         if point_info:
             return point_info.get('pose')
@@ -117,7 +117,7 @@ class MapManager:
         :return: 位姿列表
         """
         submap_id = submap_id or self.current_submap
-        semantic_points = self.get_semantic_points(submap_id)
+        semantic_points = self.get_semantic_points_in_submap(submap_id)
         point_info = semantic_points.get(pose_name)
         if not point_info:
             return []
@@ -131,7 +131,7 @@ class MapManager:
     def is_multi_pose(self, pose_name: str, submap_id: str = None) -> bool:
         """判断指定名称是否为多位姿点"""
         submap_id = submap_id or self.current_submap
-        semantic_points = self.get_semantic_points(submap_id)
+        semantic_points = self.get_semantic_points_in_submap(submap_id)
         point_info = semantic_points.get(pose_name)
         return point_info is not None and point_info.get('type') == 'multi_pose'
     
@@ -240,7 +240,7 @@ class MapManager:
     
     def get_all_pose_names_in_submap(self, submap_id: str = None) -> List[str]:
         """获取指定 submap 的所有点位名称"""
-        semantic_points = self.get_semantic_points(submap_id)
+        semantic_points = self.get_semantic_points_in_submap(submap_id)
         return list(semantic_points.keys())
     
     def get_all_pose_names_all_submaps(self) -> Dict[str, List[str]]:
@@ -251,19 +251,12 @@ class MapManager:
         return result
     
     @property
-    def pose_map(self) -> Dict:
+    def pose_map_current_submap(self) -> Dict:
         """
         向后兼容属性：返回当前 submap 的语义点位映射
         格式：{pose_name: point_info, ...}
         """
-        return self.get_semantic_points()
-    
-    def get_all_poses(self, pose_name: str) -> List[Dict]:
-        """
-        向后兼容方法：获取指定名称的所有位姿
-        等同于 get_multi_poses_in_submap
-        """
-        return self.get_multi_poses_in_submap(pose_name)
+        return self.get_semantic_points_in_submap(self.current_submap)
     
     # ========== 路线管理接口 ==========
     

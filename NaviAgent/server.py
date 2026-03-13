@@ -102,11 +102,11 @@ class NavigationToolManager:
             """下发导航目标"""
             try:
                 # 检查目标点是否在预设地图中
-                if target not in self.map_manager.pose_map:
+                if target not in self.map_manager.pose_map_current_submap:
                     return {"success": False, "msg": f"目标点 {target} 不在白名单中"}
                 
                 # 获取目标点的位姿信息
-                pose_info = self.map_manager.pose_map[target].get("pose")
+                pose_info = self.map_manager.pose_map_current_submap[target].get("pose")
                 if not pose_info:
                     return {"success": False, "msg": f"目标点 {target} 缺少坐标信息"}
                 
@@ -147,7 +147,7 @@ class NavigationToolManager:
             """
             try:
                 # 检查目标点是否在预设地图中
-                if target not in self.map_manager.pose_map:
+                if target not in self.map_manager.pose_map_current_submap:
                     return {"success": False, "msg": f"目标点 {target} 不在白名单中"}
                 
                 # 检查是否为multi_pose类型
@@ -155,7 +155,7 @@ class NavigationToolManager:
                     return {"success": False, "msg": f"目标点 {target} 不是multi_pose类型，请使用set_goal接口"}
                 
                 # 获取所有位姿
-                poses_list = self.map_manager.get_all_poses(target)
+                poses_list = self.map_manager.get_multi_poses_in_submap(target)
                 if not poses_list:
                     return {"success": False, "msg": f"目标点 {target} 缺少位姿信息"}
                 
@@ -456,7 +456,7 @@ class NavigationToolManager:
             Dict: {"success": True, "keys": [...], "count": N}
             """
             try:
-                keys = list(self.map_manager.pose_map.keys())
+                keys = list(self.map_manager.pose_map_current_submap.keys())
                 return {"success": True, "keys": keys, "count": len(keys)}
             except Exception as e:
                 return {"success": False, "msg": f"获取pose列表失败: {str(e)}"}
@@ -595,7 +595,7 @@ class NavigationToolManager:
                 distances = {}  # 存储所有点到当前位置的距离
                 
                 # 遍历所有预设点计算距离
-                for point_name, point_data in self.map_manager.pose_map.items():
+                for point_name, point_data in self.map_manager.pose_map_current_submap.items():
                     # 获取预设点的位姿信息
                     pose_info = point_data.get("pose")
                     if not pose_info:
