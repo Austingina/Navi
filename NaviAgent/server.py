@@ -461,6 +461,85 @@ class NavigationToolManager:
             except Exception as e:
                 return {"success": False, "msg": f"获取pose列表失败: {str(e)}"}
 
+        @self.mcp.tool()
+        def get_current_map_id() -> Dict[str, Any]:
+            """
+            获取当前加载的地图信息
+
+            返回:
+            Dict: {"success": True, "map_id": "...", "map_path": "..."}
+            """
+            try:
+                # 通过 ROS 参数服务获取当前地图路径
+                map_path = self.ros_node.get_current_map_path()
+                if not map_path:
+                    return {"success": False, "msg": "无法获取当前地图路径"}
+                
+                # 通过 MapManager 获取 submap ID
+                map_id = self.map_manager.get_submap_id_by_map_file(map_path)
+                
+                return {
+                    "success": True,
+                    "map_id": map_id,
+                    "map_path": map_path,
+                    "msg": f"当前地图: {map_id or '未知'} ({map_path})"
+                }
+            except Exception as e:
+                return {"success": False, "msg": f"获取当前地图失败: {str(e)}"}
+
+        @self.mcp.tool()
+        def change_map(map_id: str) -> Dict[str, Any]:
+            """
+            切换到指定地图
+
+            参数:
+            map_id: 目标地图 ID（如 floor, underground, 5floor）
+
+            返回:
+            Dict: {"success": True, "map_id": "...", "map_path": "...", "msg": "..."}
+            """
+            try:
+                # 检查 map_id 是否存在
+                submap_list = self.map_manager.get_submap_list()
+                if map_id not in submap_list:
+                    return {
+                        "success": False,
+                        "msg": f"地图 {map_id} 不存在，可用地图: {submap_list}"
+                    }
+                
+                # 获取当前地图 ID
+                current_map_path = self.ros_node.get_current_map_path()
+                if current_map_path:
+                    current_map_id = self.map_manager.get_submap_id_by_map_file(current_map_path)
+                    if current_map_id == map_id:
+                        return {
+                            "success": True,
+                            "map_id": map_id,
+                            "map_path": current_map_path,
+                            "msg": f"当前已经是地图 {map_id}，无需切换"
+                        }
+                
+                # 获取目标地图的完整路径
+                target_map_path = self.map_manager.get_submap_full_map_path(map_id)
+                if not target_map_path:
+                    return {"success": False, "msg": f"无法获取地图 {map_id} 的路径"}
+                
+                # 通过 MCPNavNode 切换地图
+                success = self.ros_node.change_map(target_map_path)
+                if not success:
+                    return {"success": False, "msg": f"切换地图失败: {target_map_path}"}
+                
+                # 更新 MapManager 的当前 submap
+                self.map_manager.set_current_submap(map_id)
+                
+                return {
+                    "success": True,
+                    "map_id": map_id,
+                    "map_path": target_map_path,
+                    "msg": f"已切换到地图 {map_id}"
+                }
+            except Exception as e:
+                return {"success": False, "msg": f"切换地图失败: {str(e)}"}
 
         @self.mcp.tool()
         def get_route_names() -> Dict[str, Any]:

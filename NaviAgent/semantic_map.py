@@ -73,6 +73,31 @@ class MapManager:
             return submap.get('map_file')
         return None
     
+    def get_submap_full_map_path(self, submap_id: str) -> Optional[str]:
+        """
+        获取指定 submap 的完整地图文件路径
+        
+        如果 multifloor.json 中的 map_file 是相对路径，
+        则根据 multifloor.json 所在目录自动补齐成完整路径
+        
+        :param submap_id: submap ID
+        :return: 完整的地图文件路径，如果 submap 不存在返回 None
+        """
+        map_file = self.get_submap_map_file(submap_id)
+        if not map_file:
+            return None
+        
+        # 如果已经是绝对路径，直接返回
+        if os.path.isabs(map_file):
+            return map_file
+        
+        # 相对路径：根据配置文件所在目录补齐
+        if self.config_path:
+            config_dir = os.path.dirname(os.path.abspath(self.config_path))
+            return os.path.join(config_dir, map_file)
+        
+        return map_file
+    
     def set_current_submap(self, submap_id: str) -> bool:
         """设置当前 submap"""
         if submap_id in self.submaps:
@@ -301,3 +326,24 @@ class MapManager:
         :return: 路线名称列表
         """
         return list(self.config.get('routes', {}).keys())
+
+    def get_submap_id_by_map_file(self, map_file_path: str) -> Optional[str]:
+        """
+        根据地图文件路径获取 submap ID
+        
+        :param map_file_path: 地图文件路径（可以是完整路径或文件名）
+        :return: submap ID，如果找不到返回 None
+        """
+        import os
+        # 提取文件名（不含路径）
+        map_filename = os.path.basename(map_file_path)
+        
+        for submap_id, submap_config in self.submaps.items():
+            submap_map_file = submap_config.get('map_file', '')
+            # 支持完整路径或文件名匹配
+            if submap_map_file == map_file_path or submap_map_file == map_filename:
+                return submap_id
+            # 也支持 submap 配置中是文件名，输入是完整路径的情况
+            if os.path.basename(submap_map_file) == map_filename:
+                return submap_id
+        return None
