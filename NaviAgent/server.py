@@ -10,7 +10,7 @@ import numpy as np  # 数值计算库
 # 导入自定义模块
 from wgs84 import WGS84Converter 
 from mcp_nav_node import MCPNavNode  # 导入导航节点类
-from semantic_map import SemanticMap  # 导入语义地图类
+from semantic_map import SemanticMap, MapManager  # 导入语义地图类和多楼层地图管理器
 # 导入FastMCP框架
 from fastmcp import FastMCP
 # 导入ROS相关的库
@@ -32,11 +32,17 @@ class NavigationToolManager:
     2. 注册导航相关的工具函数
     3. 管理ROS线程和资源清理
     """
-    def __init__(self):
-        """初始化导航工具管理器"""
+    def __init__(self, map_manager: MapManager = None):
+        """
+        初始化导航工具管理器
+        
+        :param map_manager: 多楼层地图管理器实例，可选
+        """
         # 创建FastMCP实例
         self.mcp = FastMCP("NavigationMCP")
-        # 加载语义地图
+        # 多楼层地图管理器
+        self.map_manager = map_manager
+        # 加载语义地图（兼容原有逻辑）
         self.semantic_map = SemanticMap()
         # 初始化经纬度转换器
         self.wgs84_converter = WGS84Converter()
@@ -727,14 +733,25 @@ async def main():
     # 解析命令行参数
     parser = argparse.ArgumentParser()
     parser.add_argument('-t', '--test', action='store_true', help='测试环境')
+    parser.add_argument('-m', '--map', type=str, default=None,
+                        help='多楼层地图配置文件路径 (multifloor.json)')
     args = parser.parse_args()
 
     port = 9999 if args.test else 9000
 
+    # 初始化地图管理器
+    map_manager = None
+    if args.map:
+        try:
+            map_manager = MapManager(args.map)
+            logging.info(f"已加载多楼层地图: {args.map}")
+        except Exception as e:
+            logging.error(f"加载地图配置失败: {e}")
+
     mgr = None
     try:
         # 创建导航工具管理器
-        mgr = NavigationToolManager()
+        mgr = NavigationToolManager(map_manager=map_manager)
         # 启动MCP服务（阻塞运行）
         await mgr.start(port=port)
     except KeyboardInterrupt:
