@@ -137,7 +137,7 @@ def generate_launch_description():
         package='grid_map_pcl',
         executable='grid_map_pcl_loader_node',
         name='grid_map_pcl_loader',
-        parameters=[{'pcd_filename': map_file_path}],
+        parameters=[{'map_file_path': map_file_path}],
         output='screen'
     )
 
