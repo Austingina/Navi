@@ -1,5 +1,5 @@
 session_name: navi
-start_directory: /home/nvidia/work/Navi/scripts
+start_directory: /home/nvidia/Navi/scripts
 
 windows:
   - window_name: navi_services

@@ -13,16 +13,16 @@ def generate_launch_description():
         grid_map_pcl_dir, 'rviz', 'gridmap.rviz')
     rviz_use = LaunchConfiguration('rviz')
 
-    # 声明命令行参数
-    folder_path_arg = DeclareLaunchArgument(
-        'folder_path',
-        default_value='/home/nvidia/Navi/maps/',
-        description='Path to the folder containing PCD files'
-    )
+    # # 声明命令行参数
+    # folder_path_arg = DeclareLaunchArgument(
+    #     'folder_path',
+    #     default_value='/home/nvidia/Navi/maps/',
+    #     description='Path to the folder containing PCD files'
+    # )
     
-    pcd_filename_arg = DeclareLaunchArgument(
-        'pcd_filename',
-        default_value='120w1floor.pcd',
+    map_file_path_arg = DeclareLaunchArgument(
+        'map_file_path',
+        default_value='/home/nvidia/Navi/maps/120w1floor.pcd',
         description='Name of the PCD file to load'
     )
     
@@ -57,8 +57,7 @@ def generate_launch_description():
 
     # 使用 LaunchConfiguration 获取参数值
     node_params = [
-        {'folder_path': LaunchConfiguration('folder_path')},
-        {'pcd_filename': LaunchConfiguration('pcd_filename')},
+        {'map_file_path': LaunchConfiguration('map_file_path')},
         {'map_frame': LaunchConfiguration('map_frame')},
         {'set_verbosity_to_debug': LaunchConfiguration('set_verbosity_to_debug')},
         {'config_file_path': param_file}
@@ -86,8 +85,8 @@ def generate_launch_description():
     ld = LaunchDescription()
 
     # 添加参数声明
-    ld.add_action(folder_path_arg)
-    ld.add_action(pcd_filename_arg)
+    # ld.add_action(folder_path_arg)
+    ld.add_action(map_file_path_arg)
     ld.add_action(map_frame_arg)
     ld.add_action(set_verbosity_arg)
     ld.add_action(use_sim_time_arg)

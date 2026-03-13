@@ -70,36 +70,31 @@ std::string getParameterPath(const rclcpp::Node::SharedPtr & node)
   return filePath;
 }
 
-std::string getOutputBagPath(const rclcpp::Node::SharedPtr & node)
-{
-  if (!node->has_parameter("folder_path")) {
-    node->declare_parameter("folder_path", std::string(""));
-  }
-  if (!node->has_parameter("output_grid_map")) {
-    node->declare_parameter("output_grid_map", "output_grid_map.bag");
-  }
+// std::string getOutputBagPath(const rclcpp::Node::SharedPtr & node)
+// {
+//   if (!node->has_parameter("folder_path")) {
+//     node->declare_parameter("folder_path", std::string(""));
+//   }
+//   if (!node->has_parameter("output_grid_map")) {
+//     node->declare_parameter("output_grid_map", "output_grid_map.bag");
+//   }
 
-  std::string outputRosbagName, folderPath;
-  node->get_parameter("folder_path", folderPath);
-  node->get_parameter("output_grid_map", outputRosbagName);
-  std::string pathToOutputBag = folderPath + "/" + outputRosbagName;
-  return pathToOutputBag;
-}
+//   std::string outputRosbagName, folderPath;
+//   node->get_parameter("folder_path", folderPath);
+//   node->get_parameter("output_grid_map", outputRosbagName);
+//   std::string pathToOutputBag = folderPath + "/" + outputRosbagName;
+//   return pathToOutputBag;
+// }
 
 std::string getPcdFilePath(const rclcpp::Node::SharedPtr & node)
 {
-  if (!node->has_parameter("folder_path")) {
-    node->declare_parameter("folder_path", std::string(""));
-  }
-  if (!node->has_parameter("pcd_filename")) {
-    node->declare_parameter("pcd_filename", "input_cloud");
+  if (!node->has_parameter("map_file_path")) {
+    node->declare_parameter("map_file_path", std::string(""));
   }
 
-  std::string inputCloudName, folderPath;
-  node->get_parameter("folder_path", folderPath);
-  node->get_parameter("pcd_filename", inputCloudName);
-  std::string pathToCloud = folderPath + "/" + inputCloudName;
-  return pathToCloud;
+  std::string mapFilePath;
+  node->get_parameter("map_file_path", mapFilePath);
+  return mapFilePath;
 }
 
 std::string getMapFrame(const rclcpp::Node::SharedPtr & node)
@@ -124,17 +119,17 @@ std::string getMapRosbagTopic(const rclcpp::Node::SharedPtr & node)
   return mapRosbagTopic;
 }
 
-void saveGridMap(
-  const grid_map::GridMap & gridMap, const rclcpp::Node::SharedPtr & node,
-  const std::string & mapTopic)
-{
-  std::string pathToOutputBag = getOutputBagPath(node);
-  const bool savingSuccessful = grid_map::GridMapRosConverter::saveToBag(
-    gridMap, pathToOutputBag,
-    mapTopic);
-  RCLCPP_INFO_STREAM(
-    node->get_logger(), "Saving grid map successful: " << std::boolalpha << savingSuccessful);
-}
+// void saveGridMap(
+//   const grid_map::GridMap & gridMap, const rclcpp::Node::SharedPtr & node,
+//   const std::string & mapTopic)
+// {
+//   std::string pathToOutputBag = getOutputBagPath(node);
+//   const bool savingSuccessful = grid_map::GridMapRosConverter::saveToBag(
+//     gridMap, pathToOutputBag,
+//     mapTopic);
+//   RCLCPP_INFO_STREAM(
+//     node->get_logger(), "Saving grid map successful: " << std::boolalpha << savingSuccessful);
+// }
 
 void processPointcloud(
   grid_map::GridMapPclLoader * gridMapPclLoader,

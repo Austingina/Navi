@@ -33,7 +33,7 @@ void setVerbosityLevelToDebugIfFlagSet(const rclcpp::Node::SharedPtr & node);
 
 std::string getParameterPath(const rclcpp::Node::SharedPtr & node);
 
-std::string getOutputBagPath(const rclcpp::Node::SharedPtr & node);
+// std::string getOutputBagPath(const rclcpp::Node::SharedPtr & node);
 
 std::string getPcdFilePath(const rclcpp::Node::SharedPtr & node);
 
@@ -42,9 +42,9 @@ std::string getMapFrame(const rclcpp::Node::SharedPtr & node);
 std::string getMapRosbagTopic(const rclcpp::Node::SharedPtr & node);
 
 
-void saveGridMap(
-  const grid_map::GridMap & gridMap, const rclcpp::Node::SharedPtr & node,
-  const std::string & mapTopic);
+// void saveGridMap(
+//   const grid_map::GridMap & gridMap, const rclcpp::Node::SharedPtr & node,
+//   const std::string & mapTopic);
 
 inline void printTimeElapsedToRosInfoStream(
   const std::chrono::system_clock::time_point & start,
