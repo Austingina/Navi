@@ -10,7 +10,7 @@ import numpy as np  # 数值计算库
 # 导入自定义模块
 from wgs84 import WGS84Converter 
 from mcp_nav_node import MCPNavNode  # 导入导航节点类
-from semantic_map import SemanticMap, MapManager  # 导入语义地图类和多楼层地图管理器
+from semantic_map import MapManager  # 导入多楼层地图管理器
 # 导入FastMCP框架
 from fastmcp import FastMCP
 # 导入ROS相关的库
@@ -20,7 +20,6 @@ from geometry_msgs.msg import PoseStamped  # 位姿消息类型
 import argparse  # 添加在文件顶部
 # 加载地图配置文件的函数
 # 直接在此定义 load_intent_pose_map，兼容 intent_pose_map.json 的多种结构
-from functools import cached_property
 
 # 导航工具管理器类
 class NavigationToolManager:
@@ -42,8 +41,6 @@ class NavigationToolManager:
         self.mcp = FastMCP("NavigationMCP")
         # 多楼层地图管理器
         self.map_manager = map_manager
-        # 加载语义地图（兼容原有逻辑）
-        self.semantic_map = SemanticMap()
         # 初始化经纬度转换器
         self.wgs84_converter = WGS84Converter()
         self.wgs84_converter.initialize()
@@ -64,8 +61,6 @@ class NavigationToolManager:
             logging.error(f"ROS初始化失败: {e}")
             raise
 
-        self._routes = {}
-
         # 注册MCP工具函数
         self.register_tools()
 
@@ -83,15 +78,6 @@ class NavigationToolManager:
             self.executor.spin()
         except Exception as e:
             logging.error(f"ROS spin线程出错: {e}")
-
-
-
-    @cached_property
-    def routes(self) -> Dict[str, Any]:
-        self._routes = {
-            "线路A":list(self.semantic_map.pose_map.keys())
-        }
-        return self._routes
 
 
     def register_tools(self):
@@ -116,11 +102,11 @@ class NavigationToolManager:
             """下发导航目标"""
             try:
                 # 检查目标点是否在预设地图中
-                if target not in self.semantic_map.pose_map:
+                if target not in self.map_manager.pose_map:
                     return {"success": False, "msg": f"目标点 {target} 不在白名单中"}
                 
                 # 获取目标点的位姿信息
-                pose_info = self.semantic_map.pose_map[target].get("pose")
+                pose_info = self.map_manager.pose_map[target].get("pose")
                 if not pose_info:
                     return {"success": False, "msg": f"目标点 {target} 缺少坐标信息"}
                 
@@ -161,15 +147,15 @@ class NavigationToolManager:
             """
             try:
                 # 检查目标点是否在预设地图中
-                if target not in self.semantic_map.pose_map:
+                if target not in self.map_manager.pose_map:
                     return {"success": False, "msg": f"目标点 {target} 不在白名单中"}
                 
                 # 检查是否为multi_pose类型
-                if not self.semantic_map.is_multi_pose(target):
+                if not self.map_manager.is_multi_pose(target):
                     return {"success": False, "msg": f"目标点 {target} 不是multi_pose类型，请使用set_goal接口"}
                 
                 # 获取所有位姿
-                poses_list = self.semantic_map.get_all_poses(target)
+                poses_list = self.map_manager.get_all_poses(target)
                 if not poses_list:
                     return {"success": False, "msg": f"目标点 {target} 缺少位姿信息"}
                 
@@ -470,7 +456,7 @@ class NavigationToolManager:
             Dict: {"success": True, "keys": [...], "count": N}
             """
             try:
-                keys = list(self.semantic_map.pose_map.keys())
+                keys = list(self.map_manager.pose_map.keys())
                 return {"success": True, "keys": keys, "count": len(keys)}
             except Exception as e:
                 return {"success": False, "msg": f"获取pose列表失败: {str(e)}"}
@@ -482,13 +468,18 @@ class NavigationToolManager:
             获取所有巡逻线路名称
 
             返回:
-            Dict: {"success": True, "keys": [...], "count": N}
+            Dict: {"success": True, "route_names": [...], "count": N}
             """
             try:
-                keys = list(self.routes.keys())
-                return {"success": True, "route_names": keys, "count": len(keys)}
+                route_list = self.map_manager.get_route_list()
+                return {
+                    "success": True,
+                    "route_names": [r['name'] for r in route_list],
+                    "routes": route_list,
+                    "count": len(route_list)
+                }
             except Exception as e:
-                return {"success": False, "msg": f"获取patrol列表失败: {str(e)}"}
+                return {"success": False, "msg": f"获取路线列表失败: {str(e)}"}
 
         @self.mcp.tool()
         def get_route(route_name: str) -> Dict[str, Any]:
@@ -499,14 +490,20 @@ class NavigationToolManager:
                 route_name: 路线名称（如 线路A）
 
             Returns:
-            str: JSON 格式的路线点位列表
+            Dict: 包含路线描述和巡逻点位列表
             """
             try:
-                if route_name not in self.routes:
-                    return {"success": False, "msg": f"目前还没有: {route_name}"}
+                route_info = self.map_manager.get_route_by_name(route_name)
+                if not route_info:
+                    return {"success": False, "msg": f"路线不存在: {route_name}"}
 
-                points = self.routes[route_name]
-                return {"success": True, "points": list(points), "count": len(points)}
+                return {
+                    "success": True,
+                    "name": route_info['name'],
+                    "description": route_info['description'],
+                    "waypoints": route_info['waypoints'],
+                    "count": len(route_info['waypoints'])
+                }
             except Exception as e:
                 return {"success": False, "msg": f"获取路线失败: {str(e)}"}
         
@@ -598,7 +595,7 @@ class NavigationToolManager:
                 distances = {}  # 存储所有点到当前位置的距离
                 
                 # 遍历所有预设点计算距离
-                for point_name, point_data in self.semantic_map.pose_map.items():
+                for point_name, point_data in self.map_manager.pose_map.items():
                     # 获取预设点的位姿信息
                     pose_info = point_data.get("pose")
                     if not pose_info:
