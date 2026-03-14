@@ -10,6 +10,11 @@
       "name": "地面层",
       "description": "Ground floor / 1F",
       "map_file": "floor_2cm.pcd",
+      "transform": {
+        "_comment": "default submap, identity transform",
+        "translation": {"x": 0.0, "y": 0.0, "z": 0.0},
+        "rotation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+      },
       
       "submap_portals": [
         {
@@ -50,6 +55,11 @@
       "name": "地下层",
       "description": "Underground floor / B1",
       "map_file": "underground_2cm.pcd",
+      "transform": {
+        "_comment": "transform from underground to floor (default submap)",
+        "translation": {"x": 0.0, "y": 0.0, "z": 0.0},
+        "rotation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+      },
       
       "submap_portals": [
         {
@@ -86,6 +96,11 @@
       "name": "5楼",
       "description": "5th floor / 5F",
       "map_file": "5floor_2cm.pcd",
+      "transform": {
+        "_comment": "transform from 5floor to floor (default submap)",
+        "translation": {"x": 0.0, "y": 0.0, "z": 0.0},
+        "rotation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+      },
       "z_range": [12.0, 15.0],
       
       "submap_portals": [
