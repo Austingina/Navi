@@ -588,7 +588,7 @@ class NavigationToolManager:
             map_id: 目标地图 ID（如 floor, underground, 5floor）
 
             返回:
-            Dict: {"success": True, "map_id": "...", "map_path": "...", "msg": "..."}
+            Dict: {"success": True, "map_id": "...", "map_path": "...", "init_pose": {...}, "msg": "..."}
             """
             try:
                 # 检查 map_id 是否存在
@@ -601,6 +601,7 @@ class NavigationToolManager:
                 
                 # 获取当前地图 ID
                 current_map_path = self.ros_node.get_current_map_path()
+                current_map_id = None
                 if current_map_path:
                     current_map_id = self.map_manager.get_submap_id_by_map_file(current_map_path)
                     if current_map_id == map_id:
@@ -610,6 +611,29 @@ class NavigationToolManager:
                             "map_path": current_map_path,
                             "msg": f"当前已经是地图 {map_id}，无需切换"
                         }
+                
+                # 获取当前位姿（在切换地图之前）
+                current_pose = None
+                init_pose_in_target = None
+                odom = self.ros_node.current_pose
+                if odom and current_map_id:
+                    current_pose = {
+                        "position": {
+                            "x": odom.pose.position.x,
+                            "y": odom.pose.position.y,
+                            "z": odom.pose.position.z
+                        },
+                        "orientation": {
+                            "x": odom.pose.orientation.x,
+                            "y": odom.pose.orientation.y,
+                            "z": odom.pose.orientation.z,
+                            "w": odom.pose.orientation.w
+                        }
+                    }
+                    # 计算在目标 submap 中的初始位姿
+                    init_pose_in_target = self.map_manager.get_init_pose_after_changemap(
+                        current_pose, current_map_id, map_id
+                    )
                 
                 # 获取目标地图的完整路径
                 target_map_path = self.map_manager.get_submap_full_map_path(map_id)
@@ -624,14 +648,87 @@ class NavigationToolManager:
                 # 更新 MapManager 的当前 submap
                 self.map_manager.set_current_submap(map_id)
                 
-                return {
+                result = {
                     "success": True,
                     "map_id": map_id,
                     "map_path": target_map_path,
+                    "from_map_id": current_map_id,
                     "msg": f"已切换到地图 {map_id}"
                 }
+                
+                # 添加位姿信息
+                if current_pose:
+                    result["pose_in_source"] = current_pose
+                if init_pose_in_target:
+                    result["pose_in_target"] = init_pose_in_target
+                
+                return result
             except Exception as e:
                 return {"success": False, "msg": f"切换地图失败: {str(e)}"}
+
+        @self.mcp.tool()
+        def get_portal_to_submap(target_submap: str) -> Dict[str, Any]:
+            """
+            获取从当前子地图到目标子地图的传送门
+
+            参数:
+            target_submap: 目标子地图 ID（如 floor, underground, 5floor）
+
+            返回:
+            Dict: {"success": True, "portal": "...", "target_submap": "...", "from_submap": "..."}
+            """
+            try:
+                # 获取当前 submap
+                current_submap = self.map_manager.get_current_submap()
+                if not current_submap:
+                    return {"success": False, "msg": "当前子地图未设置"}
+                
+                # 检查目标 submap 是否存在
+                submap_list = self.map_manager.get_submap_list()
+                if target_submap not in submap_list:
+                    return {
+                        "success": False,
+                        "msg": f"目标子地图 {target_submap} 不存在，可用子地图: {submap_list}"
+                    }
+                
+                # 如果目标就是当前 submap
+                if target_submap == current_submap:
+                    return {
+                        "success": False,
+                        "msg": f"目标子地图 {target_submap} 就是当前子地图，无需传送门"
+                    }
+                
+                # 获取传送门
+                portal_config = self.map_manager.get_portal_to_submap(target_submap)
+                if not portal_config:
+                    # 尝试查找路径
+                    path = self.map_manager.find_path_between_submaps(current_submap, target_submap)
+                    if path:
+                        return {
+                            "success": False,
+                            "msg": f"从 {current_submap} 无法直接到达 {target_submap}，需要经过中间子地图",
+                            "path": path
+                        }
+                    else:
+                        return {
+                            "success": False,
+                            "msg": f"从 {current_submap} 无法到达 {target_submap}"
+                        }
+                
+                # 获取传送门的位姿
+                portal_name = portal_config.get('portal')
+                portal_pose = self.map_manager.get_portal_pose(portal_name)
+                
+                return {
+                    "success": True,
+                    "portal": portal_name,
+                    "target_submap": target_submap,
+                    "from_submap": current_submap,
+                    "portal_pose": portal_pose,
+                    "msg": f"从 {current_submap} 到 {target_submap} 的传送门是: {portal_name}"
+                }
+            except Exception as e:
+                return {"success": False, "msg": f"获取传送门失败: {str(e)}"}
 
         @self.mcp.tool()
         def get_route_names() -> Dict[str, Any]:

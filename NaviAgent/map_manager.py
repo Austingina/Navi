@@ -347,3 +347,178 @@ class MapManager:
             if os.path.basename(submap_map_file) == map_filename:
                 return submap_id
         return None
+
+    def get_submap_transform(self, submap_id: str) -> Optional[Dict]:
+        """
+        获取指定 submap 相对于 default submap 的坐标变换
+        
+        :param submap_id: submap ID
+        :return: transform 字典 {translation: {x, y, z}, rotation: {x, y, z, w}}
+        """
+        submap = self.submaps.get(submap_id)
+        if submap:
+            return submap.get('transform')
+        return None
+
+    @staticmethod
+    def _quaternion_multiply(q1: Dict, q2: Dict) -> Dict:
+        """
+        四元数乘法: q1 * q2
+        
+        :param q1: 四元数 {x, y, z, w}
+        :param q2: 四元数 {x, y, z, w}
+        :return: 结果四元数 {x, y, z, w}
+        """
+        x1, y1, z1, w1 = q1['x'], q1['y'], q1['z'], q1['w']
+        x2, y2, z2, w2 = q2['x'], q2['y'], q2['z'], q2['w']
+        
+        return {
+            'x': w1*x2 + x1*w2 + y1*z2 - z1*y2,
+            'y': w1*y2 - x1*z2 + y1*w2 + z1*x2,
+            'z': w1*z2 + x1*y2 - y1*x2 + z1*w2,
+            'w': w1*w2 - x1*x2 - y1*y2 - z1*z2
+        }
+    
+    @staticmethod
+    def _quaternion_inverse(q: Dict) -> Dict:
+        """
+        四元数求逆（对于单位四元数，逆等于共轭）
+        
+        :param q: 四元数 {x, y, z, w}
+        :return: 逆四元数 {x, y, z, w}
+        """
+        return {
+            'x': -q['x'],
+            'y': -q['y'],
+            'z': -q['z'],
+            'w': q['w']
+        }
+    
+    @staticmethod
+    def _rotate_point_by_quaternion(point: Dict, q: Dict) -> Dict:
+        """
+        使用四元数旋转一个点: p' = q * p * q^(-1)
+        
+        :param point: 点坐标 {x, y, z}
+        :param q: 四元数 {x, y, z, w}
+        :return: 旋转后的点 {x, y, z}
+        """
+        # 将点转换为四元数形式 (x, y, z, 0)
+        p = {'x': point['x'], 'y': point['y'], 'z': point['z'], 'w': 0}
+        
+        # q * p
+        qp = MapManager._quaternion_multiply(q, p)
+        
+        # q^(-1)
+        q_inv = MapManager._quaternion_inverse(q)
+        
+        # q * p * q^(-1)
+        result = MapManager._quaternion_multiply(qp, q_inv)
+        
+        return {'x': result['x'], 'y': result['y'], 'z': result['z']}
+    
+    @staticmethod
+    def _apply_transform(point: Dict, translation: Dict, rotation: Dict) -> Dict:
+        """
+        应用变换: p' = R * p + t
+        
+        :param point: 点坐标 {x, y, z}
+        :param translation: 平移 {x, y, z}
+        :param rotation: 旋转四元数 {x, y, z, w}
+        :return: 变换后的点 {x, y, z}
+        """
+        # 先旋转
+        rotated = MapManager._rotate_point_by_quaternion(point, rotation)
+        
+        # 再平移
+        return {
+            'x': rotated['x'] + translation['x'],
+            'y': rotated['y'] + translation['y'],
+            'z': rotated['z'] + translation['z']
+        }
+    
+    @staticmethod
+    def _apply_inverse_transform(point: Dict, translation: Dict, rotation: Dict) -> Dict:
+        """
+        应用逆变换: p = R^(-1) * (p' - t)
+        
+        :param point: 变换后的点坐标 {x, y, z}
+        :param translation: 平移 {x, y, z}
+        :param rotation: 旋转四元数 {x, y, z, w}
+        :return: 原始点 {x, y, z}
+        """
+        # 先减去平移
+        translated = {
+            'x': point['x'] - translation['x'],
+            'y': point['y'] - translation['y'],
+            'z': point['z'] - translation['z']
+        }
+        
+        # 再应用逆旋转
+        q_inv = MapManager._quaternion_inverse(rotation)
+        return MapManager._rotate_point_by_quaternion(translated, q_inv)
+
+    def get_init_pose_after_changemap(
+        self,
+        current_pose: Dict,
+        from_submap: str,
+        to_submap: str
+    ) -> Optional[Dict]:
+        """
+        计算切换地图后机器人在目标层的初始坐标
+        
+        根据当前层的 transform 和目标层的 transform，
+        将机器人在当前层的坐标转换为目标层的坐标。
+        
+        转换逻辑 (使用完整的矩阵乘法):
+        1. 当前层坐标 -> 全局坐标: pos_global = T_from * pos_current
+        2. 全局坐标 -> 目标层坐标: pos_target = T_to^(-1) * pos_global
+        
+        即: pos_target = T_to^(-1) * T_from * pos_current
+        
+        对于朝向: ori_target = q_to^(-1) * q_from * ori_current
+        
+        :param current_pose: 当前位姿 {position: {x, y, z}, orientation: {x, y, z, w}}
+        :param from_submap: 当前 submap ID
+        :param to_submap: 目标 submap ID
+        :return: 目标层的位姿 {position: {x, y, z}, orientation: {x, y, z, w}}
+        """
+        # 获取两个 submap 的 transform
+        from_transform = self.get_submap_transform(from_submap)
+        to_transform = self.get_submap_transform(to_submap)
+        
+        if not from_transform or not to_transform:
+            print(f"MapManager: 缺少 transform 配置, from={from_submap}, to={to_submap}")
+            return None
+        
+        # 获取平移量
+        from_trans = from_transform.get('translation', {'x': 0, 'y': 0, 'z': 0})
+        to_trans = to_transform.get('translation', {'x': 0, 'y': 0, 'z': 0})
+        
+        # 获取旋转四元数
+        from_rot = from_transform.get('rotation', {'x': 0, 'y': 0, 'z': 0, 'w': 1})
+        to_rot = to_transform.get('rotation', {'x': 0, 'y': 0, 'z': 0, 'w': 1})
+        
+        # 当前位置和朝向
+        curr_pos = current_pose.get('position', {'x': 0, 'y': 0, 'z': 0})
+        curr_ori = current_pose.get('orientation', {'x': 0, 'y': 0, 'z': 0, 'w': 1})
+        
+        # Step 1: 当前层坐标 -> 全局坐标
+        # pos_global = R_from * pos_current + t_from
+        pos_global = self._apply_transform(curr_pos, from_trans, from_rot)
+        
+        # Step 2: 全局坐标 -> 目标层坐标
+        # pos_target = R_to^(-1) * (pos_global - t_to)
+        target_pos = self._apply_inverse_transform(pos_global, to_trans, to_rot)
+        
+        # 计算目标朝向: ori_target = q_to^(-1) * q_from * ori_current
+        to_rot_inv = self._quaternion_inverse(to_rot)
+        # q_from * ori_current
+        ori_intermediate = self._quaternion_multiply(from_rot, curr_ori)
+        # q_to^(-1) * (q_from * ori_current)
+        target_ori = self._quaternion_multiply(to_rot_inv, ori_intermediate)
+        
+        return {
+            'position': target_pos,
+            'orientation': target_ori
+        }
