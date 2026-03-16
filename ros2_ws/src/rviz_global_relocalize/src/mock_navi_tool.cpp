@@ -82,6 +82,11 @@ void MockNaviTool::onInitialize()
     "/cmd_vel", rclcpp::QoS(10),
     std::bind(&MockNaviTool::cmdVelCallback, this, std::placeholders::_1));
   
+  // Subscribe to /pose_in_target topic for receiving initial pose after map change
+  pose_in_target_sub_ = node_->create_subscription<geometry_msgs::msg::PoseStamped>(
+    "/pose_in_target", rclcpp::QoS(10),
+    std::bind(&MockNaviTool::poseInTargetCallback, this, std::placeholders::_1));
+  
   // Create timer to update position at 20Hz (50ms)
   timer_ = node_->create_wall_timer(
     50ms, std::bind(&MockNaviTool::timerCallback, this));
@@ -153,6 +158,35 @@ void MockNaviTool::cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg
       RCLCPP_INFO(node_->get_logger(), "cmd_vel active, resuming path following");
     }
   }
+}
+
+void MockNaviTool::poseInTargetCallback(const geometry_msgs::msg::PoseStamped::SharedPtr msg)
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  
+  // Update current position to received pose
+  current_x_ = msg->pose.position.x;
+  current_y_ = msg->pose.position.y;
+  current_yaw_ = getYawFromQuaternion(
+    msg->pose.orientation.x,
+    msg->pose.orientation.y,
+    msg->pose.orientation.z,
+    msg->pose.orientation.w);
+  
+  has_position_ = true;
+  
+  // Stop path following when receiving new pose (map changed)
+  is_following_path_ = false;
+  path_.clear();
+  current_path_index_ = 0;
+  
+  // Enter cooldown period
+  in_cooldown_ = true;
+  last_position_set_time_ = node_->now();
+  
+  RCLCPP_INFO(node_->get_logger(), 
+    "Received pose_in_target: (%.3f, %.3f, yaw=%.3f). Updated simulated position.",
+    current_x_, current_y_, current_yaw_);
 }
 
 double MockNaviTool::normalizeAngle(double angle)

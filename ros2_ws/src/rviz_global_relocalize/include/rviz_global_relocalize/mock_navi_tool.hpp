@@ -10,6 +10,7 @@
 #include <nav_msgs/msg/path.hpp>
 #include <nav_msgs/msg/occupancy_grid.hpp>
 #include <geometry_msgs/msg/twist.hpp>
+#include <geometry_msgs/msg/pose_stamped.hpp>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2/LinearMath/Matrix3x3.h>
 #include <OgreRay.h>
@@ -54,6 +55,7 @@ private:
   void mapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg);
   void planCallback(const nav_msgs::msg::Path::SharedPtr msg);
   void cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg);
+  void poseInTargetCallback(const geometry_msgs::msg::PoseStamped::SharedPtr msg);
   void timerCallback();
   void switchToInteractTool();
   bool getPointOnPlane(rviz_common::ViewportMouseEvent & event, Ogre::Vector3 & point);
@@ -68,6 +70,7 @@ private:
   rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_sub_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr plan_sub_;
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_sub_;
+  rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr pose_in_target_sub_;
   rclcpp::TimerBase::SharedPtr timer_;
   
   // Map state
