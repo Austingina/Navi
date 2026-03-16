@@ -580,12 +580,13 @@ class NavigationToolManager:
                 return {"success": False, "msg": f"获取当前地图失败: {str(e)}"}
 
         @self.mcp.tool()
-        def change_map(map_id: str) -> Dict[str, Any]:
+        def change_map(map_id: str, timeout: float = 30.0) -> Dict[str, Any]:
             """
             切换到指定地图
 
             参数:
             map_id: 目标地图 ID（如 floor, underground, 5floor）
+            timeout: 等待地图切换完成的超时时间（秒），默认10秒
 
             返回:
             Dict: {"success": True, "map_id": "...", "map_path": "...", "init_pose": {...}, "msg": "..."}
@@ -640,13 +641,39 @@ class NavigationToolManager:
                 if not target_map_path:
                     return {"success": False, "msg": f"无法获取地图 {map_id} 的路径"}
                 
-                # 通过 NavNode 切换地图
+                # 通过 NavNode 发送切换地图请求
                 success = self.ros_node.change_map(target_map_path)
                 if not success:
-                    return {"success": False, "msg": f"切换地图失败: {target_map_path}"}
+                    return {"success": False, "msg": f"发送切换地图请求失败: {target_map_path}"}
+                
+                # 轮询等待地图切换完成
+                import os
+                target_map_basename = os.path.basename(target_map_path)
+                start_time = time.time()
+                map_switched = False
+                
+                while time.time() - start_time < timeout:
+                    time.sleep(0.5)  # 500ms 轮询间隔
+                    new_map_path = self.ros_node.get_current_map_path()
+                    if new_map_path:
+                        new_map_basename = os.path.basename(new_map_path)
+                        if new_map_basename == target_map_basename or new_map_path == target_map_path:
+                            map_switched = True
+                            logging.info(f"地图切换完成: {new_map_path}")
+                            break
+                
+                if not map_switched:
+                    return {
+                        "success": False,
+                        "msg": f"地图切换超时({timeout}秒)，目标地图: {target_map_path}"
+                    }
                 
                 # 更新 MapManager 的当前 submap
                 self.map_manager.set_current_submap(map_id)
+                
+                # 发布目标地图初始位姿到 /pose_in_target
+                if init_pose_in_target:
+                    self.ros_node.publish_pose_in_target(init_pose_in_target)
                 
                 result = {
                     "success": True,

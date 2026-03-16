@@ -64,7 +64,7 @@
       "map_file": "underground_2cm.pcd",
       "transform": {
         "_comment": "transform from underground to floor (default submap)",
-        "translation": {"x": -50.0, "y": -5.0, "z": 0.0},
+        "translation": {"x": -47.5, "y": -8.4, "z": 0.0},
         "rotation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
       },
       
@@ -185,7 +185,7 @@
     "线路A": {
       "description": "从地面层出发，经过电梯B到达5楼，最后返回地面层。",
       "waypoints": [
-        {"submap": "floor", "semantic_point": "机器人巡检起点"},
+        {"submap": "floor", "semantic_point": "北面车库"},
         {"submap": "underground", "semantic_point": "地下层巡检起点"},
         {"submap": "floor", "semantic_point": "机器人巡检起点"}
       ]

@@ -71,6 +71,9 @@ class NavNode(Node):
             # 创建地图切换发布者，发布到/change_map话题
             self.change_map_pub = self.create_publisher(String, '/change_map', 10)
 
+            # 创建切换地图后初始位姿发布者
+            self.pose_in_target_pub = self.create_publisher(PoseStamped, '/pose_in_target', 10)
+
             # 创建地图订阅者，用于获取地图边界
             self.map_sub = self.create_subscription(
                 OccupancyGrid,
@@ -761,4 +764,37 @@ class NavNode(Node):
             return True
         except Exception as e:
             self.get_logger().error(f'发送地图切换请求失败: {e}')
+            return False
+
+    def publish_pose_in_target(self, pose_dict: dict) -> bool:
+        """
+        发布切换地图后的初始位姿到 /pose_in_target 主题
+        
+        参数:
+        pose_dict: 位姿字典，格式: {position: {x, y, z}, orientation: {x, y, z, w}}
+        
+        返回:
+        bool: 发送成功返回 True，失败返回 False
+        """
+        try:
+            msg = PoseStamped()
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.header.frame_id = "odom"
+            
+            pos = pose_dict.get('position', {})
+            ori = pose_dict.get('orientation', {})
+            
+            msg.pose.position.x = float(pos.get('x', 0.0))
+            msg.pose.position.y = float(pos.get('y', 0.0))
+            msg.pose.position.z = float(pos.get('z', 0.0))
+            msg.pose.orientation.x = float(ori.get('x', 0.0))
+            msg.pose.orientation.y = float(ori.get('y', 0.0))
+            msg.pose.orientation.z = float(ori.get('z', 0.0))
+            msg.pose.orientation.w = float(ori.get('w', 1.0))
+            
+            self.pose_in_target_pub.publish(msg)
+            self.get_logger().info(f'已发布目标地图初始位姿: x={pos.get("x")}, y={pos.get("y")}')
+            return True
+        except Exception as e:
+            self.get_logger().error(f'发布目标地图初始位姿失败: {e}')
             return False
