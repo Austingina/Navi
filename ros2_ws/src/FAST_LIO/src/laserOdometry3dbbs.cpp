@@ -1188,7 +1188,7 @@ public:
         timer_ = rclcpp::create_timer(this, this->get_clock(), period_ms, std::bind(&LaserOdometryNode::timer_callback, this));
 	    relocalize_srv_ = this->create_service<std_srvs::srv::Trigger>("global_relocalize", std::bind(&LaserOdometryNode::relocalize_callback, this, std::placeholders::_1, std::placeholders::_2));
         relocalize_pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(
-            "relocalize_pose", 10, 
+            "pose_in_target", 10, 
             std::bind(&LaserOdometryNode::relocalize_pose_callback, this, std::placeholders::_1));
 
         change_map_sub_ = this->create_subscription<std_msgs::msg::String>(
