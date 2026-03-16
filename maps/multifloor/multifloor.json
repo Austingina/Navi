@@ -78,21 +78,21 @@
         "地下层巡检起点": {
             "type": "single_pose",
             "pose": {
-            "position": {"x": 0.0, "y": 0.0, "z": -3.0},
+            "position": {"x": 0.0, "y": 0.0, "z": -0.0},
             "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
             }
         },
         "北面车库": {
             "type": "single_pose",
             "pose": {
-            "position": {"x": 5.0, "y": 10.0, "z": -3.0},
+            "position": {"x": -2.7, "y": 3.5, "z": -0.0},
             "orientation": {"x": 0.0, "y": 0.0, "z": 0.7071, "w": 0.7071}
             }
         },
         "西面车库": {
             "type": "single_pose",
             "pose": {
-            "position": {"x": -5.0, "y": 10.0, "z": -3.0},
+            "position": {"x": -5.0, "y": 10.0, "z": -0.0},
             "orientation": {"x": 0.0, "y": 0.0, "z": 0.7071, "w": 0.7071}
             }
         }
