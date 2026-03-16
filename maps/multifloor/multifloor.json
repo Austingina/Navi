@@ -30,14 +30,21 @@
         "北面车库":{
             "type": "single_pose",
             "pose": {
-            "position": {"x": 5.0, "y": 10.0, "z": -3.0},
+            "position": {"x": -50.2, "y": -4.90, "z": -0.0},
             "orientation": {"x": 0.0, "y": 0.0, "z": 0.7071, "w": 0.7071}
             }
         },
         "西面车库": {
             "type": "single_pose",
             "pose": {
-            "position": {"x": -5.0, "y": 10.0, "z": -3.0},
+            "position": {"x": -6.5, "y": 25.8, "z": -0.0},
+            "orientation": {"x": 0.0, "y": 0.0, "z": 0.7071, "w": 0.7071}
+            }
+        },
+        "机器人巡检起点": {
+            "type": "single_pose",
+            "pose": {
+            "position": {"x": 1.9, "y": -7.0, "z": 0.0},
             "orientation": {"x": 0.0, "y": 0.0, "z": 0.7071, "w": 0.7071}
             }
         },
@@ -57,7 +64,7 @@
       "map_file": "underground_2cm.pcd",
       "transform": {
         "_comment": "transform from underground to floor (default submap)",
-        "translation": {"x": 0.0, "y": 0.0, "z": 0.0},
+        "translation": {"x": -50.0, "y": -5.0, "z": 0.0},
         "rotation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
       },
       
@@ -179,14 +186,7 @@
       "description": "从地面层出发，经过电梯B到达5楼，最后返回地面层。",
       "waypoints": [
         {"submap": "floor", "semantic_point": "机器人巡检起点"},
-        {"submap": "floor", "semantic_point": "电梯B"},
-        {"submap": "5floor", "semantic_point": "机器人巡检起点"},
-        {"submap": "5floor", "semantic_point": "灭火器箱"},
-        {"submap": "5floor", "semantic_point": "充电桩"},
-        {"submap": "5floor", "semantic_point": "消防栓"},
-        {"submap": "5floor", "semantic_point": "违停车辆处"},
-        {"submap": "5floor", "semantic_point": "东门-出门方向"},
-        {"submap": "5floor", "semantic_point": "电梯B"},
+        {"submap": "underground", "semantic_point": "地下层巡检起点"},
         {"submap": "floor", "semantic_point": "机器人巡检起点"}
       ]
     }

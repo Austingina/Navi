@@ -502,7 +502,7 @@ class NavigationToolManager:
                 return {"success": False, "msg": f"继续导航失败: {str(e)}"}
 
         @self.mcp.tool()
-        def get_pose_list() -> Dict[str, Any]:
+        def get_pose_list_in_current_submap() -> Dict[str, Any]:
             """
             获取所有预设点名称
 

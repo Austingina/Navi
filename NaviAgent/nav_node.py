@@ -9,6 +9,7 @@ from std_msgs.msg import String  # 字符串消息类型
 from action_msgs.msg import GoalStatus, GoalStatusArray  # Action状态消息
 import logging  # 日志记录库
 import threading  # 线程处理库
+from collections import deque
 import time
 import math  # 数学库
 import os  # 文件路径处理
@@ -113,9 +114,56 @@ class NavNode(Node):
             self.audio_dir = os.path.join(os.path.dirname(__file__), 'audio')
 
             self.get_logger().info("ROS节点初始化成功")
+            # call queue for scheduling calls to be executed inside the ROS executor thread
+            self._call_queue = deque()
+            self._call_queue_lock = threading.Lock()
+            # timer running in ROS thread will flush the queue
+            self._queue_timer = self.create_timer(0.02, self._process_call_queue)
         except Exception as e:
             self.get_logger().error(f"ROS节点初始化失败: {e}")
             raise
+
+    def _process_call_queue(self):
+        """Process pending callables queued from other threads. Runs in ROS executor thread."""
+        try:
+            while True:
+                with self._call_queue_lock:
+                    if not self._call_queue:
+                        break
+                    func, args, kwargs = self._call_queue.popleft()
+                try:
+                    func(*args, **kwargs)
+                except Exception as e:
+                    self.get_logger().error(f"执行队列调用出错: {e}")
+        except Exception as e:
+            self.get_logger().error(f"处理调用队列时出错: {e}")
+
+    def schedule_sync_call(self, func, *args, timeout: float = 5.0, **kwargs):
+        """Schedule a callable to run inside ROS executor thread and wait for the result.
+
+        The provided func should accept no special event parameter. The return value
+        will be captured and returned. If timeout expires, raises TimeoutError.
+        """
+        done_event = threading.Event()
+        result = {"value": None, "exc": None}
+
+        def wrapper():
+            try:
+                result["value"] = func(*args, **kwargs)
+            except Exception as e:
+                result["exc"] = e
+            finally:
+                done_event.set()
+
+        with self._call_queue_lock:
+            self._call_queue.append((wrapper, (), {}))
+
+        completed = done_event.wait(timeout)
+        if not completed:
+            raise TimeoutError("Timed out waiting for scheduled call to complete")
+        if result["exc"]:
+            raise result["exc"]
+        return result["value"]
 
     def map_callback(self, msg):
         """
@@ -364,10 +412,14 @@ class NavNode(Node):
 
             self.get_logger().info(f"发布目标点:name={target}, x={pose.pose.position.x}, y={pose.pose.position.y}")
             self.get_logger().info("等待导航服务器可用...")
-            self.nav_action_client.wait_for_server()
-            send_goal_future = self.nav_action_client.send_goal_async(goal_msg)
-            send_goal_future.add_done_callback(self.goal_status_callback)
-            return True
+            # run wait_for_server and send_goal_async inside ROS thread
+            def do_send():
+                self.nav_action_client.wait_for_server()
+                fut = self.nav_action_client.send_goal_async(goal_msg)
+                fut.add_done_callback(self.goal_status_callback)
+                return True
+
+            return self.schedule_sync_call(do_send, timeout=10.0)
         except Exception as e:
             self.get_logger().error(f"发布目标点失败: {e}")
             return False
@@ -376,8 +428,15 @@ class NavNode(Node):
         """暂停导航（通过cancel当前goal实现）"""
         if self.current_goal_handle:
             self.get_logger().info("暂停导航...")
-            future = self.current_goal_handle.cancel_goal_async()
-            future.add_done_callback(lambda f: self.get_logger().info("导航已暂停（已取消当前目标）"))
+            def do_cancel():
+                fut = self.current_goal_handle.cancel_goal_async()
+                fut.add_done_callback(lambda f: self.get_logger().info("导航已暂停（已取消当前目标）"))
+                return True
+            try:
+                return self.schedule_sync_call(do_cancel, timeout=5.0)
+            except Exception as e:
+                self.get_logger().error(f"暂停导航失败: {e}")
+                return False
         else:
             self.get_logger().warn("没有活跃的导航目标可暂停")
 
@@ -385,7 +444,11 @@ class NavNode(Node):
         """继续导航（重新发送上一个目标）"""
         if self.last_goal:
             self.get_logger().info("继续导航...")
-            self.publish_goal(self.last_goal, target="resume")
+            try:
+                return self.schedule_sync_call(lambda: self.publish_goal(self.last_goal, target="resume"), timeout=10.0)
+            except Exception as e:
+                self.get_logger().error(f"继续导航失败: {e}")
+                return False
         else:
             self.get_logger().warn("没有可继续的目标")
 
@@ -393,8 +456,15 @@ class NavNode(Node):
         """取消导航"""
         if self.current_goal_handle:
             self.get_logger().info("取消导航...")
-            future = self.current_goal_handle.cancel_goal_async()
-            future.add_done_callback(lambda f: self.get_logger().info("导航已取消"))
+            def do_cancel():
+                fut = self.current_goal_handle.cancel_goal_async()
+                fut.add_done_callback(lambda f: self.get_logger().info("导航已取消"))
+                return True
+            try:
+                return self.schedule_sync_call(do_cancel, timeout=5.0)
+            except Exception as e:
+                self.get_logger().error(f"取消导航失败: {e}")
+                return False
         else:
             self.get_logger().warn("没有活跃的导航目标可取消")
 
@@ -620,7 +690,7 @@ class NavNode(Node):
 
     def get_current_map_path(self, timeout_sec: float = 2.0) -> str:
         """
-        从 /grid_map_pcl_loader_node 节点获取 map_file_path 参数
+        从 /grid_map_pcl_loader 节点获取 map_file_path 参数
         
         参数:
         timeout_sec: 服务调用超时时间（秒）
@@ -632,12 +702,12 @@ class NavNode(Node):
             # 创建参数服务客户端
             client = self.create_client(
                 GetParameters,
-                '/grid_map_pcl_loader_node/get_parameters'
+                '/grid_map_pcl_loader/get_parameters'
             )
             
             # 等待服务可用
             if not client.wait_for_service(timeout_sec=timeout_sec):
-                self.get_logger().warning('参数服务不可用: /grid_map_pcl_loader_node/get_parameters')
+                self.get_logger().warning('参数服务不可用: /grid_map_pcl_loader/get_parameters')
                 return ''
             
             # 创建请求
@@ -647,8 +717,13 @@ class NavNode(Node):
             # 发送请求
             future = client.call_async(request)
             
-            # 等待响应
-            rclpy.spin_until_future_complete(self, future, timeout_sec=timeout_sec)
+            # 使用轮询等待，避免与主 executor 冲突
+            start_time = time.time()
+            while not future.done():
+                if time.time() - start_time > timeout_sec:
+                    self.get_logger().warning('获取参数超时')
+                    return ''
+                time.sleep(0.05)
             
             if future.result() is not None:
                 result = future.result()
@@ -670,7 +745,7 @@ class NavNode(Node):
     def change_map(self, map_file_path: str) -> bool:
         """
         切换地图，向 /change_map 主题发送新地图路径
-        /grid_map_pcl_loader_node 和 /laser_mapping 节点会接收并处理
+        /grid_map_pcl_loader 和 /laser_mapping 节点会接收并处理
         
         参数:
         map_file_path: 新地图文件的完整路径
