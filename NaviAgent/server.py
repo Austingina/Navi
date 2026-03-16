@@ -823,6 +823,7 @@ class NavigationToolManager:
             Dict: 包含到达结果的字典
             """
             """阻塞直到到达目标点或超时"""
+            print(f"wait_goal_reached: target={target}, timeout={timeout}, xy_tolerance={xy_tolerance}, yaw_tolerance={yaw_tolerance}")
             try:
                 # 记录开始时间
                 start_time = time.time()
