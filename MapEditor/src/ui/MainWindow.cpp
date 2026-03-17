@@ -160,9 +160,9 @@ void MainWindow::connectSignals() {
 // ═══════════════════════════════════════════════════════════════════════
 
 void MainWindow::onOpen() {
-    QString path = QFileDialog::getOpenFileName(
-        this, "打开 multifloor.json", "",
-        "JSON Files (*.json);;All Files (*)");
+    QString path = QFileDialog::getExistingDirectory(
+        this, "选择地图目录", "",
+        QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
     if (path.isEmpty()) return;
 
     statusLabel_->setText("加载中...");
@@ -174,7 +174,7 @@ void MainWindow::onOpen() {
         return;
     }
 
-    currentJsonPath_ = path;
+    currentProjectDir_ = path;
     colorIndex_ = 0;
 
     // 为每个 submap 分配颜色
@@ -194,28 +194,28 @@ void MainWindow::onOpen() {
                               .arg(path)
                               .arg(project_.submapCount())
                               .arg(project_.routes().size()));
-    setWindowTitle(QString("MapEditor — %1").arg(QFileInfo(path).fileName()));
+    setWindowTitle(QString("MapEditor — %1").arg(QDir(path).dirName()));
 }
 
 void MainWindow::onSave() {
-    if (currentJsonPath_.isEmpty()) {
+    if (currentProjectDir_.isEmpty()) {
         onSaveAs();
         return;
     }
-    if (project_.save(currentJsonPath_)) {
+    if (project_.save(currentProjectDir_)) {
         project_.setDirty(false);
-        statusLabel_->setText("已保存: " + currentJsonPath_);
+        statusLabel_->setText("已保存: " + currentProjectDir_);
     } else {
         QMessageBox::critical(this, "错误", "保存失败");
     }
 }
 
 void MainWindow::onSaveAs() {
-    QString path = QFileDialog::getSaveFileName(
-        this, "另存为 multifloor.json", currentJsonPath_,
-        "JSON Files (*.json);;All Files (*)");
+    QString path = QFileDialog::getExistingDirectory(
+        this, "选择保存目录", currentProjectDir_,
+        QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
     if (path.isEmpty()) return;
-    currentJsonPath_ = path;
+    currentProjectDir_ = path;
     onSave();
 }
 

@@ -75,7 +75,7 @@ private:
     QDoubleSpinBox*   globalVoxelSpin_ = nullptr;
 
     MapProject project_;
-    QString    currentJsonPath_;
+    QString    currentProjectDir_;
 
     // 拾取回调
     enum PendingAction { NoPending, PendingAddSemanticPoint, PendingAddPortal, PendingAlignGuess };

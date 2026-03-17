@@ -17,10 +17,10 @@ public:
     MapProject() = default;
 
     // ── 加载 / 保存 ─────────────────────────────────────────────────
-    /// 从 multifloor.json 加载 (pcd 相对于 json 同目录)
-    bool load(const QString& jsonPath);
-    /// 保存为 multifloor.json + 各 submap 的 pcd
-    bool save(const QString& jsonPath) const;
+    /// 从目录加载: dirPath/dirName.json + PCD 文件
+    bool load(const QString& dirPath);
+    /// 保存到目录: dirPath/dirName.json + PCD 文件
+    bool save(const QString& dirPath) const;
 
     // ── Submap 管理 ──────────────────────────────────────────────────
     QString defaultSubmapId() const { return defaultSubmapId_; }

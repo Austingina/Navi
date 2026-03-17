@@ -94,10 +94,20 @@ bool MapProject::savePcd(const QString& path, CloudPtr cloud) const {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-//  加载 multifloor.json
+//  加载: 从目录加载 dirPath/dirName.json + PCD
 // ═══════════════════════════════════════════════════════════════════════
 
-bool MapProject::load(const QString& jsonPath) {
+bool MapProject::load(const QString& dirPath) {
+    QDir dir(dirPath);
+    if (!dir.exists()) {
+        qWarning() << "目录不存在:" << dirPath;
+        return false;
+    }
+
+    // JSON 文件名 = 目录名.json
+    QString dirName = dir.dirName();
+    QString jsonPath = dir.absoluteFilePath(dirName + ".json");
+
     QFile file(jsonPath);
     if (!file.open(QIODevice::ReadOnly)) {
         qWarning() << "无法打开文件:" << jsonPath;
@@ -112,7 +122,7 @@ bool MapProject::load(const QString& jsonPath) {
     }
 
     auto root = doc.object();
-    projectDir_ = QFileInfo(jsonPath).absolutePath();
+    projectDir_ = dir.absolutePath();
 
     // ── global ───────────────────────────────────────────────────────
     if (root.contains("global")) {
@@ -214,10 +224,19 @@ bool MapProject::load(const QString& jsonPath) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-//  保存 multifloor.json
+//  保存: 到目录 dirPath/dirName.json + PCD
 // ═══════════════════════════════════════════════════════════════════════
 
-bool MapProject::save(const QString& jsonPath) const {
+bool MapProject::save(const QString& dirPath) const {
+    QDir dir(dirPath);
+    if (!dir.exists()) {
+        QDir().mkpath(dirPath);
+    }
+
+    // JSON 文件名 = 目录名.json
+    QString dirName = dir.dirName();
+    QString jsonPath = dir.absoluteFilePath(dirName + ".json");
+
     QJsonObject root;
 
     // ── global ───────────────────────────────────────────────────────
@@ -287,9 +306,6 @@ bool MapProject::save(const QString& jsonPath) const {
     root["routes"] = routesObj;
 
     // ── 写文件 ───────────────────────────────────────────────────────
-    QString saveDir = QFileInfo(jsonPath).absolutePath();
-    QDir().mkpath(saveDir);
-
     QFile file(jsonPath);
     if (!file.open(QIODevice::WriteOnly)) {
         qWarning() << "无法写入文件:" << jsonPath;
@@ -304,7 +320,7 @@ bool MapProject::save(const QString& jsonPath) const {
     for (auto it = submaps_.begin(); it != submaps_.end(); ++it) {
         const auto& sm = it.value();
         if (sm->cloud() && !sm->mapFile().isEmpty()) {
-            QString pcdPath = saveDir + "/" + sm->mapFile();
+            QString pcdPath = dir.absoluteFilePath(sm->mapFile());
             savePcd(pcdPath, sm->cloud());
         }
     }
