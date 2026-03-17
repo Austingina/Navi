@@ -1,4 +1,5 @@
 #include "ui/PointCloudViewer.h"
+#include <QPainter>
 #include <QDebug>
 #include <QtMath>
 #include <QToolTip>
@@ -23,10 +24,12 @@ static const char* kCloudFrag = R"(
 #version 330 core
 in vec3 vColor;
 out vec4 FragColor;
+uniform int uDrawMode; // 0 = lines, 1 = points
 void main() {
-    // 圆形点
-    vec2 coord = gl_PointCoord - vec2(0.5);
-    if (dot(coord, coord) > 0.25) discard;
+    if (uDrawMode == 1) {
+        vec2 coord = gl_PointCoord - vec2(0.5);
+        if (dot(coord, coord) > 0.25) discard;
+    }
     FragColor = vec4(vColor, 1.0);
 }
 )";
@@ -127,20 +130,21 @@ void PointCloudViewer::paintGL() {
 
     cloudShader_->bind();
 
-    // 绘制网格
+    // 绘制网格 (GL_LINES → uDrawMode=0)
     {
         QMatrix4x4 mvp = proj * view;
         cloudShader_->setUniformValue("uMVP", mvp);
-        glPointSize(1.0f);
+        cloudShader_->setUniformValue("uDrawMode", 0);
         gridVAO_.bind();
         glDrawArrays(GL_LINES, 0, gridVertexCount_);
         gridVAO_.release();
     }
 
-    // 绘制坐标轴
+    // 绘制全局坐标轴 (GL_LINES → uDrawMode=0)
     {
         QMatrix4x4 mvp = proj * view;
         cloudShader_->setUniformValue("uMVP", mvp);
+        cloudShader_->setUniformValue("uDrawMode", 0);
         axisVAO_.bind();
         glLineWidth(3.0f);
         glDrawArrays(GL_LINES, 0, 6);
@@ -153,18 +157,31 @@ void PointCloudViewer::paintGL() {
         auto* d = it.value();
         if (!d->visible || d->vertexCount == 0) continue;
 
+        // 点云 (GL_POINTS → uDrawMode=1)
         QMatrix4x4 mvp = proj * view * d->modelMatrix;
         cloudShader_->setUniformValue("uMVP", mvp);
+        cloudShader_->setUniformValue("uDrawMode", 1);
         glPointSize(d->pointSize);
         d->vao.bind();
         glDrawArrays(GL_POINTS, 0, d->vertexCount);
         d->vao.release();
+
+        // submap 原点坐标轴 (GL_LINES → uDrawMode=0)
+        QMatrix4x4 axisMvp = proj * view * d->modelMatrix;
+        cloudShader_->setUniformValue("uMVP", axisMvp);
+        cloudShader_->setUniformValue("uDrawMode", 0);
+        axisVAO_.bind();
+        glLineWidth(2.0f);
+        glDrawArrays(GL_LINES, 0, 6);
+        glLineWidth(1.0f);
+        axisVAO_.release();
     }
 
-    // 绘制标记点 (语义点/传送门)
+    // 绘制标记点 (GL_POINTS → uDrawMode=1)
     if (showMarkers_ && markerCount_ > 0) {
         QMatrix4x4 mvp = proj * view;
         cloudShader_->setUniformValue("uMVP", mvp);
+        cloudShader_->setUniformValue("uDrawMode", 1);
         glPointSize(10.0f);
         markerVAO_.bind();
         glDrawArrays(GL_POINTS, 0, markerCount_);
@@ -172,6 +189,28 @@ void PointCloudViewer::paintGL() {
     }
 
     cloudShader_->release();
+
+    // Overlay: draw submap IDs using QPainter (2D overlay)
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing);
+    QFont font = painter.font();
+    font.setPointSize(12);
+    painter.setFont(font);
+    QMatrix4x4 view2 = view;
+    QMatrix4x4 proj2 = proj;
+    for (auto it = submapGL_.begin(); it != submapGL_.end(); ++it) {
+        auto* d = it.value();
+        if (!d->visible) continue;
+        QVector4D worldPos = d->modelMatrix * QVector4D(0,0,0,1);
+        QVector4D clip = proj2 * view2 * worldPos;
+        if (clip.w() == 0.0f) continue;
+        QVector3D ndc = clip.toVector3DAffine();
+        int x = int((ndc.x() * 0.5f + 0.5f) * width());
+        int y = int((-ndc.y() * 0.5f + 0.5f) * height());
+        painter.setPen(Qt::white);
+        painter.drawText(x+6, y-6, it.key());
+    }
+    painter.end();
 }
 
 // ═══════════════════════════════════════════════════════════════════════
