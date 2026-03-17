@@ -7,10 +7,68 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QDebug>
+#include <QRegularExpression>
+#include <QTextStream>
 
 #include <pcl/io/pcd_io.h>
 
 namespace me {
+
+// ═══════════════════════════════════════════════════════════════════════
+//  紧凑 JSON 格式化: position/orientation/translation/rotation 在一行
+// ═══════════════════════════════════════════════════════════════════════
+
+static QString compactifyJson(const QString& indentedJson) {
+    QStringList lines = indentedJson.split('\n');
+    QString result;
+    QTextStream out(&result);
+    
+    QStringList compactKeys = {"position", "orientation", "translation", "rotation"};
+    bool inCompactBlock = false;
+    QString compactLine;
+    
+    for (int i = 0; i < lines.size(); ++i) {
+        const QString& line = lines[i];
+        QString trimmed = line.trimmed();
+        
+        // 检测是否开始一个需要压缩的块
+        bool startsCompact = false;
+        for (const QString& key : compactKeys) {
+            if (trimmed.startsWith("\"" + key + "\"") && trimmed.contains("{")) {
+                startsCompact = true;
+                break;
+            }
+        }
+        
+        if (startsCompact && !trimmed.endsWith("},") && !trimmed.endsWith("}")) {
+            // 开始收集压缩块
+            inCompactBlock = true;
+            // 保留缩进
+            int indent = line.indexOf('"');
+            compactLine = QString(indent, ' ') + trimmed;
+        } else if (inCompactBlock) {
+            // 继续收集
+            if (trimmed == "}" || trimmed == "},") {
+                compactLine += trimmed;
+                out << compactLine << '\n';
+                inCompactBlock = false;
+                compactLine.clear();
+            } else {
+                // 去掉换行，只保留内容
+                compactLine += " " + trimmed;
+            }
+        } else {
+            out << line << '\n';
+        }
+    }
+    
+    // 移除末尾多余换行
+    while (result.endsWith("\n\n")) {
+        result.chop(1);
+    }
+    
+    return result;
+}
 
 // ═══════════════════════════════════════════════════════════════════════
 //  JSON → 内部数据结构
@@ -307,13 +365,18 @@ bool MapProject::save(const QString& dirPath) const {
 
     // ── 写文件 ───────────────────────────────────────────────────────
     QFile file(jsonPath);
-    if (!file.open(QIODevice::WriteOnly)) {
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         qWarning() << "无法写入文件:" << jsonPath;
         return false;
     }
 
     QJsonDocument doc(root);
-    file.write(doc.toJson(QJsonDocument::Indented));
+    QString indented = QString::fromUtf8(doc.toJson(QJsonDocument::Indented));
+    QString compact = compactifyJson(indented);
+    
+    QTextStream out(&file);
+    out.setCodec("UTF-8");
+    out << compact;
     file.close();
 
     // 保存各 submap 的 PCD (原始精度)
