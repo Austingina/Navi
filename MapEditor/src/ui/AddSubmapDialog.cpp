@@ -25,6 +25,7 @@ AddSubmapDialog::AddSubmapDialog(QWidget* parent) : QDialog(parent) {
     // 基本信息
     auto* infoGroup = new QGroupBox("基本信息");
     auto* form = new QFormLayout(infoGroup);
+    form->setContentsMargins(10, 20, 10, 10);
     editId_   = new QLineEdit();
     editId_->setPlaceholderText("例如: floor2");
     editName_ = new QLineEdit();
@@ -39,6 +40,7 @@ AddSubmapDialog::AddSubmapDialog(QWidget* parent) : QDialog(parent) {
     // 文件导入
     auto* fileGroup = new QGroupBox("文件导入");
     auto* fileForm = new QFormLayout(fileGroup);
+    fileForm->setContentsMargins(10, 20, 10, 10);
 
     auto* pcdRow = new QHBoxLayout();
     editPcdPath_ = new QLineEdit();

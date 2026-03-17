@@ -51,6 +51,7 @@ void PropertiesPanel::setupSubmapPage() {
     // 基本信息
     auto* infoGroup = new QGroupBox("基本信息");
     auto* infoForm = new QFormLayout(infoGroup);
+    infoForm->setContentsMargins(10, 20, 10, 10);
     smId_      = new QLineEdit(); smId_->setReadOnly(true);
     smName_    = new QLineEdit();
     smDesc_    = new QLineEdit();
@@ -66,6 +67,7 @@ void PropertiesPanel::setupSubmapPage() {
     // Transform
     auto* tfGroup = new QGroupBox("变换 (Transform → default_submap)");
     auto* tfForm = new QFormLayout(tfGroup);
+    tfForm->setContentsMargins(10, 20, 10, 10);
     smTx_ = makeSpinBox(); smTy_ = makeSpinBox(); smTz_ = makeSpinBox();
     smRx_ = makeSpinBox(-1, 1); smRy_ = makeSpinBox(-1, 1);
     smRz_ = makeSpinBox(-1, 1); smRw_ = makeSpinBox(-1, 1);
@@ -81,6 +83,7 @@ void PropertiesPanel::setupSubmapPage() {
     // 显示选项
     auto* dispGroup = new QGroupBox("显示选项");
     auto* dispForm = new QFormLayout(dispGroup);
+    dispForm->setContentsMargins(10, 20, 10, 10);
     smColorBtn_ = new QPushButton("选择颜色");
     smVoxelSize_ = makeSpinBox(0.01, 5.0, 3);
     smVoxelSize_->setValue(1.0);
@@ -174,6 +177,7 @@ void PropertiesPanel::setupSemanticPointPage() {
 
     auto* group = new QGroupBox("语义点位属性");
     auto* form = new QFormLayout(group);
+    form->setContentsMargins(10, 20, 10, 10);
     spName_ = new QLineEdit();
     spType_ = new QComboBox();
     spType_->addItems({"single_pose", "multi_pose"});
@@ -256,6 +260,7 @@ void PropertiesPanel::setupPortalPage() {
 
     auto* group = new QGroupBox("传送门属性");
     auto* form = new QFormLayout(group);
+    form->setContentsMargins(10, 20, 10, 10);
     ptName_   = new QLineEdit();
     ptTarget_ = new QComboBox();
     form->addRow("传送门名称:", ptName_);

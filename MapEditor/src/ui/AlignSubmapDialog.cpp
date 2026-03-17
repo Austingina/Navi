@@ -36,6 +36,7 @@ void AlignSubmapDialog::setupUI() {
     // ── 假想位置 ─────────────────────────────────────────────────────
     auto* guessGroup = new QGroupBox("假想位置");
     auto* guessLayout = new QHBoxLayout(guessGroup);
+    guessLayout->setContentsMargins(10, 20, 10, 10);
     lblGuessPos_ = new QLabel("未选择");
     auto* btnPick = new QPushButton("在地图上选择点");
     guessLayout->addWidget(lblGuessPos_);
@@ -49,6 +50,7 @@ void AlignSubmapDialog::setupUI() {
     // ── 搜索参数 ─────────────────────────────────────────────────────
     auto* paramGroup = new QGroupBox("搜索参数");
     auto* paramForm = new QFormLayout(paramGroup);
+    paramForm->setContentsMargins(10, 20, 10, 10);
 
     spinSearchXY_ = new QDoubleSpinBox();
     spinSearchXY_->setRange(1, 50); spinSearchXY_->setValue(5.0); spinSearchXY_->setSuffix(" m");
