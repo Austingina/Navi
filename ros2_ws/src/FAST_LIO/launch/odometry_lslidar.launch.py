@@ -136,7 +136,7 @@ def generate_launch_description():
     grid_map_pcl_node = Node(
         package='grid_map_pcl',
         executable='grid_map_pcl_loader_node',
-        name='grid_map_pcl_loader',
+        name='grid_map_pcl_loader_node',
         parameters=[{'map_file_path': map_file_path}],
         output='screen'
     )

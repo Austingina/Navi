@@ -693,7 +693,7 @@ class NavNode(Node):
 
     def get_current_map_path(self, timeout_sec: float = 2.0) -> str:
         """
-        从 /grid_map_pcl_loader 节点获取 map_file_path 参数
+        从 /grid_map_pcl_loader_node 节点获取 map_file_path 参数
         
         参数:
         timeout_sec: 服务调用超时时间（秒）
@@ -705,12 +705,12 @@ class NavNode(Node):
             # 创建参数服务客户端
             client = self.create_client(
                 GetParameters,
-                '/grid_map_pcl_loader/get_parameters'
+                '/grid_map_pcl_loader_node/get_parameters'
             )
             
             # 等待服务可用
             if not client.wait_for_service(timeout_sec=timeout_sec):
-                self.get_logger().warning('参数服务不可用: /grid_map_pcl_loader/get_parameters')
+                self.get_logger().warning('参数服务不可用: /grid_map_pcl_loader_node/get_parameters')
                 return ''
             
             # 创建请求
@@ -748,7 +748,7 @@ class NavNode(Node):
     def change_map(self, map_file_path: str) -> bool:
         """
         切换地图，向 /change_map 主题发送新地图路径
-        /grid_map_pcl_loader 和 /laser_mapping 节点会接收并处理
+        /grid_map_pcl_loader_node 和 /laser_mapping 节点会接收并处理
         
         参数:
         map_file_path: 新地图文件的完整路径
