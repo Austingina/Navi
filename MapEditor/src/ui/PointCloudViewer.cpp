@@ -1,6 +1,7 @@
 #include "ui/PointCloudViewer.h"
 #include <QDebug>
 #include <QtMath>
+#include <QToolTip>
 #include <cmath>
 
 namespace me {
@@ -37,6 +38,7 @@ void main() {
 PointCloudViewer::PointCloudViewer(QWidget* parent) : QOpenGLWidget(parent) {
     setFocusPolicy(Qt::StrongFocus);
     setMinimumSize(400, 300);
+    setMouseTracking(true);  // 接收无按键的鼠标移动事件
 }
 
 PointCloudViewer::~PointCloudViewer() {
@@ -262,8 +264,10 @@ void PointCloudViewer::setSubmapVisible(const QString& id, bool visible) {
 //  标记点上传
 // ═══════════════════════════════════════════════════════════════════════
 
-void PointCloudViewer::updateMarkers(const QVector<MarkerVertex>& markers) {
+void PointCloudViewer::updateMarkers(const QVector<MarkerVertex>& markers,
+                                      const QVector<MarkerInfo>& markerInfos) {
     makeCurrent();
+    markerInfos_ = markerInfos;
 
     if (!markerVAO_.isCreated()) markerVAO_.create();
     if (!markerVBO_.isCreated()) markerVBO_.create();
@@ -386,6 +390,22 @@ void PointCloudViewer::mouseMoveEvent(QMouseEvent* e) {
         cameraTarget_ += up * delta.y() * scale;
         update();
     }
+
+    // 悬停检测: 非拖拽时检测标记点
+    if (!rotating_ && !panning_ && showMarkers_) {
+        auto hits = hitTestMarkers(e->pos());
+        if (!hits.isEmpty()) {
+            QStringList lines;
+            for (int idx : hits) {
+                const auto& mi = markerInfos_[idx];
+                QString typeStr = (mi.type == "portal") ? "🚪传送门" : "📍语义点";
+                lines << QString("%1  [%2] %3").arg(typeStr, mi.submapId, mi.name);
+            }
+            QToolTip::showText(e->globalPos(), lines.join("\n"), this);
+        } else {
+            QToolTip::hideText();
+        }
+    }
 }
 
 void PointCloudViewer::mouseReleaseEvent(QMouseEvent* e) {
@@ -398,6 +418,36 @@ void PointCloudViewer::wheelEvent(QWheelEvent* e) {
     cameraDistance_ *= factor;
     cameraDistance_ = qBound(0.5f, cameraDistance_, 2000.0f);
     update();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  标记点悬停命中检测
+// ═══════════════════════════════════════════════════════════════════════
+
+QVector<int> PointCloudViewer::hitTestMarkers(const QPoint& screenPos, float threshold) {
+    QVector<int> result;
+    if (markerInfos_.isEmpty()) return result;
+
+    QMatrix4x4 vp = projMatrix() * viewMatrix();
+
+    for (int i = 0; i < markerInfos_.size(); ++i) {
+        const auto& mi = markerInfos_[i];
+        // 世界坐标 → 屏幕坐标
+        QVector4D clip = vp * QVector4D(mi.worldPos, 1.0f);
+        if (clip.w() <= 0.0f) continue;  // 在相机后方
+        float ndcX = clip.x() / clip.w();
+        float ndcY = clip.y() / clip.w();
+        float sx = (ndcX * 0.5f + 0.5f) * width();
+        float sy = (1.0f - (ndcY * 0.5f + 0.5f)) * height();
+
+        float dx = sx - screenPos.x();
+        float dy = sy - screenPos.y();
+        float dist = std::sqrt(dx * dx + dy * dy);
+        if (dist < threshold) {
+            result.append(i);
+        }
+    }
+    return result;
 }
 
 // ═══════════════════════════════════════════════════════════════════════

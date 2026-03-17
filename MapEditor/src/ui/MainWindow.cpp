@@ -10,6 +10,7 @@
 #include <QInputDialog>
 #include <QSplitter>
 #include <QApplication>
+#include <QPushButton>
 
 namespace me {
 
@@ -96,6 +97,24 @@ void MainWindow::setupMenuBar() {
     toolbar->addAction("+ Submap", this, &MainWindow::onAddSubmap);
     toolbar->addSeparator();
     toolbar->addAction("🔄 重置视角", this, &MainWindow::onResetView);
+
+    // 全局降采样设置
+    toolbar->addSeparator();
+    toolbar->addWidget(new QLabel(" 降采样(m): "));
+    globalVoxelSpin_ = new QDoubleSpinBox();
+    globalVoxelSpin_->setRange(0.01, 5.0);
+    globalVoxelSpin_->setDecimals(2);
+    globalVoxelSpin_->setSingleStep(0.1);
+    globalVoxelSpin_->setValue(1.0);
+    globalVoxelSpin_->setToolTip("全局显示降采样体素大小 (仅影响显示, 不影响保存)");
+    globalVoxelSpin_->setFixedWidth(80);
+    toolbar->addWidget(globalVoxelSpin_);
+    auto* btnApplyVoxel = new QPushButton("应用");
+    btnApplyVoxel->setFixedWidth(50);
+    toolbar->addWidget(btnApplyVoxel);
+    connect(btnApplyVoxel, &QPushButton::clicked, [this]() {
+        onGlobalVoxelSizeChanged(globalVoxelSpin_->value());
+    });
 }
 
 void MainWindow::connectSignals() {
@@ -227,6 +246,7 @@ void MainWindow::refreshSubmap(const QString& id) {
 
 void MainWindow::refreshMarkers() {
     QVector<MarkerVertex> markers;
+    QVector<MarkerInfo>   markerInfos;
 
     for (const auto& id : project_.submapIds()) {
         auto* sm = project_.submap(id);
@@ -241,6 +261,8 @@ void MainWindow::refreshMarkers() {
                         pose.position.x(), pose.position.y(), pose.position.z(), 1.0);
                     markers.append({(float)pw.x(), (float)pw.y(), (float)pw.z(),
                                     1.0f, 0.9f, 0.2f});
+                    markerInfos.append({it.key(), id, "semantic",
+                                        QVector3D((float)pw.x(), (float)pw.y(), (float)pw.z())});
                 }
             }
         }
@@ -256,12 +278,16 @@ void MainWindow::refreshMarkers() {
                         pose.position.x(), pose.position.y(), pose.position.z(), 1.0);
                     markers.append({(float)pw.x(), (float)pw.y(), (float)pw.z(),
                                     0.2f, 0.9f, 0.9f});
+                    markerInfos.append({
+                        QString("%1 → %2").arg(portal.portalName, portal.targetSubmap),
+                        id, "portal",
+                        QVector3D((float)pw.x(), (float)pw.y(), (float)pw.z())});
                 }
             }
         }
     }
 
-    viewer_->updateMarkers(markers);
+    viewer_->updateMarkers(markers, markerInfos);
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -318,6 +344,19 @@ void MainWindow::onSubmapPropertiesChanged(const QString& id) {
 void MainWindow::onColorChanged(const QString& id, const QColor& color) {
     Q_UNUSED(color);
     refreshSubmap(id);
+}
+
+void MainWindow::onGlobalVoxelSizeChanged(double size) {
+    float vs = static_cast<float>(size);
+    for (const auto& id : project_.submapIds()) {
+        auto* sm = project_.submap(id);
+        if (sm) {
+            sm->displayOptions().voxelSize = vs;
+            sm->updateDisplayCloud(vs);
+        }
+    }
+    refreshAllSubmaps();
+    statusLabel_->setText(QString("已将所有子地图降采样设为 %1 m").arg(vs, 0, 'f', 2));
 }
 
 // ═══════════════════════════════════════════════════════════════════════

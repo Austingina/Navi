@@ -10,6 +10,7 @@
 #include <QMainWindow>
 #include <QStatusBar>
 #include <QLabel>
+#include <QDoubleSpinBox>
 
 namespace me {
 
@@ -45,6 +46,9 @@ private slots:
     void onSubmapPropertiesChanged(const QString& id);
     void onColorChanged(const QString& id, const QColor& color);
 
+    // ── 全局降采样 ──────────────────────────────────────────────────
+    void onGlobalVoxelSizeChanged(double size);
+
     // ── 拾取 ─────────────────────────────────────────────────────────
     void onPointPicked(const Eigen::Vector3d& pos);
 
@@ -68,6 +72,7 @@ private:
     SubmapPanel*      submapPanel_ = nullptr;
     PropertiesPanel*  propsPanel_ = nullptr;
     QLabel*           statusLabel_ = nullptr;
+    QDoubleSpinBox*   globalVoxelSpin_ = nullptr;
 
     MapProject project_;
     QString    currentJsonPath_;

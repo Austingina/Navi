@@ -82,8 +82,8 @@ void PropertiesPanel::setupSubmapPage() {
     auto* dispGroup = new QGroupBox("显示选项");
     auto* dispForm = new QFormLayout(dispGroup);
     smColorBtn_ = new QPushButton("选择颜色");
-    smVoxelSize_ = makeSpinBox(0.01, 1.0, 3);
-    smVoxelSize_->setValue(0.05);
+    smVoxelSize_ = makeSpinBox(0.01, 5.0, 3);
+    smVoxelSize_->setValue(1.0);
     smPointSize_ = makeSpinBox(1, 20, 1);
     smPointSize_->setValue(2.0);
     dispForm->addRow("点云颜色:", smColorBtn_);

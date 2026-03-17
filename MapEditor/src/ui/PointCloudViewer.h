@@ -34,6 +34,14 @@ struct MarkerVertex {
     float r, g, b;
 };
 
+/// 标记点元数据 (用于悬停提示)
+struct MarkerInfo {
+    QString name;         // 语义点名称
+    QString submapId;     // 所属 submap
+    QString type;         // "semantic" 或 "portal"
+    QVector3D worldPos;   // 世界坐标系下位置
+};
+
 class PointCloudViewer : public QOpenGLWidget, protected QOpenGLFunctions_3_3_Core {
     Q_OBJECT
 public:
@@ -52,7 +60,8 @@ public:
 
     // ── 标记点管理 ───────────────────────────────────────────────────
     /// 更新语义点位和传送门标记
-    void updateMarkers(const QVector<MarkerVertex>& markers);
+    void updateMarkers(const QVector<MarkerVertex>& markers,
+                       const QVector<MarkerInfo>& markerInfos = {});
     void setMarkersVisible(bool v) { showMarkers_ = v; update(); }
 
     // ── 拾取模式 ─────────────────────────────────────────────────────
@@ -107,6 +116,8 @@ private:
     QOpenGLBuffer            markerVBO_{QOpenGLBuffer::VertexBuffer};
     int                      markerCount_ = 0;
     bool                     showMarkers_ = true;
+    QVector<MarkerInfo>      markerInfos_;   // 标记点元数据
+    QVector<int> hitTestMarkers(const QPoint& screenPos, float threshold = 15.0f);
 
     // ── 网格地面 ─────────────────────────────────────────────────────
     QOpenGLVertexArrayObject gridVAO_;
