@@ -53,6 +53,7 @@ private slots:
 
     // ── 拾取 ─────────────────────────────────────────────────────────
     void onPointPicked(const Eigen::Vector3d& pos);
+    void onMarkerDragFinished(const QString& submapId, const QString& name, const Eigen::Vector3d& newPos);
 
 private:
     void setupUI();

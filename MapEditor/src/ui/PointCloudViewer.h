@@ -14,6 +14,7 @@
 #include <QMap>
 #include <QMouseEvent>
 #include <QWheelEvent>
+#include <QTimer>
 
 namespace me {
 
@@ -117,6 +118,20 @@ private:
     int                      markerCount_ = 0;
     bool                     showMarkers_ = true;
     QVector<MarkerInfo>      markerInfos_;   // 标记点元数据
+    QVector<MarkerVertex>    markerVertices_; // 当前上传到 GPU 的标记顶点数据
+    // 拖拽状态
+    bool                     leftPressed_ = false;
+    bool                     dragging_ = false;
+    int                      potentialDragIndex_ = -1;
+    int                      dragIndex_ = -1;
+    QPoint                   pressPos_;
+    int                      longPressMs_ = 250;
+
+signals:
+    /// 用户通过长按并拖拽标记点后释放，要求更新语义点位置
+    void markerDragFinished(const QString& submapId, const QString& name, const Eigen::Vector3d& newPos);
+    
+private:
     QVector<int> hitTestMarkers(const QPoint& screenPos, float threshold = 15.0f);
 
     // ── 网格地面 ─────────────────────────────────────────────────────

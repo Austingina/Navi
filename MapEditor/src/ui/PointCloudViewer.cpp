@@ -307,11 +307,14 @@ void PointCloudViewer::updateMarkers(const QVector<MarkerVertex>& markers,
                                       const QVector<MarkerInfo>& markerInfos) {
     makeCurrent();
     markerInfos_ = markerInfos;
+    // 保存顶点数据以便拖拽时可以局部更新并重新上传
+    markerVertices_.clear();
+    markerVertices_ = markers;
 
     if (!markerVAO_.isCreated()) markerVAO_.create();
     if (!markerVBO_.isCreated()) markerVBO_.create();
 
-    markerCount_ = markers.size();
+    markerCount_ = markerVertices_.size();
     if (markerCount_ == 0) {
         doneCurrent();
         update();
@@ -320,7 +323,7 @@ void PointCloudViewer::updateMarkers(const QVector<MarkerVertex>& markers,
 
     markerVAO_.bind();
     markerVBO_.bind();
-    markerVBO_.allocate(markers.constData(), markerCount_ * sizeof(MarkerVertex));
+    markerVBO_.allocate(markerVertices_.constData(), markerCount_ * sizeof(MarkerVertex));
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(MarkerVertex), nullptr);
     glEnableVertexAttribArray(1);
@@ -399,14 +402,33 @@ void PointCloudViewer::buildAxis() {
 
 void PointCloudViewer::mousePressEvent(QMouseEvent* e) {
     lastMousePos_ = e->pos();
+    if (e->button() == Qt::LeftButton) {
+        leftPressed_ = true;
+        // 检测是否点击到标记点，若点击则准备长按拖拽
+        auto hits = hitTestMarkers(e->pos());
+        if (!hits.isEmpty()) {
+            potentialDragIndex_ = hits.first();
+            pressPos_ = e->pos();
+            // 启动长按定时器（单次）
+            QTimer::singleShot(longPressMs_, this, [this]() {
+                if (leftPressed_ && potentialDragIndex_ >= 0) {
+                    dragging_ = true;
+                    dragIndex_ = potentialDragIndex_;
+                    setCursor(Qt::ClosedHandCursor);
+                }
+            });
+            return;
+        }
+        // 若未点击到标记点，则进入旋转模式
+        rotating_ = true;
+    }
+
+    if (e->button() == Qt::MiddleButton) panning_ = true;
 
     if (pickMode_ != NoPickMode && e->button() == Qt::LeftButton) {
         performPick(e->pos());
         return;
     }
-
-    if (e->button() == Qt::LeftButton)  rotating_ = true;
-    if (e->button() == Qt::MiddleButton) panning_ = true;
 }
 
 void PointCloudViewer::mouseMoveEvent(QMouseEvent* e) {
@@ -445,10 +467,67 @@ void PointCloudViewer::mouseMoveEvent(QMouseEvent* e) {
             QToolTip::hideText();
         }
     }
+
+    // 拖拽处理: 若处于拖拽状态，则根据当前屏幕位置计算世界坐标并更新该标记
+    if (dragging_ && dragIndex_ >= 0 && dragIndex_ < markerCount_) {
+        // 将屏幕坐标转换为世界坐标（读取深度或投影到 z=0 平面）
+        makeCurrent();
+        float depth = 1.0f;
+        glReadPixels(e->pos().x(), height() - e->pos().y(), 1, 1,
+                     GL_DEPTH_COMPONENT, GL_FLOAT, &depth);
+
+        Eigen::Vector3d worldPos;
+        if (depth >= 1.0f) {
+            // 与 z=0 平面相交
+            QMatrix4x4 invVP = (projMatrix() * viewMatrix()).inverted();
+            float nx = (2.0f * e->pos().x()) / width() - 1.0f;
+            float ny = 1.0f - (2.0f * e->pos().y()) / height();
+            QVector4D nearPt = invVP * QVector4D(nx, ny, -1.0f, 1.0f);
+            QVector4D farPt  = invVP * QVector4D(nx, ny, 1.0f, 1.0f);
+            nearPt /= nearPt.w();
+            farPt  /= farPt.w();
+            QVector3D rayOrig(nearPt);
+            QVector3D rayDir = QVector3D(farPt) - rayOrig;
+            if (std::abs(rayDir.z()) > 1e-6) {
+                float t = -rayOrig.z() / rayDir.z();
+                if (t > 0) {
+                    QVector3D hit = rayOrig + t * rayDir;
+                    worldPos = Eigen::Vector3d(hit.x(), hit.y(), hit.z());
+                }
+            }
+        } else {
+            worldPos = unproject(e->pos(), depth);
+        }
+
+        // 更新本地顶点缓存与元数据，并重新上传 GPU
+        markerVertices_[dragIndex_].x = static_cast<float>(worldPos.x());
+        markerVertices_[dragIndex_].y = static_cast<float>(worldPos.y());
+        markerVertices_[dragIndex_].z = static_cast<float>(worldPos.z());
+        markerInfos_[dragIndex_].worldPos = QVector3D((float)worldPos.x(), (float)worldPos.y(), (float)worldPos.z());
+
+        markerVBO_.bind();
+        markerVBO_.allocate(markerVertices_.constData(), markerCount_ * sizeof(MarkerVertex));
+        markerVBO_.release();
+        doneCurrent();
+        update();
+    }
 }
 
 void PointCloudViewer::mouseReleaseEvent(QMouseEvent* e) {
-    if (e->button() == Qt::LeftButton)   rotating_ = false;
+    if (e->button() == Qt::LeftButton) {
+        leftPressed_ = false;
+        rotating_ = false;
+        // 如果处在拖拽结束，发出信号并清理状态
+        if (dragging_ && dragIndex_ >= 0 && dragIndex_ < markerCount_) {
+            auto& mi = markerInfos_[dragIndex_];
+            Eigen::Vector3d p(mi.worldPos.x(), mi.worldPos.y(), mi.worldPos.z());
+            emit markerDragFinished(mi.submapId, mi.name, p);
+        }
+        dragging_ = false;
+        potentialDragIndex_ = -1;
+        dragIndex_ = -1;
+        setCursor(Qt::ArrowCursor);
+    }
     if (e->button() == Qt::MiddleButton) panning_  = false;
 }
 

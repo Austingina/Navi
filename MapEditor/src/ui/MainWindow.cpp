@@ -157,6 +157,8 @@ void MainWindow::connectSignals() {
     // ── Viewer ───────────────────────────────────────────────────────
     connect(viewer_, &PointCloudViewer::pointPicked,
             this, &MainWindow::onPointPicked);
+        connect(viewer_, &PointCloudViewer::markerDragFinished,
+            this, &MainWindow::onMarkerDragFinished);
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -625,6 +627,24 @@ void MainWindow::onPointPicked(const Eigen::Vector3d& pos) {
     }
 
     pendingAction_ = NoPending;
+}
+
+void MainWindow::onMarkerDragFinished(const QString& submapId, const QString& name, const Eigen::Vector3d& newPos) {
+    // Update semantic point pose in project and refresh display
+    auto* sm = project_.submap(submapId);
+    if (!sm) return;
+    auto* sp = sm->semanticPoint(name);
+    if (!sp) return;
+    // For simplicity assume single_pose type and update first pose
+    if (!sp->poses.isEmpty()) {
+        sp->poses[0].position = newPos;
+    } else {
+        Pose p; p.position = newPos; sp->poses.append(p);
+    }
+    project_.setDirty();
+    refreshMarkers();
+    refreshSubmap(submapId);
+    statusBar()->showMessage(QString("已移动语义点 %1 到新位置").arg(name), 3000);
 }
 
 } // namespace me
