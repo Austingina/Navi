@@ -156,6 +156,8 @@ void AlignSubmapDialog::onStartAlign() {
                                 .arg(result_.fitness, 0, 'f', 4)
                                 .arg(result_.rmse, 0, 'f', 4));
         btnAccept_->setEnabled(true);
+        // 通知主窗口可以预览匹配结果
+        emit previewAvailable();
     } else {
         lblStatus_->setText("❌ " + result_.message);
     }

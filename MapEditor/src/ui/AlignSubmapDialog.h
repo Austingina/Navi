@@ -28,6 +28,8 @@ public:
 signals:
     /// 请求用户在 viewer 上选择一个点
     void requestPickPoint();
+    /// 匹配成功后通知可预览匹配结果（MainWindow 将临时应用该变换以作预览）
+    void previewAvailable();
 
 private slots:
     void onStartAlign();

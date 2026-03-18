@@ -446,6 +446,9 @@ void MainWindow::onAlignSubmap(const QString& smId) {
     dlg->setAttribute(Qt::WA_DeleteOnClose);
 
     auto pickConn = std::make_shared<QMetaObject::Connection>();
+    // 用于预览对齐结果的临时存储（在对话框中匹配成功后主窗口会临时应用变换）
+    auto origTransform = std::make_shared<RigidTransform>(sm->transform());
+    auto previewApplied = std::make_shared<bool>(false);
 
     connect(dlg, &AlignSubmapDialog::requestPickPoint, [this, smId, dlg, pickConn]() {
         pendingAction_   = PendingAlignGuess;
@@ -491,7 +494,31 @@ void MainWindow::onAlignSubmap(const QString& smId) {
         cleanup();
     });
 
-    connect(dlg, &QDialog::rejected, [cleanup]() {
+    // 当对话框发出预览可用信号时，在主窗口临时应用变换以供用户预览
+    connect(dlg, &AlignSubmapDialog::previewAvailable, [this, smId, dlg, origTransform, previewApplied]() {
+        const auto& result = dlg->matchResult();
+        if (result.success) {
+            if (auto* s = project_.submap(smId)) {
+                // 保存原始变换（已保存在 origTransform），应用预览变换
+                s->setTransform(result.transform);
+                refreshSubmap(smId);
+                refreshMarkers();
+                *previewApplied = true;
+                statusLabel_->setText("已预览对齐结果，点击 应用结果 保存，或 取消 回退");
+            }
+        }
+    });
+
+    connect(dlg, &QDialog::rejected, [this, smId, origTransform, previewApplied, cleanup]() {
+        // 若之前已应用了预览变换，则恢复原始变换
+        if (*previewApplied) {
+            if (auto* s = project_.submap(smId)) {
+                s->setTransform(*origTransform);
+                refreshSubmap(smId);
+                refreshMarkers();
+                statusLabel_->setText("已取消预览，已回退原始变换");
+            }
+        }
         cleanup();
     });
 
