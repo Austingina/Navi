@@ -56,11 +56,11 @@ void AlignSubmapDialog::setupUI() {
     paramForm->setContentsMargins(10, 20, 10, 10);
 
     spinSearchXY_ = new QDoubleSpinBox();
-    spinSearchXY_->setRange(1, 100); spinSearchXY_->setValue(5.0); spinSearchXY_->setSuffix(" m");
+    spinSearchXY_->setRange(1, 200); spinSearchXY_->setValue(100.0); spinSearchXY_->setSuffix(" m");
     paramForm->addRow("XY 搜索范围:", spinSearchXY_);
 
     spinSearchZ_ = new QDoubleSpinBox();
-    spinSearchZ_->setRange(0.5, 20); spinSearchZ_->setValue(2.0); spinSearchZ_->setSuffix(" m");
+    spinSearchZ_->setRange(0.5, 50); spinSearchZ_->setValue(20.0); spinSearchZ_->setSuffix(" m");
     paramForm->addRow("Z 搜索范围:", spinSearchZ_);
 
     spinCropSize_ = new QDoubleSpinBox();
@@ -69,7 +69,7 @@ void AlignSubmapDialog::setupUI() {
 
     spinMaxFitness_ = new QDoubleSpinBox();
     spinMaxFitness_->setRange(0.01, 2.0); spinMaxFitness_->setDecimals(3);
-    spinMaxFitness_->setValue(0.2); spinMaxFitness_->setSingleStep(0.05);
+    spinMaxFitness_->setValue(1.2); spinMaxFitness_->setSingleStep(0.05);
     paramForm->addRow("最大 fitness 阈值:", spinMaxFitness_);
 
     layout->addWidget(paramGroup);
