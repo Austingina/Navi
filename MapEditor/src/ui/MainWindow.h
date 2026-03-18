@@ -31,6 +31,7 @@ private slots:
     void onSubmapSelected(const QString& id);
     void onSemanticPointSelected(const QString& smId, const QString& ptName);
     void onPortalSelected(const QString& smId, int portalIdx);
+    void onSemanticPointChanged(const QString& smId, const QString& ptName);
 
     void onSubmapVisibilityChanged(const QString& id, bool visible);
     void onShowSemanticPointsChanged(const QString& id, bool show);

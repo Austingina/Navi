@@ -151,6 +151,8 @@ void MainWindow::connectSignals() {
             this, &MainWindow::onSubmapPropertiesChanged);
     connect(propsPanel_, &PropertiesPanel::colorChanged,
             this, &MainWindow::onColorChanged);
+        connect(propsPanel_, &PropertiesPanel::semanticPointChanged,
+            this, &MainWindow::onSemanticPointChanged);
 
     // ── Viewer ───────────────────────────────────────────────────────
     connect(viewer_, &PointCloudViewer::pointPicked,
@@ -311,6 +313,14 @@ void MainWindow::onSubmapSelected(const QString& id) {
 void MainWindow::onSemanticPointSelected(const QString& smId, const QString& ptName) {
     auto* sm = project_.submap(smId);
     if (sm) propsPanel_->showSemanticPointProperties(sm, ptName);
+}
+
+void MainWindow::onSemanticPointChanged(const QString& smId, const QString& ptName) {
+    // Refresh markers and specific submap so the updated semantic point is visible immediately
+    refreshMarkers();
+    if (!smId.isEmpty()) refreshSubmap(smId);
+    statusBar()->showMessage(QString("语义点已更新: %1").arg(ptName), 3000);
+    project_.setDirty();
 }
 
 void MainWindow::onPortalSelected(const QString& smId, int portalIdx) {
