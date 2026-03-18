@@ -1,6 +1,7 @@
 #pragma once
 // ═══════════════════════════════════════════════════════════════════════
 //  CloudMatcher — 3D-BBS 粗匹配 + GICP 精配准
+//  使用 cpu::BBS3D (ros2_ws/src/3rdparty/3d_bbs) 实现分支定界搜索
 // ═══════════════════════════════════════════════════════════════════════
 
 #include "core/Types.h"
@@ -23,21 +24,21 @@ struct MatchParams {
     // BBS 搜索范围 (以假想位置为中心)
     double searchRangeXY   = 5.0;    // 米
     double searchRangeZ    = 2.0;    // 米
-    double searchStepCoarse= 1.0;    // 粗搜索步长 (米)
-    double searchStepFine  = 0.25;   // 细搜索步长 (米)
-    double yawRange        = M_PI;   // 偏航搜索范围 (弧度)
-    double yawStep         = 10.0 * M_PI / 180.0;  // 偏航搜索步长
 
     // 源点云裁剪
-    double cropSize        = 20.0;   // 从 source 原点截取的立方体半径
+    double cropSize        = 20.0;   // 从 source 原点截取的立方体边长
+
+    // 3D-BBS GPU 参数
+    float  bbsDownsample   = 0.5f;   // BBS 输入降采样体素大小 (米)
+    double bbsMinLevelRes  = 1.0;    // 最细层体素分辨率 (米)
+    int    bbsMaxLevel     = 6;      // 体素层级数
+    double bbsScoreThresh  = 0.1;    // 最低匹配得分百分比
+    int    bbsTimeoutMs    = 60000;  // 超时 (毫秒), 0 = 不超时
 
     // GICP 参数
     int    gicpMaxIter     = 50;
     double gicpEpsilon     = 1e-6;
     double maxFitness      = 0.2;    // 允许的最大 fitness 阈值
-
-    // BBS 体素
-    float  bbsVoxelSize    = 0.5;    // BBS 目标体素大小
 };
 
 /// 进度回调: (progress 0-100, message)
@@ -47,14 +48,11 @@ class CloudMatcher {
 public:
     CloudMatcher() = default;
 
-    /// 设置目标点云 (default_submap 的点云)
     void setTarget(CloudPtr target);
-
-    /// 设置源点云 (新 submap 的点云, 将被裁剪)
     void setSource(CloudPtr source);
 
     /// 执行匹配
-    /// @param guessPosition 用户在 default_submap 上选择的假想位置
+    /// @param guessPosition 用户在目标子地图上选择的假想位置
     /// @param params        匹配参数
     /// @param callback      进度回调
     MatchResult match(const Eigen::Vector3d& guessPosition,
@@ -62,24 +60,7 @@ public:
                       ProgressCallback callback = nullptr);
 
 private:
-    /// 从源点云中截取原点附近的点
     CloudPtr cropSource(CloudPtr source, double halfSize);
-
-    /// 构建目标体素哈希表
-    void buildVoxelMap(float voxelSize);
-
-    /// 计算给定变换下的匹配分数 (匹配体素数 / 源体素数)
-    double computeScore(CloudPtr source, const Eigen::Matrix4f& transform);
-
-    /// BBS 粗搜索
-    struct BBSCandidate {
-        Eigen::Vector3d translation;
-        double          yaw;
-        double          score;
-    };
-    QVector<BBSCandidate> bbsSearch(CloudPtr croppedSource,
-                                     const Eigen::Vector3d& guessPos,
-                                     const MatchParams& params);
 
     /// GICP 精配准
     MatchResult gicpRefine(CloudPtr source, CloudPtr target,
@@ -88,24 +69,6 @@ private:
 
     CloudPtr target_;
     CloudPtr source_;
-
-    // 目标点云体素哈希表: voxelKey → 点数
-    struct VoxelKey {
-        int x, y, z;
-        bool operator==(const VoxelKey& o) const {
-            return x == o.x && y == o.y && z == o.z;
-        }
-    };
-    struct VoxelKeyHash {
-        size_t operator()(const VoxelKey& k) const {
-            size_t h = std::hash<int>()(k.x);
-            h ^= std::hash<int>()(k.y) + 0x9e3779b9 + (h << 6) + (h >> 2);
-            h ^= std::hash<int>()(k.z) + 0x9e3779b9 + (h << 6) + (h >> 2);
-            return h;
-        }
-    };
-    std::unordered_map<VoxelKey, int, VoxelKeyHash> voxelMap_;
-    float voxelSize_ = 0.5f;
 };
 
 } // namespace me

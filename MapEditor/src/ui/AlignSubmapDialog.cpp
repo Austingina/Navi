@@ -53,7 +53,7 @@ void AlignSubmapDialog::setupUI() {
     paramForm->setContentsMargins(10, 20, 10, 10);
 
     spinSearchXY_ = new QDoubleSpinBox();
-    spinSearchXY_->setRange(1, 50); spinSearchXY_->setValue(5.0); spinSearchXY_->setSuffix(" m");
+    spinSearchXY_->setRange(1, 100); spinSearchXY_->setValue(5.0); spinSearchXY_->setSuffix(" m");
     paramForm->addRow("XY 搜索范围:", spinSearchXY_);
 
     spinSearchZ_ = new QDoubleSpinBox();
