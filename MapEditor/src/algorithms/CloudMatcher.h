@@ -33,7 +33,7 @@ struct MatchParams {
     double bbsMinLevelRes  = 1.0;    // 最细层体素分辨率 (米)
     int    bbsMaxLevel     = 6;      // 体素层级数
     double bbsScoreThresh  = 0.1;    // 最低匹配得分百分比
-    int    bbsTimeoutMs    = 60000;  // 超时 (毫秒), 0 = 不超时
+    int    bbsTimeoutMs    = -60000;  // 超时 (毫秒), 0 = 不超时
 
     // GICP 参数
     int    gicpMaxIter     = 50;

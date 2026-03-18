@@ -43,6 +43,9 @@ void AlignSubmapDialog::setupUI() {
     guessLayout->addWidget(btnPick);
     layout->addWidget(guessGroup);
 
+    // 默认假想位置为 (0,0,0) —— 表示新 submap 原点与 default_submap 重合
+    setGuessPosition(Eigen::Vector3d(0.0, 0.0, 0.0));
+
     connect(btnPick, &QPushButton::clicked, [this]() {
         emit requestPickPoint();
     });
