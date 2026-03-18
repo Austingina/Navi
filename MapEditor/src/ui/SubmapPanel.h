@@ -40,6 +40,8 @@ signals:
     void alignSubmapRequested(const QString& submapId);
     void addRouteRequested();
     void removeRouteRequested(const QString& routeName);
+    // 将某个 submap 设置为默认 submap
+    void setDefaultSubmapRequested(const QString& submapId);
 
 private slots:
     void onItemClicked(QTreeWidgetItem* item, int column);

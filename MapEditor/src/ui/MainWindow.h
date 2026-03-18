@@ -41,6 +41,7 @@ private slots:
     void onAddSemanticPoint(const QString& smId);
     void onAddPortal(const QString& smId);
     void onAlignSubmap(const QString& smId);
+    void onSetDefaultSubmap(const QString& id);
 
     // ── 属性面板事件 ────────────────────────────────────────────────
     void onSubmapPropertiesChanged(const QString& id);

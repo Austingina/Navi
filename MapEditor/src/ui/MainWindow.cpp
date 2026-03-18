@@ -143,6 +143,8 @@ void MainWindow::connectSignals() {
             this, &MainWindow::onAddPortal);
     connect(submapPanel_, &SubmapPanel::alignSubmapRequested,
             this, &MainWindow::onAlignSubmap);
+        connect(submapPanel_, &SubmapPanel::setDefaultSubmapRequested,
+            this, &MainWindow::onSetDefaultSubmap);
 
     // ── Properties Panel ─────────────────────────────────────────────
     connect(propsPanel_, &PropertiesPanel::submapPropertiesChanged,
@@ -200,6 +202,13 @@ void MainWindow::onOpen() {
 void MainWindow::onSave() {
     if (currentProjectDir_.isEmpty()) {
         onSaveAs();
+        return;
+    }
+    // 检查是否存在 default_submap，若不存在则提示并阻止保存
+    QString defId = project_.defaultSubmapId();
+    if (defId.isEmpty() || !project_.submap(defId)) {
+        QMessageBox::warning(this, "提示",
+                             "当前项目缺少 default_submap，保存前请设置默认子地图。");
         return;
     }
     if (project_.save(currentProjectDir_)) {
@@ -379,6 +388,18 @@ void MainWindow::onAddSubmap() {
         refreshMarkers();
         statusLabel_->setText("已添加子地图: " + sm->id());
     }
+}
+
+void MainWindow::onSetDefaultSubmap(const QString& id) {
+    if (id.isEmpty()) return;
+    if (!project_.submap(id)) {
+        QMessageBox::warning(this, "错误", "指定的子地图不存在");
+        return;
+    }
+    project_.setDefaultSubmapId(id);
+    project_.setDirty();
+    submapPanel_->rebuild(&project_);
+    statusLabel_->setText("已将 " + id + " 设置为 default_submap");
 }
 
 void MainWindow::onRemoveSubmap(const QString& id) {

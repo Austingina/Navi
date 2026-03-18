@@ -198,6 +198,14 @@ void SubmapPanel::onContextMenu(const QPoint& pos) {
 
     switch (type) {
     case TypeSubmap: {
+        // 设置为 default_submap
+        bool isDefault = (project_ && project_->defaultSubmapId() == smId);
+        if (!isDefault) {
+            menu.addAction("⭐ 设为默认子地图", [this, smId]() {
+                emit setDefaultSubmapRequested(smId);
+            });
+            menu.addSeparator();
+        }
         menu.addAction("🔧 对齐 Transform (3D-BBS)", [this, smId]() {
             emit alignSubmapRequested(smId);
         });
@@ -208,7 +216,6 @@ void SubmapPanel::onContextMenu(const QPoint& pos) {
             emit addPortalRequested(smId);
         });
         menu.addSeparator();
-        bool isDefault = (project_ && project_->defaultSubmapId() == smId);
         if (!isDefault) {
             menu.addAction("🗑️ 删除此 Submap", [this, smId]() {
                 emit removeSubmapRequested(smId);
