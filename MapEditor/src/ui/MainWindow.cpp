@@ -422,39 +422,60 @@ void MainWindow::onAlignSubmap(const QString& smId) {
     if (!sm) return;
 
     auto* dlg = new AlignSubmapDialog(&project_, smId, this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
 
-    // 连接拾取
-    connect(dlg, &AlignSubmapDialog::requestPickPoint, [this, smId, dlg]() {
+    auto pickConn = std::make_shared<QMetaObject::Connection>();
+
+    connect(dlg, &AlignSubmapDialog::requestPickPoint, [this, smId, dlg, pickConn]() {
         pendingAction_   = PendingAlignGuess;
         pendingSubmapId_ = smId;
         viewer_->setPickMode(PointCloudViewer::PickGuessPosition);
         viewer_->setCursor(Qt::CrossCursor);
         statusLabel_->setText("请在 default_submap 上点击选择假想位置...");
 
-        // 临时连接: 拾取后传给对话框
-        auto conn = std::make_shared<QMetaObject::Connection>();
-        *conn = connect(viewer_, &PointCloudViewer::pointPicked,
-                        [dlg, conn](const Eigen::Vector3d& pos) {
+        if (*pickConn) QObject::disconnect(*pickConn);
+
+        dlg->hide();
+
+        *pickConn = connect(viewer_, &PointCloudViewer::pointPicked,
+                        [this, dlg, pickConn](const Eigen::Vector3d& pos) {
                             dlg->setGuessPosition(pos);
-                            QObject::disconnect(*conn);
+                            QObject::disconnect(*pickConn);
+                            viewer_->setPickMode(PointCloudViewer::NoPickMode);
+                            viewer_->setCursor(Qt::ArrowCursor);
+                            dlg->show();
                         });
     });
 
-    if (dlg->exec() == QDialog::Accepted) {
+    auto cleanup = [this, pickConn]() {
+        if (*pickConn) QObject::disconnect(*pickConn);
+        pendingAction_ = NoPending;
+        viewer_->setPickMode(PointCloudViewer::NoPickMode);
+        viewer_->setCursor(Qt::ArrowCursor);
+    };
+
+    connect(dlg, &QDialog::accepted, [this, smId, dlg, cleanup]() {
         const auto& result = dlg->matchResult();
         if (result.success) {
-            sm->setTransform(result.transform);
-            refreshSubmap(smId);
-            refreshMarkers();
-            project_.setDirty();
-            submapPanel_->rebuild(&project_);
-            statusLabel_->setText(QString("子地图 '%1' 对齐成功 (fitness=%2)")
-                                     .arg(smId).arg(result.fitness, 0, 'f', 4));
+            if (auto* s = project_.submap(smId)) {
+                s->setTransform(result.transform);
+                refreshSubmap(smId);
+                refreshMarkers();
+                project_.setDirty();
+                submapPanel_->rebuild(&project_);
+                statusLabel_->setText(QString("子地图 '%1' 对齐成功 (fitness=%2)")
+                                         .arg(smId).arg(result.fitness, 0, 'f', 4));
+            }
         }
-    }
+        cleanup();
+    });
 
-    pendingAction_ = NoPending;
-    delete dlg;
+    connect(dlg, &QDialog::rejected, [cleanup]() {
+        cleanup();
+    });
+
+    dlg->setModal(false);
+    dlg->show();
 }
 
 // ═══════════════════════════════════════════════════════════════════════
