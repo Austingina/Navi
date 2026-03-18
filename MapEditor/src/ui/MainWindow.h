@@ -36,6 +36,7 @@ private slots:
     void onSubmapVisibilityChanged(const QString& id, bool visible);
     void onShowSemanticPointsChanged(const QString& id, bool show);
     void onShowPortalsChanged(const QString& id, bool show);
+    void onRouteVisibilityChanged(const QString& routeName, bool visible);
 
     void onAddSubmap();
     void onRemoveSubmap(const QString& id);
@@ -66,6 +67,8 @@ private:
     void refreshSubmap(const QString& id);
     /// 刷新标记点 (语义点+传送门)
     void refreshMarkers();
+    /// 刷新所有路线折线
+    void refreshRouteLines();
 
     /// 为新增 submap 分配一个默认颜色
     QColor nextColor();

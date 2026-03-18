@@ -132,6 +132,8 @@ void MainWindow::connectSignals() {
             this, &MainWindow::onShowSemanticPointsChanged);
     connect(submapPanel_, &SubmapPanel::showPortalsChanged,
             this, &MainWindow::onShowPortalsChanged);
+    connect(submapPanel_, &SubmapPanel::routeVisibilityChanged,
+            this, &MainWindow::onRouteVisibilityChanged);
 
     connect(submapPanel_, &SubmapPanel::addSubmapRequested,
             this, &MainWindow::onAddSubmap);
@@ -194,6 +196,7 @@ void MainWindow::onOpen() {
     submapPanel_->rebuild(&project_);
     refreshAllSubmaps();
     refreshMarkers();
+    refreshRouteLines();
     viewer_->resetCamera();
 
     statusLabel_->setText(QString("已加载: %1 | %2 个子地图 | %3 条路线")
@@ -352,6 +355,55 @@ void MainWindow::onShowPortalsChanged(const QString& id, bool show) {
     if (sm) {
         sm->displayOptions().showPortals = show;
         refreshMarkers();
+    }
+}
+
+void MainWindow::onRouteVisibilityChanged(const QString& routeName, bool visible) {
+    viewer_->setRouteVisible(routeName, visible);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  路线折线刷新
+// ═══════════════════════════════════════════════════════════════════════
+
+void MainWindow::refreshRouteLines() {
+    static const QColor routeColors[] = {
+        QColor(255, 100, 255),   // 粉色
+        QColor(0, 255, 128),     // 荧光绿
+        QColor(255, 200, 0),     // 金色
+        QColor(0, 200, 255),     // 天蓝
+        QColor(255, 128, 0),     // 橙色
+        QColor(180, 100, 255),   // 紫色
+    };
+    int colorIdx = 0;
+
+    viewer_->clearAllRouteLines();
+
+    for (auto it = project_.routes().begin(); it != project_.routes().end(); ++it) {
+        const auto& route = it.value();
+        QVector<MarkerVertex> lineVerts;
+
+        for (const auto& wp : route.waypoints) {
+            auto* sm = project_.submap(wp.submapId);
+            if (!sm) continue;
+            auto* sp = sm->semanticPoint(wp.semanticPoint);
+            if (!sp || sp->poses.isEmpty()) continue;
+
+            Eigen::Matrix4d T = sm->transformMatrix();
+            const auto& pos = sp->poses.first().position;
+            Eigen::Vector4d pw = T * Eigen::Vector4d(pos.x(), pos.y(), pos.z(), 1.0);
+
+            const QColor& c = routeColors[colorIdx % 6];
+            lineVerts.append({
+                (float)pw.x(), (float)pw.y(), (float)pw.z(),
+                (float)c.redF(), (float)c.greenF(), (float)c.blueF()
+            });
+        }
+
+        if (lineVerts.size() >= 2) {
+            viewer_->updateRouteLines(it.key(), lineVerts);
+        }
+        colorIdx++;
     }
 }
 

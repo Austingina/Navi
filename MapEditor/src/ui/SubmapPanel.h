@@ -31,6 +31,7 @@ signals:
     void submapVisibilityChanged(const QString& submapId, bool visible);
     void showSemanticPointsChanged(const QString& submapId, bool show);
     void showPortalsChanged(const QString& submapId, bool show);
+    void routeVisibilityChanged(const QString& routeName, bool visible);
 
     // ── 操作请求 ─────────────────────────────────────────────────────
     void addSubmapRequested();

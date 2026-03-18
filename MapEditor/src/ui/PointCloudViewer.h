@@ -43,6 +43,14 @@ struct MarkerInfo {
     QVector3D worldPos;   // 世界坐标系下位置
 };
 
+/// 路线折线的 GPU 渲染数据
+struct RouteGLData {
+    QOpenGLVertexArrayObject vao;
+    QOpenGLBuffer            vbo{QOpenGLBuffer::VertexBuffer};
+    int                      vertexCount = 0;
+    bool                     visible     = true;
+};
+
 class PointCloudViewer : public QOpenGLWidget, protected QOpenGLFunctions_3_3_Core {
     Q_OBJECT
 public:
@@ -64,6 +72,13 @@ public:
     void updateMarkers(const QVector<MarkerVertex>& markers,
                        const QVector<MarkerInfo>& markerInfos = {});
     void setMarkersVisible(bool v) { showMarkers_ = v; update(); }
+
+    // ── 路线折线管理 ─────────────────────────────────────────────────
+    void updateRouteLines(const QString& routeName,
+                          const QVector<MarkerVertex>& vertices);
+    void setRouteVisible(const QString& routeName, bool visible);
+    void removeRouteLines(const QString& routeName);
+    void clearAllRouteLines();
 
     // ── 拾取模式 ─────────────────────────────────────────────────────
     enum PickMode { NoPickMode, PickPointOnCloud, PickGuessPosition };
@@ -133,6 +148,9 @@ signals:
     
 private:
     QVector<int> hitTestMarkers(const QPoint& screenPos, float threshold = 15.0f);
+
+    // ── 路线折线 ─────────────────────────────────────────────────────
+    QMap<QString, RouteGLData*> routeGL_;
 
     // ── 网格地面 ─────────────────────────────────────────────────────
     QOpenGLVertexArrayObject gridVAO_;

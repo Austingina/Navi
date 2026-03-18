@@ -130,6 +130,7 @@ QTreeWidgetItem* SubmapPanel::makeRouteItem(const QString& name, const Route& ro
     auto* item = new QTreeWidgetItem({name});
     item->setData(0, RoleType, TypeRoute);
     item->setData(0, RoleRouteName, name);
+    item->setCheckState(1, Qt::Checked);
     item->setToolTip(0, route.description);
 
     for (int i = 0; i < route.waypoints.size(); ++i) {
@@ -183,6 +184,9 @@ void SubmapPanel::onItemChanged(QTreeWidgetItem* item, int column) {
         break;
     case TypePortalsFolder:
         emit showPortalsChanged(smId, checked);
+        break;
+    case TypeRoute:
+        emit routeVisibilityChanged(item->data(0, RoleRouteName).toString(), checked);
         break;
     }
 }

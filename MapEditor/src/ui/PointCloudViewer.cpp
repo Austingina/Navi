@@ -51,6 +51,11 @@ PointCloudViewer::~PointCloudViewer() {
         d->vbo.destroy();
         delete d;
     }
+    for (auto* rd : routeGL_) {
+        rd->vao.destroy();
+        rd->vbo.destroy();
+        delete rd;
+    }
     markerVAO_.destroy();
     markerVBO_.destroy();
     gridVAO_.destroy();
@@ -186,6 +191,20 @@ void PointCloudViewer::paintGL() {
         markerVAO_.bind();
         glDrawArrays(GL_POINTS, 0, markerCount_);
         markerVAO_.release();
+    }
+
+    // 绘制路线折线 (GL_LINE_STRIP → uDrawMode=0)
+    for (auto it = routeGL_.begin(); it != routeGL_.end(); ++it) {
+        auto* rd = it.value();
+        if (!rd->visible || rd->vertexCount < 2) continue;
+        QMatrix4x4 mvp = proj * view;
+        cloudShader_->setUniformValue("uMVP", mvp);
+        cloudShader_->setUniformValue("uDrawMode", 0);
+        glLineWidth(3.0f);
+        rd->vao.bind();
+        glDrawArrays(GL_LINE_STRIP, 0, rd->vertexCount);
+        rd->vao.release();
+        glLineWidth(1.0f);
     }
 
     cloudShader_->release();
@@ -332,6 +351,77 @@ void PointCloudViewer::updateMarkers(const QVector<MarkerVertex>& markers,
     markerVBO_.release();
     markerVAO_.release();
 
+    doneCurrent();
+    update();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  路线折线上传
+// ═══════════════════════════════════════════════════════════════════════
+
+void PointCloudViewer::updateRouteLines(const QString& routeName,
+                                         const QVector<MarkerVertex>& vertices) {
+    makeCurrent();
+
+    RouteGLData* rd = nullptr;
+    if (routeGL_.contains(routeName)) {
+        rd = routeGL_[routeName];
+    } else {
+        rd = new RouteGLData();
+        rd->vao.create();
+        rd->vbo.create();
+        routeGL_[routeName] = rd;
+    }
+
+    rd->vertexCount = vertices.size();
+    if (rd->vertexCount == 0) {
+        doneCurrent();
+        update();
+        return;
+    }
+
+    rd->vao.bind();
+    rd->vbo.bind();
+    rd->vbo.allocate(vertices.constData(), vertices.size() * sizeof(MarkerVertex));
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(MarkerVertex), nullptr);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(MarkerVertex),
+                          reinterpret_cast<void*>(3 * sizeof(float)));
+    rd->vbo.release();
+    rd->vao.release();
+
+    doneCurrent();
+    update();
+}
+
+void PointCloudViewer::setRouteVisible(const QString& routeName, bool visible) {
+    if (routeGL_.contains(routeName)) {
+        routeGL_[routeName]->visible = visible;
+        update();
+    }
+}
+
+void PointCloudViewer::removeRouteLines(const QString& routeName) {
+    makeCurrent();
+    if (routeGL_.contains(routeName)) {
+        auto* rd = routeGL_.take(routeName);
+        rd->vao.destroy();
+        rd->vbo.destroy();
+        delete rd;
+    }
+    doneCurrent();
+    update();
+}
+
+void PointCloudViewer::clearAllRouteLines() {
+    makeCurrent();
+    for (auto* rd : routeGL_) {
+        rd->vao.destroy();
+        rd->vbo.destroy();
+        delete rd;
+    }
+    routeGL_.clear();
     doneCurrent();
     update();
 }
