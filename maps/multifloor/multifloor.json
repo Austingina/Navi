@@ -1,193 +1,190 @@
 {
-  "_comment": "多楼层地图配置文件 / Multi-floor map configuration",
-  
-  "global": {
-    "default_submap": "floor"
-  },
-  
-  "submaps": {
-    "floor": {
-      "name": "地面层",
-      "description": "Ground floor / 1F",
-      "map_file": "floor_2cm.pcd",
-      "transform": {
-        "_comment": "default submap, identity transform",
-        "translation": {"x": 0.0, "y": 0.0, "z": 0.0},
-        "rotation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
-      },
-      
-      "submap_portals": [
-        {
-          "portal":"北面车库",
-          "submap": "underground"
-        },
-        {
-          "portal": "电梯B",
-          "submap": "5floor"
-        }
-      ],
-      "semantic_points": {
-        "北面车库":{
-            "type": "single_pose",
-            "pose": {
-            "position": {"x": -50.2, "y": -4.90, "z": -0.0},
-            "orientation": {"x": 0.0, "y": 0.0, "z": 0.7071, "w": 0.7071}
-            }
-        },
-        "西面车库": {
-            "type": "single_pose",
-            "pose": {
-            "position": {"x": -6.5, "y": 25.8, "z": -0.0},
-            "orientation": {"x": 0.0, "y": 0.0, "z": 0.7071, "w": 0.7071}
-            }
-        },
-        "机器人巡检起点": {
-            "type": "single_pose",
-            "pose": {
-            "position": {"x": 1.9, "y": -7.0, "z": 0.0},
-            "orientation": {"x": 0.0, "y": 0.0, "z": 0.7071, "w": 0.7071}
-            }
-        },
-        "电梯B": {
-            "type": "single_pose",
-            "pose": {
-            "position": {"x": -1.15, "y": -11.0, "z": 0.0},
-            "orientation": {"x": 0.0, "y": 0.0, "z": -0.7071, "w": 0.7071}
-            }
-        }
-      }
+    "_comment": "多楼层地图配置文件 / Multi-floor map configuration",
+    "global": {
+        "default_submap": "floor"
     },
-    
-    "underground": {
-      "name": "地下层",
-      "description": "Underground floor / B1",
-      "map_file": "underground_2cm.pcd",
-      "transform": {
-        "_comment": "transform from underground to floor (default submap)",
-        "translation": {"x": -47.5, "y": -8.4, "z": 0.0},
-        "rotation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
-      },
-      
-      "submap_portals": [
-        {
-          "portal": "北面车库",
-          "submap": "floor"
-        }
-      ],
-      "semantic_points": {
-        "地下层巡检起点": {
-            "type": "single_pose",
-            "pose": {
-            "position": {"x": 0.0, "y": 0.0, "z": -0.0},
-            "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
-            }
-        },
-        "北面车库": {
-            "type": "single_pose",
-            "pose": {
-            "position": {"x": -2.7, "y": 3.5, "z": -0.0},
-            "orientation": {"x": 0.0, "y": 0.0, "z": 0.7071, "w": 0.7071}
-            }
-        },
-        "西面车库": {
-            "type": "single_pose",
-            "pose": {
-            "position": {"x": -5.0, "y": 10.0, "z": -0.0},
-            "orientation": {"x": 0.0, "y": 0.0, "z": 0.7071, "w": 0.7071}
-            }
-        }
-      }
-    },
-    
-    "5floor": {
-      "name": "5楼",
-      "description": "5th floor / 5F",
-      "map_file": "5floor_2cm.pcd",
-      "transform": {
-        "_comment": "transform from 5floor to floor (default submap)",
-        "translation": {"x": 0.0, "y": 0.0, "z": 0.0},
-        "rotation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
-      },
-      
-      "submap_portals": [
-        {
-          "portal": "电梯B",
-          "submap": "floor"
-        }
-      ],
-      "semantic_points": {
-        "机器人巡检起点": {
-            "type": "single_pose",
-            "pose": {
-            "position": {"x": -1.3, "y": 0.25, "z": 0.0},
-            "orientation": {"x": 0.0, "y": 0.0, "z": 0.7071, "w": 0.7071}
-            }
-        },
-        "灭火器箱": {
-            "type": "single_pose",
-            "pose": {
-            "position": {"x": -1.3, "y": -2.25, "z": 0.0},
-            "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
-            }
-        },
-        "充电桩": {
-            "type": "single_pose",
-            "pose": {
-            "position": {"x": -1.3, "y": -4.25, "z": 0.0},
-            "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
-            }
-        },
-        "消防栓": {
-            "type": "single_pose",
-            "pose": {
-            "position": {"x": -1.3, "y": -6.25, "z": 0.0},
-            "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
-            }
-        },
-        "违停车辆处": {
-            "type": "single_pose",
-            "pose": {
-            "position": {"x": -1.15, "y": -9.33, "z": 0.0},
-            "orientation": {"x": 0.0, "y": 0.0, "z": -0.7071, "w": 0.7071}
-            }
-        },
-        "电梯B": {
-            "type": "single_pose",
-            "pose": {
-            "position": {"x": -1.15, "y": -11.0, "z": 0.0},
-            "orientation": {"x": 0.0, "y": 0.0, "z": -0.7071, "w": 0.7071}
-            }
-        },
-        "东门-出门方向": {
-            "type": "multi_pose",
-            "poses": [
-            {
-            "position": {"x": -0.06, "y": -10.77, "z": 0.0},
-            "orientation": {"x": 0.0, "y": 0.0, "z": -0.7071, "w": 0.7071}
-            },
-            {
-            "position": {"x": -0.06, "y": -11.50, "z": 0.0},
-            "orientation": {"x": 0.0, "y": 0.0, "z": -0.7071, "w": 0.7071}
-            },
-            {
-            "position": {"x": -0.06, "y": -12.25, "z": 0.0},
-            "orientation": {"x": 0.0, "y": 0.0, "z": -0.7071, "w": 0.7071}
-            }
-
+    "routes": {
+        "线路A": {
+            "description": "从地面层出发，经过电梯B到达5楼，最后返回地面层。",
+            "waypoints": [
+                {
+                    "semantic_point": "北面车库",
+                    "submap": "floor"
+                },
+                {
+                    "semantic_point": "地下层巡检起点",
+                    "submap": "underground"
+                },
+                {
+                    "semantic_point": "机器人巡检起点",
+                    "submap": "floor"
+                }
             ]
         }
-      }
+    },
+    "submaps": {
+        "5floor": {
+            "description": "5th floor / 5F",
+            "map_file": "5floor_2cm.pcd",
+            "name": "5楼",
+            "semantic_points": {
+                "东门-出门方向": {
+                    "poses": [
+                        {
+                            "orientation": { "w": 0.7071, "x": 0, "y": 0, "z": -0.7071},
+                            "position": { "x": -0.06, "y": -10.77, "z": 0}
+                        },
+                        {
+                            "orientation": { "w": 0.7071, "x": 0, "y": 0, "z": -0.7071},
+                            "position": { "x": -0.06, "y": -11.5, "z": 0}
+                        },
+                        {
+                            "orientation": { "w": 0.7071, "x": 0, "y": 0, "z": -0.7071},
+                            "position": { "x": -0.06, "y": -12.25, "z": 0}
+                        }
+                    ],
+                    "type": "multi_pose"
+                },
+                "充电桩": {
+                    "pose": {
+                        "orientation": { "w": 1, "x": 0, "y": 0, "z": 0},
+                        "position": { "x": -1.3, "y": -4.25, "z": 0}
+                    },
+                    "type": "single_pose"
+                },
+                "机器人巡检起点": {
+                    "pose": {
+                        "orientation": { "w": 0.7071, "x": 0, "y": 0, "z": 0.7071},
+                        "position": { "x": -1.3, "y": 0.25, "z": 0}
+                    },
+                    "type": "single_pose"
+                },
+                "消防栓": {
+                    "pose": {
+                        "orientation": { "w": 1, "x": 0, "y": 0, "z": 0},
+                        "position": { "x": -1.3, "y": -6.25, "z": 0}
+                    },
+                    "type": "single_pose"
+                },
+                "灭火器箱": {
+                    "pose": {
+                        "orientation": { "w": 1, "x": 0, "y": 0, "z": 0},
+                        "position": { "x": -1.3, "y": -2.25, "z": 0}
+                    },
+                    "type": "single_pose"
+                },
+                "电梯B": {
+                    "pose": {
+                        "orientation": { "w": 0.7071, "x": 0, "y": 0, "z": -0.7071},
+                        "position": { "x": -1.15, "y": -11, "z": 0}
+                    },
+                    "type": "single_pose"
+                },
+                "违停车辆处": {
+                    "pose": {
+                        "orientation": { "w": 0.7071, "x": 0, "y": 0, "z": -0.7071},
+                        "position": { "x": -1.15, "y": -9.33, "z": 0}
+                    },
+                    "type": "single_pose"
+                }
+            },
+            "submap_portals": [
+                {
+                    "portal": "电梯B",
+                    "submap": "floor"
+                }
+            ],
+            "transform": {
+                "rotation": { "w": -0.10450258647102312, "x": 0, "y": 0, "z": 0.9945246147888278},
+                "translation": { "x": 0, "y": 0, "z": 15}
+            }
+        },
+        "floor": {
+            "description": "Ground floor / 1F",
+            "map_file": "floor_2cm.pcd",
+            "name": "地面层",
+            "semantic_points": {
+                "北面车库": {
+                    "pose": {
+                        "orientation": { "w": 0.7071, "x": 0, "y": 0, "z": 0.7071},
+                        "position": { "x": -50.2, "y": -4.9, "z": 0}
+                    },
+                    "type": "single_pose"
+                },
+                "机器人巡检起点": {
+                    "pose": {
+                        "orientation": { "w": 0.7071, "x": 0, "y": 0, "z": 0.7071},
+                        "position": { "x": 1.9, "y": -7, "z": 0}
+                    },
+                    "type": "single_pose"
+                },
+                "电梯B": {
+                    "pose": {
+                        "orientation": { "w": 0.7071, "x": 0, "y": 0, "z": -0.7071},
+                        "position": { "x": -1.15, "y": -11, "z": 0}
+                    },
+                    "type": "single_pose"
+                },
+                "西面车库": {
+                    "pose": {
+                        "orientation": { "w": 0.7071, "x": 0, "y": 0, "z": 0.7071},
+                        "position": { "x": -6.5, "y": 25.8, "z": 0}
+                    },
+                    "type": "single_pose"
+                }
+            },
+            "submap_portals": [
+                {
+                    "portal": "北面车库",
+                    "submap": "underground"
+                },
+                {
+                    "portal": "电梯B",
+                    "submap": "5floor"
+                }
+            ],
+            "transform": {
+                "rotation": { "w": 1, "x": 0, "y": 0, "z": 0},
+                "translation": { "x": 0, "y": 0, "z": 0}
+            }
+        },
+        "underground": {
+            "description": "Underground floor / B1",
+            "map_file": "underground_2cm.pcd",
+            "name": "地下层",
+            "semantic_points": {
+                "北面车库": {
+                    "pose": {
+                        "orientation": { "w": 0.7071, "x": 0, "y": 0, "z": 0.7071},
+                        "position": { "x": -2.7, "y": 3.5, "z": 0}
+                    },
+                    "type": "single_pose"
+                },
+                "地下层巡检起点": {
+                    "pose": {
+                        "orientation": { "w": 1, "x": 0, "y": 0, "z": 0},
+                        "position": { "x": 0, "y": 0, "z": 0}
+                    },
+                    "type": "single_pose"
+                },
+                "西面车库": {
+                    "pose": {
+                        "orientation": { "w": 0.7071, "x": 0, "y": 0, "z": 0.7071},
+                        "position": { "x": -5, "y": 10, "z": 0}
+                    },
+                    "type": "single_pose"
+                }
+            },
+            "submap_portals": [
+                {
+                    "portal": "北面车库",
+                    "submap": "floor"
+                }
+            ],
+            "transform": {
+                "rotation": { "w": 0.6971585142296859, "x": -0.004039699624235268, "y": -0.003275960010478837, "z": 0.71689814824005},
+                "translation": { "x": -49.055362701416016, "y": -6.627105712890625, "z": -3.973479747772217}
+            }
+        }
     }
-
-  },
-  "routes": {
-    "线路A": {
-      "description": "从地面层出发，经过电梯B到达5楼，最后返回地面层。",
-      "waypoints": [
-        {"submap": "floor", "semantic_point": "北面车库"},
-        {"submap": "underground", "semantic_point": "地下层巡检起点"},
-        {"submap": "floor", "semantic_point": "机器人巡检起点"}
-      ]
-    }
-  }
 }
