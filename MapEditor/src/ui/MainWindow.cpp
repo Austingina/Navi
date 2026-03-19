@@ -380,6 +380,7 @@ void MainWindow::onRouteWaypointInserted(const QString& routeName, const QString
 
     project_.setDirty();
     submapPanel_->rebuild(&project_);
+    submapPanel_->expandRoute(routeName);
     refreshRouteLines();
     statusLabel_->setText(QString("已插入路线点: %1/%2 → %3 (位置 %4)")
                              .arg(submapId, pointName, routeName)

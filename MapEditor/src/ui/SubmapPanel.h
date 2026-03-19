@@ -46,6 +46,9 @@ public:
     /// 从 MapProject 刷新整棵树
     void rebuild(MapProject* project);
 
+    /// 展开指定路线项
+    void expandRoute(const QString& routeName);
+
 signals:
     // ── 选中事件 ─────────────────────────────────────────────────────
     void submapSelected(const QString& submapId);

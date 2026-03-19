@@ -119,6 +119,23 @@ void SubmapPanel::setupUI() {
 
 void SubmapPanel::rebuild(MapProject* project) {
     project_ = project;
+
+    // 保存展开状态
+    QSet<QString> expandedRoutes;
+    QSet<QString> expandedSubmaps;
+    for (int i = 0; i < tree_->topLevelItemCount(); ++i) {
+        auto* root = tree_->topLevelItem(i);
+        for (int j = 0; j < root->childCount(); ++j) {
+            auto* child = root->child(j);
+            if (!child->isExpanded()) continue;
+            int type = child->data(0, RoleType).toInt();
+            if (type == TypeRoute)
+                expandedRoutes.insert(child->data(0, RoleRouteName).toString());
+            else if (type == TypeSubmap)
+                expandedSubmaps.insert(child->data(0, RoleSubmapId).toString());
+        }
+    }
+
     tree_->blockSignals(true);
     tree_->clear();
 
@@ -138,6 +155,7 @@ void SubmapPanel::rebuild(MapProject* project) {
         if (!sm) continue;
         auto* smItem = makeSubmapItem(id, sm);
         submapRoot->addChild(smItem);
+        if (expandedSubmaps.contains(id)) smItem->setExpanded(true);
     }
 
     // ── Routes ───────────────────────────────────────────────────────
@@ -149,9 +167,24 @@ void SubmapPanel::rebuild(MapProject* project) {
     for (auto it = project_->routes().begin(); it != project_->routes().end(); ++it) {
         auto* rItem = makeRouteItem(it.key(), it.value());
         routeRoot->addChild(rItem);
+        if (expandedRoutes.contains(it.key())) rItem->setExpanded(true);
     }
 
     tree_->blockSignals(false);
+}
+
+void SubmapPanel::expandRoute(const QString& routeName) {
+    for (int i = 0; i < tree_->topLevelItemCount(); ++i) {
+        auto* root = tree_->topLevelItem(i);
+        for (int j = 0; j < root->childCount(); ++j) {
+            auto* child = root->child(j);
+            if (child->data(0, RoleType).toInt() == TypeRoute &&
+                child->data(0, RoleRouteName).toString() == routeName) {
+                child->setExpanded(true);
+                return;
+            }
+        }
+    }
 }
 
 QTreeWidgetItem* SubmapPanel::makeSubmapItem(const QString& id, SubMap* sm) {
