@@ -219,6 +219,13 @@ QTreeWidgetItem* SubmapPanel::makeSubmapItem(const QString& id, SubMap* sm) {
     item->setData(0, RoleSubmapId, id);
     item->setCheckState(1, sm->displayOptions().visible ? Qt::Checked : Qt::Unchecked);
 
+    // 地图点云（独立控制，但 submap checkbox 为总开关）
+    auto* mapCloudItem = new QTreeWidgetItem({"🗺️ 地图点云"});
+    mapCloudItem->setData(0, RoleType, TypeMapCloud);
+    mapCloudItem->setData(0, RoleSubmapId, id);
+    mapCloudItem->setCheckState(1, sm->displayOptions().visible ? Qt::Checked : Qt::Unchecked);
+    item->addChild(mapCloudItem);
+
     // 语义点位文件夹
     auto* spFolder = new QTreeWidgetItem({"📍 语义点位"});
     spFolder->setData(0, RoleType, TypeSemPointsFolder);
@@ -296,6 +303,31 @@ void SubmapPanel::onItemClicked(QTreeWidgetItem* item, int /*column*/) {
         emit routeSelected(item->data(0, RoleRouteName).toString());
         break;
     }
+
+    // 如果是子项的变化，更新父项（submap）复选框为 全选/部分选/不选
+    if (type == TypeMapCloud || type == TypeSemPointsFolder || type == TypePortalsFolder) {
+        auto* parent = item->parent();
+        if (parent && parent->data(0, RoleType).toInt() == TypeSubmap) {
+            int total = 0;
+            int checked = 0;
+            for (int i = 0; i < parent->childCount(); ++i) {
+                auto* c = parent->child(i);
+                if (!c) continue;
+                int ct = c->data(0, RoleType).toInt();
+                if (ct == TypeMapCloud || ct == TypeSemPointsFolder || ct == TypePortalsFolder) {
+                    total++;
+                    if (c->checkState(1) == Qt::Checked) checked++;
+                }
+            }
+            Qt::CheckState state = Qt::PartiallyChecked;
+            if (checked == 0) state = Qt::Unchecked;
+            else if (checked == total) state = Qt::Checked;
+
+            tree_->blockSignals(true);
+            parent->setCheckState(1, state);
+            tree_->blockSignals(false);
+        }
+    }
 }
 
 void SubmapPanel::onItemChanged(QTreeWidgetItem* item, int column) {
@@ -306,8 +338,28 @@ void SubmapPanel::onItemChanged(QTreeWidgetItem* item, int column) {
     bool checked = (item->checkState(1) == Qt::Checked);
 
     switch (type) {
-    case TypeSubmap:
+    case TypeSubmap: {
+        // 主开关：同时控制地图点云、语义点位和传送门
+        // 先更新子项的复选框（防止递归 signal）
+        tree_->blockSignals(true);
+        for (int i = 0; i < item->childCount(); ++i) {
+            auto* c = item->child(i);
+            if (!c) continue;
+            int ct = c->data(0, RoleType).toInt();
+            if (ct == TypeMapCloud || ct == TypeSemPointsFolder || ct == TypePortalsFolder) {
+                c->setCheckState(1, checked ? Qt::Checked : Qt::Unchecked);
+            }
+        }
+        tree_->blockSignals(false);
+
         emit submapVisibilityChanged(smId, checked);
+        emit showSemanticPointsChanged(smId, checked);
+        emit showPortalsChanged(smId, checked);
+        break;
+    }
+    case TypeMapCloud:
+        emit submapVisibilityChanged(smId, checked);
+        // fallthrough to update parent master checkbox below
         break;
     case TypeSemPointsFolder:
         emit showSemanticPointsChanged(smId, checked);

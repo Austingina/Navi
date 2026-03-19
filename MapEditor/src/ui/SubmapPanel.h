@@ -93,7 +93,7 @@ private:
 
     // 记录 item 类型和数据
     enum ItemRole { RoleType = Qt::UserRole, RoleSubmapId, RolePointName, RolePortalIdx, RoleRouteName };
-    enum ItemType { TypeSubmapRoot, TypeSubmap, TypeSemPointsFolder, TypeSemPoint,
+    enum ItemType { TypeSubmapRoot, TypeSubmap, TypeMapCloud, TypeSemPointsFolder, TypeSemPoint,
                     TypePortalsFolder, TypePortal, TypeRoutesRoot, TypeRoute, TypeRouteWaypoint };
 
     MapProject* project_ = nullptr;
