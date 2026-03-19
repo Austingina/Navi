@@ -4,8 +4,74 @@
 #include <QHeaderView>
 #include <QMenu>
 #include <QMessageBox>
+#include <QDataStream>
 
 namespace me {
+
+// ═══════════════════════════════════════════════════════════════════════
+//  DragDropTree — 语义点拖入路线的实现
+// ═══════════════════════════════════════════════════════════════════════
+
+static const char* kMimeType = "application/x-mapeditor-sempoint";
+
+QStringList DragDropTree::mimeTypes() const {
+    return {kMimeType};
+}
+
+#if QT_VERSION >= QT_VERSION_CHECK(6,0,0)
+QMimeData* DragDropTree::mimeData(const QList<QTreeWidgetItem*>& items) const {
+#else
+QMimeData* DragDropTree::mimeData(const QList<QTreeWidgetItem*> items) const {
+#endif
+    if (items.isEmpty()) return nullptr;
+    auto* item = items.first();
+    int type = item->data(0, SubmapPanel::RoleType).toInt();
+    if (type != SubmapPanel::TypeSemPoint) return nullptr;
+
+    auto* md = new QMimeData();
+    QByteArray buf;
+    QDataStream ds(&buf, QIODevice::WriteOnly);
+    ds << item->data(0, SubmapPanel::RoleSubmapId).toString()
+       << item->data(0, SubmapPanel::RolePointName).toString();
+    md->setData(kMimeType, buf);
+    return md;
+}
+
+Qt::DropActions DragDropTree::supportedDropActions() const {
+    return Qt::CopyAction;
+}
+
+bool DragDropTree::dropMimeData(QTreeWidgetItem* parent, int index,
+                                 const QMimeData* data, Qt::DropAction /*action*/) {
+    if (!data || !data->hasFormat(kMimeType)) return false;
+    if (!parent) return false;
+
+    int parentType = parent->data(0, SubmapPanel::RoleType).toInt();
+
+    QString routeName;
+    int insertIdx = index;
+
+    if (parentType == SubmapPanel::TypeRoute) {
+        routeName = parent->data(0, SubmapPanel::RoleRouteName).toString();
+    } else if (parentType == SubmapPanel::TypeRouteWaypoint) {
+        auto* routeItem = parent->parent();
+        if (!routeItem) return false;
+        routeName = routeItem->data(0, SubmapPanel::RoleRouteName).toString();
+        insertIdx = routeItem->indexOfChild(parent);
+    } else {
+        return false;
+    }
+
+    QByteArray buf = data->data(kMimeType);
+    QDataStream ds(&buf, QIODevice::ReadOnly);
+    QString submapId, pointName;
+    ds >> submapId >> pointName;
+
+    emit waypointDropped(routeName, submapId, pointName, insertIdx);
+    return true;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 
 SubmapPanel::SubmapPanel(QWidget* parent) : QWidget(parent) {
     setupUI();
@@ -24,8 +90,8 @@ void SubmapPanel::setupUI() {
 
     connect(btnAdd_, &QPushButton::clicked, this, &SubmapPanel::addSubmapRequested);
 
-    // 树形列表
-    tree_ = new QTreeWidget();
+    // 树形列表 (支持拖拽)
+    tree_ = new DragDropTree();
     tree_->setHeaderLabels({"名称", "显示"});
     tree_->setColumnWidth(0, 180);
     tree_->setColumnWidth(1, 40);
@@ -33,10 +99,16 @@ void SubmapPanel::setupUI() {
     tree_->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     tree_->setContextMenuPolicy(Qt::CustomContextMenu);
     tree_->setSelectionMode(QAbstractItemView::SingleSelection);
+    tree_->setDragEnabled(true);
+    tree_->setAcceptDrops(true);
+    tree_->setDropIndicatorShown(true);
+    tree_->setDragDropMode(QAbstractItemView::DragDrop);
+    tree_->setDefaultDropAction(Qt::CopyAction);
 
     connect(tree_, &QTreeWidget::itemClicked, this, &SubmapPanel::onItemClicked);
     connect(tree_, &QTreeWidget::itemChanged, this, &SubmapPanel::onItemChanged);
     connect(tree_, &QTreeWidget::customContextMenuRequested, this, &SubmapPanel::onContextMenu);
+    connect(tree_, &DragDropTree::waypointDropped, this, &SubmapPanel::routeWaypointInserted);
 
     layout->addWidget(tree_);
 }
@@ -103,6 +175,7 @@ QTreeWidgetItem* SubmapPanel::makeSubmapItem(const QString& id, SubMap* sm) {
         spItem->setData(0, RoleType, TypeSemPoint);
         spItem->setData(0, RoleSubmapId, id);
         spItem->setData(0, RolePointName, sit.key());
+        spItem->setFlags(spItem->flags() | Qt::ItemIsDragEnabled);
         spFolder->addChild(spItem);
     }
     item->addChild(spFolder);
@@ -132,12 +205,14 @@ QTreeWidgetItem* SubmapPanel::makeRouteItem(const QString& name, const Route& ro
     item->setData(0, RoleRouteName, name);
     item->setCheckState(1, Qt::Checked);
     item->setToolTip(0, route.description);
+    item->setFlags(item->flags() | Qt::ItemIsDropEnabled);
 
     for (int i = 0; i < route.waypoints.size(); ++i) {
         const auto& wp = route.waypoints[i];
         auto* wpItem = new QTreeWidgetItem({
             QString("%1. %2 / %3").arg(i + 1).arg(wp.submapId, wp.semanticPoint)});
         wpItem->setData(0, RoleType, TypeRouteWaypoint);
+        wpItem->setFlags(wpItem->flags() & ~Qt::ItemIsDropEnabled);
         item->addChild(wpItem);
     }
     return item;

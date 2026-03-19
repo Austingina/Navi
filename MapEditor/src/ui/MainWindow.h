@@ -37,6 +37,8 @@ private slots:
     void onShowSemanticPointsChanged(const QString& id, bool show);
     void onShowPortalsChanged(const QString& id, bool show);
     void onRouteVisibilityChanged(const QString& routeName, bool visible);
+    void onRouteWaypointInserted(const QString& routeName, const QString& submapId,
+                                 const QString& pointName, int insertIndex);
 
     void onAddSubmap();
     void onRemoveSubmap(const QString& id);

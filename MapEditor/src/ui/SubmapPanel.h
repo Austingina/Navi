@@ -9,9 +9,35 @@
 #include <QTreeWidgetItem>
 #include <QPushButton>
 #include <QCheckBox>
+#include <QMimeData>
 
 namespace me {
 
+// ── 支持语义点拖入路线的 TreeWidget ──────────────────────────────────
+class DragDropTree : public QTreeWidget {
+    Q_OBJECT
+public:
+    using QTreeWidget::QTreeWidget;
+
+signals:
+    void waypointDropped(const QString& routeName,
+                         const QString& submapId,
+                         const QString& pointName,
+                         int insertIndex);
+
+protected:
+    QStringList mimeTypes() const override;
+#if QT_VERSION >= QT_VERSION_CHECK(6,0,0)
+    QMimeData* mimeData(const QList<QTreeWidgetItem*>& items) const override;
+#else
+    QMimeData* mimeData(const QList<QTreeWidgetItem*> items) const override;
+#endif
+    bool dropMimeData(QTreeWidgetItem* parent, int index,
+                      const QMimeData* data, Qt::DropAction action) override;
+    Qt::DropActions supportedDropActions() const override;
+};
+
+// ── SubmapPanel ──────────────────────────────────────────────────────
 class SubmapPanel : public QWidget {
     Q_OBJECT
 public:
@@ -41,8 +67,13 @@ signals:
     void alignSubmapRequested(const QString& submapId);
     void addRouteRequested();
     void removeRouteRequested(const QString& routeName);
-    // 将某个 submap 设置为默认 submap
     void setDefaultSubmapRequested(const QString& submapId);
+
+    // ── 路线编辑 ─────────────────────────────────────────────────────
+    void routeWaypointInserted(const QString& routeName,
+                               const QString& submapId,
+                               const QString& pointName,
+                               int insertIndex);
 
 private slots:
     void onItemClicked(QTreeWidgetItem* item, int column);
@@ -54,7 +85,7 @@ private:
     QTreeWidgetItem* makeSubmapItem(const QString& id, SubMap* sm);
     QTreeWidgetItem* makeRouteItem(const QString& name, const Route& route);
 
-    QTreeWidget* tree_ = nullptr;
+    DragDropTree* tree_ = nullptr;
     QPushButton* btnAdd_ = nullptr;
 
     // 记录 item 类型和数据
@@ -63,6 +94,8 @@ private:
                     TypePortalsFolder, TypePortal, TypeRoutesRoot, TypeRoute, TypeRouteWaypoint };
 
     MapProject* project_ = nullptr;
+
+    friend class DragDropTree;
 };
 
 } // namespace me

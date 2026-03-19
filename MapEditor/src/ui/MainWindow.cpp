@@ -134,6 +134,8 @@ void MainWindow::connectSignals() {
             this, &MainWindow::onShowPortalsChanged);
     connect(submapPanel_, &SubmapPanel::routeVisibilityChanged,
             this, &MainWindow::onRouteVisibilityChanged);
+    connect(submapPanel_, &SubmapPanel::routeWaypointInserted,
+            this, &MainWindow::onRouteWaypointInserted);
 
     connect(submapPanel_, &SubmapPanel::addSubmapRequested,
             this, &MainWindow::onAddSubmap);
@@ -360,6 +362,28 @@ void MainWindow::onShowPortalsChanged(const QString& id, bool show) {
 
 void MainWindow::onRouteVisibilityChanged(const QString& routeName, bool visible) {
     viewer_->setRouteVisible(routeName, visible);
+}
+
+void MainWindow::onRouteWaypointInserted(const QString& routeName, const QString& submapId,
+                                          const QString& pointName, int insertIndex) {
+    auto* r = project_.route(routeName);
+    if (!r) return;
+
+    RouteWaypoint wp;
+    wp.submapId = submapId;
+    wp.semanticPoint = pointName;
+
+    if (insertIndex < 0 || insertIndex >= r->waypoints.size())
+        r->waypoints.append(wp);
+    else
+        r->waypoints.insert(insertIndex, wp);
+
+    project_.setDirty();
+    submapPanel_->rebuild(&project_);
+    refreshRouteLines();
+    statusLabel_->setText(QString("已插入路线点: %1/%2 → %3 (位置 %4)")
+                             .arg(submapId, pointName, routeName)
+                             .arg(insertIndex + 1));
 }
 
 // ═══════════════════════════════════════════════════════════════════════
