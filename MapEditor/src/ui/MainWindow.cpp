@@ -139,6 +139,8 @@ void MainWindow::connectSignals() {
 
     connect(submapPanel_, &SubmapPanel::addSubmapRequested,
             this, &MainWindow::onAddSubmap);
+        connect(submapPanel_, &SubmapPanel::addRouteRequested,
+            this, &MainWindow::onAddRoute);
     connect(submapPanel_, &SubmapPanel::removeSubmapRequested,
             this, &MainWindow::onRemoveSubmap);
     connect(submapPanel_, &SubmapPanel::addSemanticPointRequested,
@@ -477,6 +479,24 @@ void MainWindow::onAddSubmap() {
         refreshMarkers();
         statusLabel_->setText("已添加子地图: " + sm->id());
     }
+}
+
+void MainWindow::onAddRoute() {
+    bool ok;
+    QString name = QInputDialog::getText(this, "新增路线", "路线名称:", QLineEdit::Normal, "", &ok);
+    if (!ok || name.isEmpty()) return;
+    // 检查是否已存在
+    if (project_.route(name)) {
+        QMessageBox::warning(this, "错误", QString("路线 '%1' 已存在").arg(name));
+        return;
+    }
+    Route r;
+    r.name = name;
+    project_.addRoute(r);
+    project_.setDirty();
+    submapPanel_->rebuild(&project_);
+    refreshRouteLines();
+    statusLabel_->setText("已添加路线: " + name);
 }
 
 void MainWindow::onSetDefaultSubmap(const QString& id) {

@@ -41,6 +41,7 @@ private slots:
                                  const QString& pointName, int insertIndex);
 
     void onAddSubmap();
+    void onAddRoute();
     void onRemoveSubmap(const QString& id);
     void onAddSemanticPoint(const QString& smId);
     void onAddPortal(const QString& smId);
