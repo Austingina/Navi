@@ -80,6 +80,12 @@ public:
     void removeRouteLines(const QString& routeName);
     void clearAllRouteLines();
 
+    // ── 裁剪框预览 ─────────────────────────────────────────────────────
+    void updateCropBox(const QString& name,
+                       const QVector<MarkerVertex>& lineVertices);
+    void removeCropBox(const QString& name);
+    void clearCropBoxes();
+
     // ── 拾取模式 ─────────────────────────────────────────────────────
     enum PickMode { NoPickMode, PickPointOnCloud, PickGuessPosition };
     void setPickMode(PickMode mode) { pickMode_ = mode; }
@@ -151,6 +157,9 @@ private:
 
     // ── 路线折线 ─────────────────────────────────────────────────────
     QMap<QString, RouteGLData*> routeGL_;
+
+    // ── 裁剪框预览 ─────────────────────────────────────────────────
+    QMap<QString, RouteGLData*> cropBoxGL_;
 
     // ── 网格地面 ─────────────────────────────────────────────────────
     QOpenGLVertexArrayObject gridVAO_;

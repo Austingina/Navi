@@ -87,9 +87,14 @@ private:
     QString    currentProjectDir_;
 
     // 拾取回调
-    enum PendingAction { NoPending, PendingAddSemanticPoint, PendingAddPortal, PendingAlignGuess };
+    enum PendingAction { NoPending, PendingAddSemanticPoint, PendingAddPortal,
+                         PendingAlignGuess, PendingAlignSourceCenter };
     PendingAction pendingAction_ = NoPending;
     QString       pendingSubmapId_;
+
+    static QVector<MarkerVertex> buildWireframeBox(
+        const Eigen::Vector3d& center, const Eigen::Vector3d& halfExtents,
+        const QColor& color, const Eigen::Matrix4d& transform = Eigen::Matrix4d::Identity());
 
     // 颜色循环
     int colorIndex_ = 0;

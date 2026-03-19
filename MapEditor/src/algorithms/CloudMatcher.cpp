@@ -21,15 +21,18 @@ void CloudMatcher::setSource(CloudPtr source) { source_ = source; }
 //  从源点云中裁剪原点附近的区域
 // ═══════════════════════════════════════════════════════════════════════
 
-CloudPtr CloudMatcher::cropSource(CloudPtr source, double halfSize) {
+CloudPtr CloudMatcher::cropSource(CloudPtr source, const Eigen::Vector3d& center, double halfSize) {
     auto cropped = std::make_shared<CloudT>();
     pcl::CropBox<PointT> cropFilter;
     cropFilter.setInputCloud(source);
-    cropFilter.setMin(Eigen::Vector4f(-halfSize, -halfSize, -halfSize, 1.0));
-    cropFilter.setMax(Eigen::Vector4f( halfSize,  halfSize,  halfSize, 1.0));
+    Eigen::Vector4f cMin(center.x() - halfSize, center.y() - halfSize, center.z() - halfSize, 1.0);
+    Eigen::Vector4f cMax(center.x() + halfSize, center.y() + halfSize, center.z() + halfSize, 1.0);
+    cropFilter.setMin(cMin);
+    cropFilter.setMax(cMax);
     cropFilter.filter(*cropped);
     qDebug() << "裁剪源点云:" << source->size() << "->" << cropped->size()
-             << " 范围: ±" << halfSize << "m";
+             << " 中心:(" << center.x() << "," << center.y() << "," << center.z()
+             << ") 范围: ±" << halfSize << "m";
     return cropped;
 }
 
@@ -105,9 +108,9 @@ MatchResult CloudMatcher::match(const Eigen::Vector3d& guessPosition,
         return result;
     }
 
-    // ── Step 1: 裁剪源点云 (source 原点附近) ─────────────────────────
+    // ── Step 1: 裁剪源点云 ─────────────────────────────────────────────
     if (callback) callback(5, "裁剪源点云...");
-    auto croppedSrc = cropSource(source_, params.cropSize / 2.0);
+    auto croppedSrc = cropSource(source_, params.srcCropCenter, params.cropSize / 2.0);
     if (croppedSrc->empty()) {
         result.message = "裁剪后源点云为空";
         return result;

@@ -56,6 +56,11 @@ PointCloudViewer::~PointCloudViewer() {
         rd->vbo.destroy();
         delete rd;
     }
+    for (auto* cb : cropBoxGL_) {
+        cb->vao.destroy();
+        cb->vbo.destroy();
+        delete cb;
+    }
     markerVAO_.destroy();
     markerVBO_.destroy();
     gridVAO_.destroy();
@@ -204,6 +209,20 @@ void PointCloudViewer::paintGL() {
         rd->vao.bind();
         glDrawArrays(GL_LINE_STRIP, 0, rd->vertexCount);
         rd->vao.release();
+        glLineWidth(1.0f);
+    }
+
+    // 绘制裁剪框预览 (GL_LINES → uDrawMode=0)
+    for (auto it = cropBoxGL_.begin(); it != cropBoxGL_.end(); ++it) {
+        auto* cb = it.value();
+        if (!cb->visible || cb->vertexCount < 2) continue;
+        QMatrix4x4 mvp = proj * view;
+        cloudShader_->setUniformValue("uMVP", mvp);
+        cloudShader_->setUniformValue("uDrawMode", 0);
+        glLineWidth(2.0f);
+        cb->vao.bind();
+        glDrawArrays(GL_LINES, 0, cb->vertexCount);
+        cb->vao.release();
         glLineWidth(1.0f);
     }
 
@@ -422,6 +441,70 @@ void PointCloudViewer::clearAllRouteLines() {
         delete rd;
     }
     routeGL_.clear();
+    doneCurrent();
+    update();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  裁剪框预览
+// ═══════════════════════════════════════════════════════════════════════
+
+void PointCloudViewer::updateCropBox(const QString& name,
+                                      const QVector<MarkerVertex>& lineVertices) {
+    makeCurrent();
+
+    RouteGLData* cb = nullptr;
+    if (cropBoxGL_.contains(name)) {
+        cb = cropBoxGL_[name];
+    } else {
+        cb = new RouteGLData();
+        cb->vao.create();
+        cb->vbo.create();
+        cropBoxGL_[name] = cb;
+    }
+
+    cb->vertexCount = lineVertices.size();
+    if (cb->vertexCount == 0) {
+        doneCurrent();
+        update();
+        return;
+    }
+
+    cb->vao.bind();
+    cb->vbo.bind();
+    cb->vbo.allocate(lineVertices.constData(), lineVertices.size() * sizeof(MarkerVertex));
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(MarkerVertex), nullptr);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(MarkerVertex),
+                          reinterpret_cast<void*>(3 * sizeof(float)));
+    cb->vbo.release();
+    cb->vao.release();
+
+    doneCurrent();
+    update();
+}
+
+void PointCloudViewer::removeCropBox(const QString& name) {
+    makeCurrent();
+    if (cropBoxGL_.contains(name)) {
+        auto* cb = cropBoxGL_.take(name);
+        cb->vao.destroy();
+        cb->vbo.destroy();
+        delete cb;
+    }
+    doneCurrent();
+    update();
+}
+
+void PointCloudViewer::clearCropBoxes() {
+    makeCurrent();
+    for (auto* cb : cropBoxGL_) {
+        cb->vao.destroy();
+        cb->vbo.destroy();
+        delete cb;
+    }
+    cropBoxGL_.clear();
     doneCurrent();
     update();
 }

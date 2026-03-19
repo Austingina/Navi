@@ -26,7 +26,8 @@ struct MatchParams {
     double searchRangeZ    = 2.0;    // 米
 
     // 源点云裁剪
-    double cropSize        = 20.0;   // 从 source 原点截取的立方体边长
+    double cropSize        = 20.0;   // 从裁剪中心截取的立方体边长
+    Eigen::Vector3d srcCropCenter = Eigen::Vector3d::Zero(); // 源点云裁剪中心 (源坐标系)
 
     // 3D-BBS GPU 参数
     float  bbsDownsample   = 0.5f;   // BBS 输入降采样体素大小 (米)
@@ -60,7 +61,7 @@ public:
                       ProgressCallback callback = nullptr);
 
 private:
-    CloudPtr cropSource(CloudPtr source, double halfSize);
+    CloudPtr cropSource(CloudPtr source, const Eigen::Vector3d& center, double halfSize);
 
     /// GICP 精配准
     MatchResult gicpRefine(CloudPtr source, CloudPtr target,

@@ -555,19 +555,19 @@ void MainWindow::onAlignSubmap(const QString& smId) {
     dlg->setAttribute(Qt::WA_DeleteOnClose);
 
     auto pickConn = std::make_shared<QMetaObject::Connection>();
-    // 用于预览对齐结果的临时存储（在对话框中匹配成功后主窗口会临时应用变换）
+    auto srcPickConn = std::make_shared<QMetaObject::Connection>();
     auto origTransform = std::make_shared<RigidTransform>(sm->transform());
     auto previewApplied = std::make_shared<bool>(false);
 
+    // ── 选择初始位置 (目标子地图) ──────────────────────────────────────
     connect(dlg, &AlignSubmapDialog::requestPickPoint, [this, smId, dlg, pickConn]() {
         pendingAction_   = PendingAlignGuess;
         pendingSubmapId_ = smId;
         viewer_->setPickMode(PointCloudViewer::PickGuessPosition);
         viewer_->setCursor(Qt::CrossCursor);
-        statusLabel_->setText("请在 default_submap 上点击选择初始位置...");
+        statusLabel_->setText("请在目标子地图上点击选择初始位置...");
 
         if (*pickConn) QObject::disconnect(*pickConn);
-
         dlg->hide();
 
         *pickConn = connect(viewer_, &PointCloudViewer::pointPicked,
@@ -580,11 +580,65 @@ void MainWindow::onAlignSubmap(const QString& smId) {
                         });
     });
 
-    auto cleanup = [this, pickConn]() {
+    // ── 选择源点云裁剪中心 ──────────────────────────────────────────
+    connect(dlg, &AlignSubmapDialog::requestPickSourceCenter, [this, smId, dlg, srcPickConn]() {
+        pendingAction_   = PendingAlignSourceCenter;
+        pendingSubmapId_ = smId;
+        viewer_->setPickMode(PointCloudViewer::PickGuessPosition);
+        viewer_->setCursor(Qt::CrossCursor);
+        statusLabel_->setText("请在源子地图上点击选择裁剪中心...");
+
+        if (*srcPickConn) QObject::disconnect(*srcPickConn);
+        dlg->hide();
+
+        *srcPickConn = connect(viewer_, &PointCloudViewer::pointPicked,
+                        [this, smId, dlg, srcPickConn](const Eigen::Vector3d& worldPos) {
+                            auto* s = project_.submap(smId);
+                            Eigen::Vector3d localPos = worldPos;
+                            if (s) {
+                                Eigen::Matrix4d invT = s->transformMatrix().inverse();
+                                Eigen::Vector4d lp = invT * Eigen::Vector4d(worldPos.x(), worldPos.y(), worldPos.z(), 1.0);
+                                localPos = lp.head<3>();
+                            }
+                            dlg->setSrcCropCenter(localPos);
+                            QObject::disconnect(*srcPickConn);
+                            viewer_->setPickMode(PointCloudViewer::NoPickMode);
+                            viewer_->setCursor(Qt::ArrowCursor);
+                            dlg->show();
+                        });
+    });
+
+    // ── 预览裁剪框 ─────────────────────────────────────────────────────
+    connect(dlg, &AlignSubmapDialog::requestPreview, [this, smId, dlg]() {
+        auto* s = project_.submap(smId);
+        if (!s) return;
+
+        Eigen::Vector3d guessPos = dlg->guessPosition();
+        double rangeXY = dlg->searchRangeXY();
+        double rangeZ  = dlg->searchRangeZ();
+        Eigen::Vector3d tgtHalf(rangeXY, rangeXY, rangeZ);
+
+        auto tgtVerts = buildWireframeBox(guessPos, tgtHalf, QColor(0, 200, 255));
+        viewer_->updateCropBox("target_crop", tgtVerts);
+
+        Eigen::Vector3d srcCenter = dlg->srcCropCenter();
+        double halfCrop = dlg->cropSize() / 2.0;
+        Eigen::Vector3d srcHalf(halfCrop, halfCrop, halfCrop);
+
+        auto srcVerts = buildWireframeBox(srcCenter, srcHalf,
+                                          QColor(255, 200, 0), s->transformMatrix());
+        viewer_->updateCropBox("source_crop", srcVerts);
+
+        statusLabel_->setText("已显示裁剪框预览 (青色=目标, 黄色=源)");
+    });
+
+    auto cleanup = [this, pickConn, srcPickConn]() {
         if (*pickConn) QObject::disconnect(*pickConn);
+        if (*srcPickConn) QObject::disconnect(*srcPickConn);
         pendingAction_ = NoPending;
         viewer_->setPickMode(PointCloudViewer::NoPickMode);
         viewer_->setCursor(Qt::ArrowCursor);
+        viewer_->clearCropBoxes();
     };
 
     connect(dlg, &QDialog::accepted, [this, smId, dlg, cleanup]() {
@@ -603,12 +657,10 @@ void MainWindow::onAlignSubmap(const QString& smId) {
         cleanup();
     });
 
-    // 当对话框发出预览可用信号时，在主窗口临时应用变换以供用户预览
     connect(dlg, &AlignSubmapDialog::previewAvailable, [this, smId, dlg, origTransform, previewApplied]() {
         const auto& result = dlg->matchResult();
         if (result.success) {
             if (auto* s = project_.submap(smId)) {
-                // 保存原始变换（已保存在 origTransform），应用预览变换
                 s->setTransform(result.transform);
                 refreshSubmap(smId);
                 refreshMarkers();
@@ -619,7 +671,6 @@ void MainWindow::onAlignSubmap(const QString& smId) {
     });
 
     connect(dlg, &QDialog::rejected, [this, smId, origTransform, previewApplied, cleanup]() {
-        // 若之前已应用了预览变换，则恢复原始变换
         if (*previewApplied) {
             if (auto* s = project_.submap(smId)) {
                 s->setTransform(*origTransform);
@@ -633,6 +684,45 @@ void MainWindow::onAlignSubmap(const QString& smId) {
 
     dlg->setModal(false);
     dlg->show();
+}
+
+QVector<MarkerVertex> MainWindow::buildWireframeBox(
+    const Eigen::Vector3d& center, const Eigen::Vector3d& half,
+    const QColor& color, const Eigen::Matrix4d& transform) {
+
+    float r = color.redF(), g = color.greenF(), b = color.blueF();
+
+    Eigen::Vector3d corners[8] = {
+        center + Eigen::Vector3d(-half.x(), -half.y(), -half.z()),
+        center + Eigen::Vector3d( half.x(), -half.y(), -half.z()),
+        center + Eigen::Vector3d( half.x(),  half.y(), -half.z()),
+        center + Eigen::Vector3d(-half.x(),  half.y(), -half.z()),
+        center + Eigen::Vector3d(-half.x(), -half.y(),  half.z()),
+        center + Eigen::Vector3d( half.x(), -half.y(),  half.z()),
+        center + Eigen::Vector3d( half.x(),  half.y(),  half.z()),
+        center + Eigen::Vector3d(-half.x(),  half.y(),  half.z()),
+    };
+
+    for (int i = 0; i < 8; ++i) {
+        Eigen::Vector4d p = transform * Eigen::Vector4d(corners[i].x(), corners[i].y(), corners[i].z(), 1.0);
+        corners[i] = p.head<3>();
+    }
+
+    static const int edges[12][2] = {
+        {0,1},{1,2},{2,3},{3,0},
+        {4,5},{5,6},{6,7},{7,4},
+        {0,4},{1,5},{2,6},{3,7},
+    };
+
+    QVector<MarkerVertex> verts;
+    verts.reserve(24);
+    for (const auto& e : edges) {
+        const auto& a = corners[e[0]];
+        const auto& c2 = corners[e[1]];
+        verts.append({(float)a.x(), (float)a.y(), (float)a.z(), r, g, b});
+        verts.append({(float)c2.x(), (float)c2.y(), (float)c2.z(), r, g, b});
+    }
+    return verts;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -713,8 +803,13 @@ void MainWindow::onPointPicked(const Eigen::Vector3d& pos) {
         break;
     }
     case PendingAlignGuess:
-        // 由 AlignSubmapDialog 的临时连接处理
         statusLabel_->setText(QString("初始位置: (%1, %2, %3)")
+                                 .arg(pos.x(), 0, 'f', 2)
+                                 .arg(pos.y(), 0, 'f', 2)
+                                 .arg(pos.z(), 0, 'f', 2));
+        break;
+    case PendingAlignSourceCenter:
+        statusLabel_->setText(QString("源裁剪中心: (%1, %2, %3)")
                                  .arg(pos.x(), 0, 'f', 2)
                                  .arg(pos.y(), 0, 'f', 2)
                                  .arg(pos.z(), 0, 'f', 2));

@@ -9,6 +9,7 @@
 #include <QProgressBar>
 #include <QLabel>
 #include <QDoubleSpinBox>
+#include <QSpinBox>
 
 namespace me {
 
@@ -19,16 +20,22 @@ public:
                                 const QString& submapId,
                                 QWidget* parent = nullptr);
 
-    /// 设置在 default_submap 上选择的初始位置
     void setGuessPosition(const Eigen::Vector3d& pos);
+    void setSrcCropCenter(const Eigen::Vector3d& localPos);
 
-    /// 获取匹配结果
     const MatchResult& matchResult() const { return result_; }
+    const QString& submapId() const { return submapId_; }
+
+    Eigen::Vector3d guessPosition() const { return guessPos_; }
+    Eigen::Vector3d srcCropCenter() const { return srcCropCenter_; }
+    double searchRangeXY() const { return spinSearchXY_->value(); }
+    double searchRangeZ() const { return spinSearchZ_->value(); }
+    double cropSize() const { return spinCropSize_->value(); }
 
 signals:
-    /// 请求用户在 viewer 上选择一个点
     void requestPickPoint();
-    /// 匹配成功后通知可预览匹配结果（MainWindow 将临时应用该变换以作预览）
+    void requestPickSourceCenter();
+    void requestPreview();
     void previewAvailable();
 
 private slots:
@@ -41,14 +48,31 @@ private:
     MapProject* project_;
     QString     submapId_;
     Eigen::Vector3d guessPos_{0, 0, 0};
+    Eigen::Vector3d srcCropCenter_{0, 0, 0};
     bool        hasGuess_ = false;
 
-    // UI
+    // UI — 初始位置
     QLabel*         lblGuessPos_ = nullptr;
+    // UI — 源点云裁剪中心
+    QLabel*         lblSrcCenter_ = nullptr;
+
+    // UI — 目标点云组
     QDoubleSpinBox* spinSearchXY_ = nullptr;
     QDoubleSpinBox* spinSearchZ_ = nullptr;
+
+    // UI — 源点云组
     QDoubleSpinBox* spinCropSize_ = nullptr;
+    QDoubleSpinBox* spinBbsDownsample_ = nullptr;
+
+    // UI — 3D-BBS 组
+    QDoubleSpinBox* spinBbsMinLevelRes_ = nullptr;
+    QSpinBox*       spinBbsMaxLevel_ = nullptr;
+    QDoubleSpinBox* spinBbsScoreThresh_ = nullptr;
+
+    // UI — GICP 组
     QDoubleSpinBox* spinMaxFitness_ = nullptr;
+
+    // UI — 其他
     QProgressBar*   progressBar_ = nullptr;
     QLabel*         lblStatus_ = nullptr;
     QPushButton*    btnStart_ = nullptr;
