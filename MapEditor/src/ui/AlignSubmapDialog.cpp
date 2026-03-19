@@ -26,15 +26,15 @@ void AlignSubmapDialog::setupUI() {
     // ── 说明 ─────────────────────────────────────────────────────────
     auto* desc = new QLabel(
         "对齐流程:\n"
-        "1. 在 default_submap 上点击一个假想位置 (新 submap 原点的大概位置)\n"
+        "1. 在 default_submap 上点击一个初始位置 (新 submap 原点的大概位置)\n"
         "2. 从新 submap 原点附近裁剪匹配点云\n"
-        "3. 3D-BBS 在假想位置附近搜索最佳匹配\n"
+        "3. 3D-BBS 在初始位置附近搜索最佳匹配\n"
         "4. GICP 精配准验证 (fitness ≤ 阈值则确认)");
     desc->setWordWrap(true);
     layout->addWidget(desc);
 
-    // ── 假想位置 ─────────────────────────────────────────────────────
-    auto* guessGroup = new QGroupBox("假想位置");
+    // ── 初始位置 ─────────────────────────────────────────────────────
+    auto* guessGroup = new QGroupBox("初始位置");
     auto* guessLayout = new QHBoxLayout(guessGroup);
     guessLayout->setContentsMargins(10, 20, 10, 10);
     lblGuessPos_ = new QLabel("未选择");
@@ -43,7 +43,7 @@ void AlignSubmapDialog::setupUI() {
     guessLayout->addWidget(btnPick);
     layout->addWidget(guessGroup);
 
-    // 默认假想位置为 (0,0,0) —— 表示新 submap 原点与 default_submap 重合
+    // 默认初始位置为 (0,0,0) —— 表示新 submap 原点与 default_submap 重合
     setGuessPosition(Eigen::Vector3d(0.0, 0.0, 0.0));
 
     connect(btnPick, &QPushButton::clicked, [this]() {
@@ -118,7 +118,7 @@ void AlignSubmapDialog::updateProgress(int percent, const QString& msg) {
 
 void AlignSubmapDialog::onStartAlign() {
     if (!hasGuess_) {
-        QMessageBox::warning(this, "提示", "请先在地图上选择假想位置");
+        QMessageBox::warning(this, "提示", "请先在地图上选择初始位置");
         return;
     }
 

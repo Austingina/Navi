@@ -21,7 +21,7 @@ struct MatchResult {
 
 /// 匹配参数
 struct MatchParams {
-    // BBS 搜索范围 (以假想位置为中心)
+    // BBS 搜索范围 (以初始位置为中心)
     double searchRangeXY   = 5.0;    // 米
     double searchRangeZ    = 2.0;    // 米
 
@@ -52,7 +52,7 @@ public:
     void setSource(CloudPtr source);
 
     /// 执行匹配
-    /// @param guessPosition 用户在目标子地图上选择的假想位置
+    /// @param guessPosition 用户在目标子地图上选择的初始位置
     /// @param params        匹配参数
     /// @param callback      进度回调
     MatchResult match(const Eigen::Vector3d& guessPosition,

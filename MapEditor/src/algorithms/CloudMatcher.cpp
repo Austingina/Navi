@@ -132,7 +132,7 @@ MatchResult CloudMatcher::match(const Eigen::Vector3d& guessPosition,
     qDebug() << "裁剪目标点云:" << target_->size() << "->" << tgtCropped->size();
 
     if (tgtCropped->empty()) {
-        result.message = "假想位置附近没有目标点云";
+        result.message = "初始位置附近没有目标点云";
         return result;
     }
 

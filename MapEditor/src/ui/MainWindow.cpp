@@ -44,7 +44,7 @@ QColor MainWindow::nextColor() {
 // ═══════════════════════════════════════════════════════════════════════
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle("MapEditor — 多子地图编辑器");
+    setWindowTitle("MapEditor — 地图编辑器");
     resize(1400, 900);
     setupUI();
     setupMenuBar();
@@ -564,7 +564,7 @@ void MainWindow::onAlignSubmap(const QString& smId) {
         pendingSubmapId_ = smId;
         viewer_->setPickMode(PointCloudViewer::PickGuessPosition);
         viewer_->setCursor(Qt::CrossCursor);
-        statusLabel_->setText("请在 default_submap 上点击选择假想位置...");
+        statusLabel_->setText("请在 default_submap 上点击选择初始位置...");
 
         if (*pickConn) QObject::disconnect(*pickConn);
 
@@ -714,7 +714,7 @@ void MainWindow::onPointPicked(const Eigen::Vector3d& pos) {
     }
     case PendingAlignGuess:
         // 由 AlignSubmapDialog 的临时连接处理
-        statusLabel_->setText(QString("假想位置: (%1, %2, %3)")
+        statusLabel_->setText(QString("初始位置: (%1, %2, %3)")
                                  .arg(pos.x(), 0, 'f', 2)
                                  .arg(pos.y(), 0, 'f', 2)
                                  .arg(pos.z(), 0, 'f', 2));

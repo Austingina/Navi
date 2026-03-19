@@ -19,9 +19,9 @@
 ### 编辑
 - **新增 Submap**: 导入 PCD 或 PCD+JSON，默认恒等变换
 - **对齐 Transform**: 3D-BBS 粗搜索 + GICP 精配准自动计算变换
-  - 在 default_submap 上选择假想位置
+  - 在 default_submap 上选择初始位置
   - 从新 submap 原点附近裁剪 20×20×20 匹配点云
-  - BBS 在假想位置附近搜索，GICP 验证 (fitness ≤ 0.2)
+  - BBS 在初始位置附近搜索，GICP 验证 (fitness ≤ 0.2)
 - **编辑语义点位**: 在点云上点击放置
 - **编辑传送门**: 在 submap 上点击放置，指定目标 submap
 - **编辑路线**: 通过树形面板管理

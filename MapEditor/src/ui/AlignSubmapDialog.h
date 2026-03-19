@@ -19,7 +19,7 @@ public:
                                 const QString& submapId,
                                 QWidget* parent = nullptr);
 
-    /// 设置在 default_submap 上选择的假想位置
+    /// 设置在 default_submap 上选择的初始位置
     void setGuessPosition(const Eigen::Vector3d& pos);
 
     /// 获取匹配结果
