@@ -120,19 +120,31 @@ void SubmapPanel::setupUI() {
 void SubmapPanel::rebuild(MapProject* project) {
     project_ = project;
 
-    // 保存展开状态
+    // 保存展开状态（包括 submap 下的语义点文件夹）
     QSet<QString> expandedRoutes;
     QSet<QString> expandedSubmaps;
+    QSet<QString> expandedSemanticFolders;
     for (int i = 0; i < tree_->topLevelItemCount(); ++i) {
         auto* root = tree_->topLevelItem(i);
         for (int j = 0; j < root->childCount(); ++j) {
             auto* child = root->child(j);
             if (!child->isExpanded()) continue;
             int type = child->data(0, RoleType).toInt();
-            if (type == TypeRoute)
+            if (type == TypeRoute) {
                 expandedRoutes.insert(child->data(0, RoleRouteName).toString());
-            else if (type == TypeSubmap)
-                expandedSubmaps.insert(child->data(0, RoleSubmapId).toString());
+            } else if (type == TypeSubmap) {
+                QString sid = child->data(0, RoleSubmapId).toString();
+                expandedSubmaps.insert(sid);
+                // 检查该 submap 的子项中语义点文件夹是否被展开
+                for (int k = 0; k < child->childCount(); ++k) {
+                    auto* gc = child->child(k);
+                    if (!gc) continue;
+                    if (gc->data(0, RoleType).toInt() == TypeSemPointsFolder && gc->isExpanded()) {
+                        expandedSemanticFolders.insert(sid);
+                        break;
+                    }
+                }
+            }
         }
     }
 
@@ -156,6 +168,16 @@ void SubmapPanel::rebuild(MapProject* project) {
         auto* smItem = makeSubmapItem(id, sm);
         submapRoot->addChild(smItem);
         if (expandedSubmaps.contains(id)) smItem->setExpanded(true);
+        // 如果之前语义点文件夹是展开的，则展开该文件夹
+        if (expandedSemanticFolders.contains(id)) {
+            for (int c = 0; c < smItem->childCount(); ++c) {
+                auto* sc = smItem->child(c);
+                if (sc && sc->data(0, RoleType).toInt() == TypeSemPointsFolder) {
+                    sc->setExpanded(true);
+                    break;
+                }
+            }
+        }
     }
 
     // ── Routes ───────────────────────────────────────────────────────
