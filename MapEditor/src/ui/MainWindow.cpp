@@ -608,8 +608,8 @@ void MainWindow::onAlignSubmap(const QString& smId) {
                         });
     });
 
-    // ── 预览裁剪框 ─────────────────────────────────────────────────────
-    connect(dlg, &AlignSubmapDialog::requestPreview, [this, smId, dlg]() {
+    // ── 裁剪框刷新 (可复用) ─────────────────────────────────────────────
+    auto refreshCropBoxes = [this, smId, dlg]() {
         auto* s = project_.submap(smId);
         if (!s) return;
 
@@ -628,7 +628,14 @@ void MainWindow::onAlignSubmap(const QString& smId) {
         auto srcVerts = buildWireframeBox(srcCenter, srcHalf,
                                           QColor(255, 200, 0), s->transformMatrix());
         viewer_->updateCropBox("source_crop", srcVerts);
+    };
 
+    auto cropBoxShowing = std::make_shared<bool>(false);
+
+    // ── 预览裁剪框 ─────────────────────────────────────────────────────
+    connect(dlg, &AlignSubmapDialog::requestPreview, [this, refreshCropBoxes, cropBoxShowing]() {
+        refreshCropBoxes();
+        *cropBoxShowing = true;
         statusLabel_->setText("已显示裁剪框预览 (青色=目标, 黄色=源)");
     });
 
@@ -657,7 +664,8 @@ void MainWindow::onAlignSubmap(const QString& smId) {
         cleanup();
     });
 
-    connect(dlg, &AlignSubmapDialog::previewAvailable, [this, smId, dlg, origTransform, previewApplied]() {
+    connect(dlg, &AlignSubmapDialog::previewAvailable,
+            [this, smId, dlg, origTransform, previewApplied, cropBoxShowing, refreshCropBoxes]() {
         const auto& result = dlg->matchResult();
         if (result.success) {
             if (auto* s = project_.submap(smId)) {
@@ -665,6 +673,7 @@ void MainWindow::onAlignSubmap(const QString& smId) {
                 refreshSubmap(smId);
                 refreshMarkers();
                 *previewApplied = true;
+                if (*cropBoxShowing) refreshCropBoxes();
                 statusLabel_->setText("已预览对齐结果，点击 应用结果 保存，或 取消 回退");
             }
         }
