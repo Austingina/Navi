@@ -70,6 +70,23 @@ static QString compactifyJson(const QString& indentedJson) {
     return result;
 }
 
+/// 将 JSON 文本中 pose/transform 分量键 (x,y,z,w) 后的**整型数值**（含 0）写为小数点后 1 位（如 0 → 0.0，5 → 5.0）。
+/// 已有小数的形式（如 1.23）不会被匹配，避免破坏精度。
+static QString jsonCoordsIntegersAsOneDecimal(const QString& json) {
+    // 三组: 前缀 "k": 、整数值、后缀 , 或 }
+    // 注意: 不能用 R"(...)" —— 模式中 `) "` 会与结束符 `)"` 混淆，导致正则截断无效
+    static const QRegularExpression re(QStringLiteral(
+        "(\\\"[xyzw]\\\"\\s*:\\s*)(-?\\d+)(\\s*[,\\}])"));
+    if (!re.isValid()) {
+        qWarning() << "jsonCoordsIntegersAsOneDecimal: invalid regex:"
+                   << re.errorString();
+        return json;
+    }
+    QString out = json;
+    out.replace(re, QStringLiteral("\\1\\2.0\\3"));
+    return out;
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 //  JSON → 内部数据结构
 // ═══════════════════════════════════════════════════════════════════════
@@ -373,7 +390,8 @@ bool MapProject::save(const QString& dirPath) const {
     QJsonDocument doc(root);
     QString indented = QString::fromUtf8(doc.toJson(QJsonDocument::Indented));
     QString compact = compactifyJson(indented);
-    
+    compact = jsonCoordsIntegersAsOneDecimal(compact);
+
     QTextStream out(&file);
     out.setCodec("UTF-8");
     out << compact;
