@@ -132,7 +132,9 @@ MatchResult CloudMatcher::match(const Eigen::Vector3d& guessPosition,
             guessPosition.z() + marginZ, 1.0));
         crop.filter(*tgtCropped);
     }
-    qDebug() << "裁剪目标点云:" << target_->size() << "->" << tgtCropped->size();
+    qDebug() << "裁剪目标点云:" << target_->size() << "->" << tgtCropped->size()
+             << " 中心:(" << guessPosition.x() << "," << guessPosition.y() << "," << guessPosition.z()
+             << ") XY范围: ±" << params.searchRangeXY << "m Z范围: ±" << params.searchRangeZ << "m";
 
     if (tgtCropped->empty()) {
         result.message = "初始位置附近没有目标点云";
@@ -143,8 +145,9 @@ MatchResult CloudMatcher::match(const Eigen::Vector3d& guessPosition,
     if (callback) callback(15, "降采样点云...");
     auto srcDown = VoxelGridFilter::filter(croppedSrc, params.bbsDownsample);
     auto tgtDown = VoxelGridFilter::filter(tgtCropped, params.bbsDownsample);
-    qDebug() << "BBS 降采样: src" << croppedSrc->size() << "->" << srcDown->size()
-             << " tgt" << tgtCropped->size() << "->" << tgtDown->size();
+    qDebug() << "voxel size for source & target:" << params.bbsDownsample
+             << "BBS 降采样: 源点云" << croppedSrc->size() << "->" << srcDown->size()
+             << " 目标点云" << tgtCropped->size() << "->" << tgtDown->size();
 
     if (callback) callback(18, "准备 3D-BBS (GPU)...");
     auto tarPoints = pclToEigenF(tgtDown);
@@ -164,6 +167,10 @@ MatchResult CloudMatcher::match(const Eigen::Vector3d& guessPosition,
     bbsParams.timeoutMs   = params.bbsTimeoutMs;
 
     if (callback) callback(30, "3D-BBS GPU 搜索中...");
+    qDebug() << "开始 3D-BBS GPU 搜索: minLevelRes=" << bbsParams.minLevelRes
+             << " maxLevel=" << bbsParams.maxLevel
+             << " scoreThresh=" << bbsParams.scoreThresh;
+
     auto bbsResult = bbs.localize(bbsParams);
 
     qDebug() << "3D-BBS GPU 完成: elapsed=" << bbsResult.elapsedMs << "ms"
@@ -195,12 +202,22 @@ MatchResult CloudMatcher::match(const Eigen::Vector3d& guessPosition,
     // ── Step 5: GICP 精配准 ──────────────────────────────────────────
     if (callback) callback(60, "GICP 精配准...");
     Eigen::Matrix4f initGuess = bbsResult.pose;
+    qDebug() << "GICP fitness 阈值:" << params.maxFitness;
     result = gicpRefine(croppedSrc, tgtCropped, initGuess, params);
 
     if (result.success) {
         if (callback) callback(100, QString("匹配成功! fitness=%1, BBS耗时=%2ms")
                                        .arg(result.fitness, 0, 'f', 4)
                                        .arg(bbsResult.elapsedMs, 0, 'f', 0));
+
+        qDebug() << "最终变换矩阵:\n";
+        {
+            auto M = result.transform.toMatrix();
+            qDebug() << M(0,0) << M(0,1) << M(0,2) << M(0,3) << "\n"
+                     << M(1,0) << M(1,1) << M(1,2) << M(1,3) << "\n"
+                     << M(2,0) << M(2,1) << M(2,2) << M(2,3) << "\n"
+                     << M(3,0) << M(3,1) << M(3,2) << M(3,3);
+        }
     } else {
         if (callback) callback(100, result.message);
     }
