@@ -360,10 +360,178 @@ async def main():
 asyncio.run(main())
 ```
 
-### 5.2 本仓库自带巡检测试
 
-```bash
-python test/test_client_fast.py --ws ws://127.0.0.1:9000/ws
+### 5.2 巡检示例（按路线）
+
+下面示例展示：先获取 `route_names`，根据 `route_name` 获取 `waypoints`，然后对每个点执行巡检：
+
+- 若点位 `type` 为 `single_pose`，调用 `set_goal_by_name` 并使用 `wait_goal_reached` 等待到达；
+- 若点位 `type` 为 `multi_pose`，调用 `set_goal_by_multipose`（该方法本身会按顺序完成内部位姿导航）。
+
+```python
+import asyncio, json, websockets
+
+async def patrol_by_route(ws_url, route_name):
+  async with websockets.connect(ws_url) as ws:
+    # 获取路由信息
+    await ws.send(json.dumps({"id":1, "method":"get_route", "params":{"route_name":route_name}}))
+    res = json.loads(await ws.recv())['result']
+    waypoints = res.get('waypoints', [])
+
+    for wp in waypoints:
+      # 假设 waypoint 包含字段 semantic_point 或 name
+      point_name = wp.get('semantic_point') or wp.get('name') or wp.get('pose')
+      if not point_name:
+        continue
+
+      # 查询点位完整信息
+      await ws.send(json.dumps({"id":2, "method":"get_pose_in_submap", "params":{"pose_name": point_name}}))
+      info = json.loads(await ws.recv())['result']
+      if not info.get('success'):
+        print('skip', point_name, info.get('msg'))
+        continue
+
+      point_info = info['point_info']
+      ptype = point_info.get('type', 'single_pose')
+
+      if ptype == 'multi_pose':
+        # 启动 multi_pose 导航并等待其返回结果
+        await ws.send(json.dumps({"id":3, "method":"set_goal_by_multipose", "params":{"target": point_name}}))
+        res = json.loads(await ws.recv())['result']
+        print('multi_pose result:', res)
+      else:
+        # single_pose / elevator_* 都使用普通下发目标，然后等待到达
+        await ws.send(json.dumps({"id":4, "method":"set_goal_by_name", "params":{"target": point_name}}))
+        res = json.loads(await ws.recv())['result']
+        print('set_goal:', res)
+
+        # 等待到达
+        await ws.send(json.dumps({"id":5, "method":"wait_goal_reached", "params":{"target": point_name}}))
+        reached = json.loads(await ws.recv())['result']
+        print('reached:', reached)
+
+asyncio.run(patrol_by_route('ws://127.0.0.1:9000/ws', '巡逻线路A'))
+```
+
+### 5.3 模拟 agent处理电梯点位（elevator_call / elevator_wait）
+
+下面示例展示如何在巡检中与外部 agent 协作：当遇到 `elevator_call`，机器人到达后等待 agent 执行呼叫；当遇到 `elevator_wait`，机器人到达后等待 agent 确认电梯已到达并开门后继续。
+
+示例采用简单的本地回调/等待机制来模拟 agent 响应（真实系统中可通过 HTTP、消息队列或另一路 WebSocket 与电梯控制系统通信）：
+
+```python
+import asyncio, json, websockets
+
+async def simulate_agent_wait_event(event_name, delay=5.0):
+  # 模拟外部 agent 在若干秒后完成动作
+  await asyncio.sleep(delay)
+  return {"event": event_name, "status": "ok"}
+
+async def handle_point(ws, point_name, point_info):
+  ptype = point_info.get('type', 'single_pose')
+  if ptype == 'multi_pose':
+    await ws.send(json.dumps({"id":1, "method":"set_goal_by_multipose", "params":{"target": point_name}}))
+    print(await ws.recv())
+  else:
+    await ws.send(json.dumps({"id":2, "method":"set_goal_by_name", "params":{"target": point_name}}))
+    print(await ws.recv())
+    await ws.send(json.dumps({"id":3, "method":"wait_goal_reached", "params":{"target": point_name}}))
+    print(await ws.recv())
+
+  if ptype == 'elevator_call':
+    print('Reached elevator_call point; instructing agent to call elevator...')
+    # 模拟 agent 执行呼叫电梯
+    ev = await simulate_agent_wait_event('elevator_called', delay=3.0)
+    print('Agent response:', ev)
+
+  if ptype == 'elevator_wait':
+    print('Reached elevator_wait point; waiting for elevator arrival/open door...')
+    ev = await simulate_agent_wait_event('elevator_arrived', delay=6.0)
+    print('Agent response:', ev)
+
+async def patrol_with_agent(ws_url, route_name):
+  async with websockets.connect(ws_url) as ws:
+    await ws.send(json.dumps({"id":10, "method":"get_route", "params":{"route_name":route_name}}))
+    route = json.loads(await ws.recv())['result']
+    for wp in route.get('waypoints', []):
+      point_name = wp.get('semantic_point') or wp.get('name')
+      if not point_name:
+        continue
+      await ws.send(json.dumps({"id":11, "method":"get_pose_in_submap", "params":{"pose_name": point_name}}))
+      info = json.loads(await ws.recv())['result']
+      if not info.get('success'):
+        continue
+      await handle_point(ws, point_name, info['point_info'])
+
+asyncio.run(patrol_with_agent('ws://127.0.0.1:9000/ws', '巡逻线路A'))
+```
+
+### 5.4 切换楼层并继续巡检示例
+
+当巡检路线跨楼层时，客户端需要在到达目标点所在楼层前，先导航到当前楼层到目标楼层的 `portal`，然后调用 `change_map` 切换楼层，切换成功后继续导航到目标点。下面示例展示该流程：
+
+```python
+import asyncio, json, websockets
+
+async def patrol_cross_floor(ws_url, route_name):
+  async with websockets.connect(ws_url) as ws:
+    # 获取路线
+    await ws.send(json.dumps({"id":1, "method":"get_route", "params":{"route_name": route_name}}))
+    route = json.loads(await ws.recv())['result']
+    waypoints = route.get('waypoints', [])
+
+    # 获取当前楼层
+    await ws.send(json.dumps({"id":2, "method":"get_current_map_id", "params":{}}))
+    cur = json.loads(await ws.recv())['result']
+    current_map = cur.get('map_id')
+
+    for wp in waypoints:
+      target_submap = wp.get('submap')
+      point_name = wp.get('semantic_point') or wp.get('name') or wp.get('pose')
+      if not point_name:
+        continue
+
+      # 如果目标点不在当前楼层，先导航到传送门并切换楼层
+      if target_submap and target_submap != current_map:
+        await ws.send(json.dumps({"id":3, "method":"get_portal_to_submap", "params":{"target_submap": target_submap}}))
+        portal_resp = json.loads(await ws.recv())['result']
+        portal_name = portal_resp.get('portal')
+        portal_pose = portal_resp.get('portal_pose')
+
+        if portal_name and portal_pose:
+          # 导航到传送门点
+          await ws.send(json.dumps({"id":4, "method":"set_goal_by_name", "params":{"target": portal_name}}))
+          print('navigate to portal ->', json.loads(await ws.recv())['result'])
+          await ws.send(json.dumps({"id":5, "method":"wait_goal_reached", "params":{"target": portal_name}}))
+          print('portal reached ->', json.loads(await ws.recv())['result'])
+
+        # 切换楼层
+        await ws.send(json.dumps({"id":6, "method":"change_map", "params":{"map_id": target_submap}}))
+        print('change_map ->', json.loads(await ws.recv())['result'])
+
+        # 更新当前楼层信息
+        await ws.send(json.dumps({"id":7, "method":"get_current_map_id", "params":{}}))
+        cur = json.loads(await ws.recv())['result']
+        current_map = cur.get('map_id')
+
+      # 获取点位信息并导航（multi_pose 用 multipose 接口）
+      await ws.send(json.dumps({"id":8, "method":"get_pose_in_submap", "params":{"pose_name": point_name}}))
+      pinfo = json.loads(await ws.recv())['result']
+      if not pinfo.get('success'):
+        print('skip', point_name, pinfo.get('msg'))
+        continue
+
+      ptype = pinfo['point_info'].get('type', 'single_pose')
+      if ptype == 'multi_pose':
+        await ws.send(json.dumps({"id":9, "method":"set_goal_by_multipose", "params":{"target": point_name}}))
+        print('multi_pose ->', json.loads(await ws.recv())['result'])
+      else:
+        await ws.send(json.dumps({"id":10, "method":"set_goal_by_name", "params":{"target": point_name}}))
+        print('set_goal ->', json.loads(await ws.recv())['result'])
+        await ws.send(json.dumps({"id":11, "method":"wait_goal_reached", "params":{"target": point_name}}))
+        print('reached ->', json.loads(await ws.recv())['result'])
+
+asyncio.run(patrol_cross_floor('ws://127.0.0.1:9000/ws', '巡逻线路A'))
 ```
 
 环境变量：`NAV_WS_URL`、`ROUTE_NAME`。
