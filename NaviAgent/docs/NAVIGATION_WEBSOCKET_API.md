@@ -534,6 +534,45 @@ async def patrol_cross_floor(ws_url, route_name):
 asyncio.run(patrol_cross_floor('ws://127.0.0.1:9000/ws', '巡逻线路A'))
 ```
 
+
+### 5.5 导航暂停 / 继续 / 取消 示例
+
+说明：在执行导航任务时，客户端可能需要临时暂停当前导航、取消目标或在暂停后继续导航。服务端提供：`pause_navigation`、`cancel_navigation`、`resume_navigation`。下面示例展示常见流程：下发目标 → 暂停 → 继续 → 到达；或下发目标 → 取消。
+
+```python
+import asyncio, json, websockets
+
+async def example_pause_resume(ws_url, point_name):
+  async with websockets.connect(ws_url) as ws:
+    # 下发目标
+    await ws.send(json.dumps({"id":1, "method":"set_goal_by_name", "params":{"target": point_name}}))
+    print('set_goal:', json.loads(await ws.recv()))
+
+    # 等待一段时间后暂停导航（例如遇到障碍或临时指令）
+    await asyncio.sleep(2)
+    await ws.send(json.dumps({"id":2, "method":"pause_navigation", "params":{}}))
+    print('pause:', json.loads(await ws.recv()))
+
+    # 做一些检查或等待外部条件，随后继续导航
+    await asyncio.sleep(3)
+    await ws.send(json.dumps({"id":3, "method":"resume_navigation", "params":{}}))
+    print('resume:', json.loads(await ws.recv()))
+
+    # 等待到达
+    await ws.send(json.dumps({"id":4, "method":"wait_goal_reached", "params":{"target": point_name}}))
+    print('reached:', json.loads(await ws.recv()))
+
+async def example_cancel(ws_url, point_name):
+  async with websockets.connect(ws_url) as ws:
+    await ws.send(json.dumps({"id":10, "method":"set_goal_by_name", "params":{"target": point_name}}))
+    print('set_goal:', json.loads(await ws.recv()))
+    # 立即取消
+    await ws.send(json.dumps({"id":11, "method":"cancel_navigation", "params":{}}))
+    print('cancel:', json.loads(await ws.recv()))
+
+asyncio.run(example_pause_resume('ws://127.0.0.1:9000/ws', 'PointA'))
+```
+
 环境变量：`NAV_WS_URL`、`ROUTE_NAME`。
 
 ---
