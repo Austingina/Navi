@@ -142,7 +142,7 @@ class NavigationToolManager:
         客户端 JSON: {\"id\": optional, \"method\": 方法名, \"params\": {...}}
         服务端回复: {\"id\": ..., \"result\": ...} 或 {\"id\": ..., \"error\": \"...\"}
         """
-        def set_goal(target: str) -> Dict[str, Any]:
+        def set_goal_by_name(target: str) -> Dict[str, Any]:
             """
             下发导航目标
             可用目标点：狗巢、配电房、灭火器箱、液晶大屏、会议桌
@@ -954,7 +954,7 @@ class NavigationToolManager:
                 return {"success": False, "msg": f"获取地图失败: {str(e)}"}
 
         self._handlers = {
-            "set_goal": set_goal,
+            "set_goal_by_name": set_goal_by_name,
             "set_goal_by_multipose": set_goal_by_multipose,
             "set_goal_by_lonlat": set_goal_by_lonlat,
             "set_goal_by_xy": set_goal_by_xy,

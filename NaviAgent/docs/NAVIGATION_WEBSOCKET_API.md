@@ -127,7 +127,7 @@ python server_fast.py -t -m /path/to/multifloor.json
 
 ### 4.1 导航目标
 
-#### `set_goal`
+#### `set_goal_by_name`
 
 下发命名语义点目标（Nav2 / `publish_goal`）。
 
@@ -299,7 +299,7 @@ python server_fast.py -t -m /path/to/multifloor.json
 **成功：** `success`, `msg`, `timestamp`。  
 **超时：** `success=false`, `msg` 提示超时或未到达。
 
-适合与 `set_goal` 等配合；短 `timeout` 可形成轮询（见测试客户端）。
+适合与 `set_goal_by_name` 等配合；短 `timeout` 可形成轮询（见测试客户端）。
 
 ---
 

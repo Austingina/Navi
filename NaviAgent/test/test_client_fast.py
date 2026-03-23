@@ -248,7 +248,7 @@ class SimplePatrolClient:
                             continue
 
                 logger.info(f"🎯 下发目标点: {target_name}")
-                goal_data = await client.call("set_goal", {"target": target_name})
+                goal_data = await client.call("set_goal_by_name", {"target": target_name})
 
                 if not goal_data.get("success"):
                     logger.error(f"❌ 下发目标失败: {goal_data.get('msg')}")
