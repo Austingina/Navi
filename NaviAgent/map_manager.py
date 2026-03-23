@@ -120,17 +120,23 @@ class MapManager:
     
     def get_pose_in_submap(self, pose_name: str, submap_id: str = None) -> Optional[Dict]:
         """
-        获取指定名称的位姿信息
+        获取指定名称的点位信息（返回整个 point_info）
         
         :param pose_name: 点位名称
         :param submap_id: submap ID，默认为当前 submap
-        :return: 位姿字典
+        :return: point_info 字典（包含 `type`, `pose` 等），找不到返回 None
+
+        point_info 中 `type` 字段说明：
+        - "single_pose": 单一位姿点；使用普通导航接口 `set_goal_by_name` 下发目标。
+        - "multi_pose": 多位姿点；需使用 `set_goal_by_multipose` 来依次导航到各个位姿。
+        - "elevator_call": 电梯呼叫点；机器人到达该点后应等待外部 agent 执行呼叫电梯的动作。
+        - "elevator_wait": 电梯等待点；机器人到达该点后应等待外部 agent 确认电梯已到达且车门已打开。
         """
         submap_id = submap_id or self.current_submap
         semantic_points = self.get_semantic_points_in_submap(submap_id)
         point_info = semantic_points.get(pose_name)
         if point_info:
-            return point_info.get('pose')
+            return point_info
         return None
     
     def get_multi_poses_in_submap(self, pose_name: str, submap_id: str = None) -> List[Dict]:
@@ -223,6 +229,13 @@ class MapManager:
     
     def get_portal_pose(self, portal_name: str, submap_id: str = None) -> Optional[Dict]:
         """获取传送门点位的位姿（传送门点位也是语义点位）"""
+        """
+        获取传送门点位的点位信息（与 `get_pose_in_submap` 行为一致）
+
+        :param portal_name: 传送门语义点名称
+        :param submap_id: submap ID，默认为当前 submap
+        :return: point_info 字典（包含 type, pose 等），找不到返回 None
+        """
         return self.get_pose_in_submap(portal_name, submap_id)
     
     def find_path_between_submaps(self, from_submap: str, to_submap: str) -> Optional[List[Dict]]:

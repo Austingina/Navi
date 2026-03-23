@@ -218,6 +218,26 @@ python server_fast.py -t -m /path/to/multifloor.json
 
 ---
 
+#### `get_pose_in_submap`
+
+| 参数 | 类型 | 必填 |
+|------|------|------|
+| `pose_name` | string | 是 |
+| `submap_id` | string | 否 |
+
+返回指定语义点的完整 `point_info`（包括 `type` 与 `pose` 等字段）。
+
+`point_info` 中 `type` 字段说明与使用建议：
+
+- `single_pose`: 单一位姿点；使用 `set_goal_by_name` 下发目标并导航到该点。
+- `multi_pose`: 多位姿点；需要使用 `set_goal_by_multipose`，服务端会依次导航到该点的所有位姿。
+- `elevator_call`: 电梯呼叫点；机器人到达该点后应由外部 agent 执行呼叫电梯操作（本服务仅负责导航到该位置）。
+- `elevator_wait`: 电梯等待点；机器人到达该点后应等待外部 agent 确认电梯已到达且车门已打开，随后才继续下一步。
+
+客户端使用建议：先调用 `get_pose_in_submap` 检查点位 `type`，再选择合适的导航或外部协同流程（例如：
+对 `multi_pose` 调用 `set_goal_by_multipose`；对 `single_pose` 调用 `set_goal_by_name`；对电梯相关点与电梯控制 agent 协作）。
+
+
 #### `get_current_map_id`
 
 无参数。根据 ROS 当前地图路径解析 **逻辑 map_id**。

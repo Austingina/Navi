@@ -149,6 +149,11 @@ class NavigationToolManager:
             参数:
             target: 目标点名称（必须在预设地图中）
             
+            说明:
+            - 适用于 `type` 为 `single_pose` 的点位；调用此接口会使用普通导航下发目标。
+            - 如果点位 `type` 为 `elevator_call`：机器人到达该点后应等待 agent 执行呼叫电梯的操作（本接口只负责下发导航）。
+            - 如果点位 `type` 为 `elevator_wait`：机器人到达该点后应等待 agent 确认电梯已经到达并开门。
+
             返回:
             Dict: 包含操作结果的字典
             """
@@ -189,7 +194,7 @@ class NavigationToolManager:
             使用PID控制直接到达目标，跳过nav2导航
             
             参数:
-            target: 目标点名称（必须是multi_pose类型）
+            target: 目标点名称（必须是 `multi_pose` 类型，使用 `get_pose_in_submap` 可查看 `type` 字段）
             timeout_per_pose: 每个位姿点的超时时间（秒），默认120秒
             xy_tolerance: 位置容差（米），默认0.04米
             yaw_tolerance: 姿态容差（弧度），默认0.05弧度
@@ -507,6 +512,32 @@ class NavigationToolManager:
             except Exception as e:
                 return {"success": False, "msg": f"获取pose列表失败: {str(e)}"}
 
+        def get_pose_in_submap(pose_name: str, submap_id: str = None) -> Dict[str, Any]:
+            """
+            获取指定点位的完整 point_info（由 MapManager.get_pose_in_submap 提供）
+
+            :param pose_name: 点位名称
+            :param submap_id: 可选 submap ID，默认为当前 submap
+            :return: {success: bool, point_info: {...}} 或 error msg
+
+            point_info 中 `type` 字段说明：
+            - "single_pose": 单一位姿点；使用普通导航接口 `set_goal_by_name` 下发目标。
+            - "multi_pose": 多位姿点；需使用 `set_goal_by_multipose` 来依次导航到各个位姿。
+            - "elevator_call": 电梯呼叫点；机器人到达该点后应等待外部 agent 执行呼叫电梯的动作。
+            - "elevator_wait": 电梯等待点；机器人到达该点后应等待外部 agent 确认电梯已到达且车门已打开。
+            """
+            try:
+                if not self.map_manager:
+                    return {"success": False, "msg": "MapManager 未配置"}
+
+                point_info = self.map_manager.get_pose_in_submap(pose_name, submap_id)
+                if point_info is None:
+                    return {"success": False, "msg": f"点位 {pose_name} 在子地图 {submap_id or self.map_manager.get_current_submap()} 中不存在"}
+
+                return {"success": True, "pose_name": pose_name, "point_info": point_info}
+            except Exception as e:
+                return {"success": False, "msg": f"获取点位失败: {str(e)}"}
+
         def get_submap_list() -> Dict[str, Any]:
             """
             获取所有子地图 ID 列表
@@ -731,7 +762,11 @@ class NavigationToolManager:
                 
                 # 获取传送门的位姿
                 portal_name = portal_config.get('portal')
-                portal_pose = self.map_manager.get_portal_pose(portal_name)
+                portal_point_info = self.map_manager.get_portal_pose(portal_name)
+                # MapManager.get_portal_pose now returns full point_info; here we only need the 'pose' field
+                portal_pose = None
+                if portal_point_info and isinstance(portal_point_info, dict):
+                    portal_pose = portal_point_info.get('pose')
                 
                 return {
                     "success": True,
@@ -962,6 +997,7 @@ class NavigationToolManager:
             "cancel_navigation": cancel_navigation,
             "resume_navigation": resume_navigation,
             "get_pose_list_in_current_submap": get_pose_list_in_current_submap,
+            "get_pose_in_submap": get_pose_in_submap,
             "get_submap_list": get_submap_list,
             "get_submap_info": get_submap_info,
             "get_current_map_id": get_current_map_id,
