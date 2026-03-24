@@ -1,6 +1,7 @@
 # 导入必要的库
 import time  # 时间处理库
 from typing import Dict, Any  # 类型提示
+import inspect
 import asyncio  # 异步IO库
 import logging  # 日志记录库
 import json  # JSON数据处理库
@@ -11,8 +12,8 @@ import numpy as np  # 数值计算库
 from wgs84 import WGS84Converter 
 from nav_node import NavNode  # 导入导航节点类
 from map_manager import MapManager  # 导入多楼层地图管理器
-# 导入FastMCP框架
-from fastmcp import FastMCP
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+import uvicorn
 # 导入ROS相关的库
 import rclpy  # ROS2 Python客户端库
 from rclpy.executors import SingleThreadedExecutor  # 单线程执行器
@@ -25,20 +26,20 @@ import argparse  # 添加在文件顶部
 class NavigationToolManager:
     """
     导航工具管理器
-    
+
     功能：
-    1. 初始化MCP服务和ROS节点
-    2. 注册导航相关的工具函数
-    3. 管理ROS线程和资源清理
+    1. 初始化 FastAPI WebSocket 与 ROS 节点
+    2. 注册导航相关 RPC 方法（经 /ws JSON 调用）
+    3. 管理 ROS 线程和资源清理
     """
     def __init__(self, map_manager: MapManager = None):
         """
         初始化导航工具管理器
-        
+
         :param map_manager: 多楼层地图管理器实例，可选
         """
-        # 创建FastMCP实例
-        self.mcp = FastMCP("NavigationMCP")
+        # 方法名 -> 可调用（同步或 async），由 register_tools 填充
+        self._handlers = {}
         # 多楼层地图管理器
         self.map_manager = map_manager
         # 初始化经纬度转换器
@@ -136,20 +137,23 @@ class NavigationToolManager:
 
     def register_tools(self):
         """
-        注册MCP工具函数
-        
-        功能：
-        1. 定义并注册导航相关的工具函数
-        2. 包括设置目标、获取状态、等待到达、获取最近点等功能
+        注册 WebSocket RPC 方法（与原先 MCP 工具一一对应）
+
+        客户端 JSON: {\"id\": optional, \"method\": 方法名, \"params\": {...}}
+        服务端回复: {\"id\": ..., \"result\": ...} 或 {\"id\": ..., \"error\": \"...\"}
         """
-        @self.mcp.tool()
-        def set_goal(target: str) -> Dict[str, Any]:
+        def set_goal_by_name(target: str) -> Dict[str, Any]:
             """
             下发导航目标
             可用目标点：狗巢、配电房、灭火器箱、液晶大屏、会议桌
             参数:
             target: 目标点名称（必须在预设地图中）
             
+            说明:
+            - 适用于 `type` 为 `single_pose` 的点位；调用此接口会使用普通导航下发目标。
+            - 如果点位 `type` 为 `elevator_call`：机器人到达该点后应等待 agent 执行呼叫电梯的操作（本接口只负责下发导航）。
+            - 如果点位 `type` 为 `elevator_wait`：机器人到达该点后应等待 agent 确认电梯已经到达并开门。
+
             返回:
             Dict: 包含操作结果的字典
             """
@@ -184,14 +188,13 @@ class NavigationToolManager:
             except Exception as e:
                 return {"success": False, "msg": f"设置目标失败: {str(e)}"}
 
-        @self.mcp.tool()
         async def set_goal_by_multipose(target: str, timeout_per_pose: float = 60.0, xy_tolerance: float = 0.04, yaw_tolerance: float = 0.05) -> Dict[str, Any]:
             """
             导航到multi_pose类型点位的所有位姿，依次到达每个位姿点
             使用PID控制直接到达目标，跳过nav2导航
             
             参数:
-            target: 目标点名称（必须是multi_pose类型）
+            target: 目标点名称（必须是 `multi_pose` 类型，使用 `get_pose_in_submap` 可查看 `type` 字段）
             timeout_per_pose: 每个位姿点的超时时间（秒），默认120秒
             xy_tolerance: 位置容差（米），默认0.04米
             yaw_tolerance: 姿态容差（弧度），默认0.05弧度
@@ -282,7 +285,6 @@ class NavigationToolManager:
             except Exception as e:
                 return {"success": False, "msg": f"多位姿导航失败: {str(e)}"}
 
-        @self.mcp.tool()
         def set_goal_by_lonlat(lon: float, lat: float, distance: float = 1.5) -> Dict[str, Any]:
             """
             根据输入的经纬度导航到目标点附近
@@ -377,8 +379,7 @@ class NavigationToolManager:
             except Exception as e:
                 return {"success": False, "msg": f"经纬度导航失败: {str(e)}"}
 
-        @self.mcp.tool()
-        def set_goal_by_xy(x: float, y: float, distance: float = 1.5) -> Dict[str, Any]:
+        def set_goal_by_xy(x: float, y: float, distance: float = 0.5) -> Dict[str, Any]:
             """
             根据输入的地图坐标导航到目标点附近
             步骤：
@@ -389,7 +390,7 @@ class NavigationToolManager:
             参数:
             x: 目标点X坐标
             y: 目标点Y坐标
-            distance: 距离目标点的距离，默认1.5米
+            distance: 距离目标点的距离，默认0.5米
 
             返回:
             Dict: 操作结果
@@ -468,7 +469,6 @@ class NavigationToolManager:
             except Exception as e:
                 return {"success": False, "msg": f"地图坐标导航失败: {str(e)}"}
 
-        @self.mcp.tool()
         def pause_navigation() -> Dict[str, Any]:
             """
             暂停导航（取消当前目标）
@@ -479,7 +479,6 @@ class NavigationToolManager:
             except Exception as e:
                 return {"success": False, "msg": f"暂停导航失败: {str(e)}"}
 
-        @self.mcp.tool()
         def cancel_navigation() -> Dict[str, Any]:
             """
             取消导航
@@ -490,7 +489,6 @@ class NavigationToolManager:
             except Exception as e:
                 return {"success": False, "msg": f"取消导航失败: {str(e)}"}
 
-        @self.mcp.tool()
         def resume_navigation() -> Dict[str, Any]:
             """
             继续导航（重新发送上一个目标）
@@ -501,7 +499,6 @@ class NavigationToolManager:
             except Exception as e:
                 return {"success": False, "msg": f"继续导航失败: {str(e)}"}
 
-        @self.mcp.tool()
         def get_pose_list_in_current_submap() -> Dict[str, Any]:
             """
             获取所有预设点名称
@@ -515,7 +512,32 @@ class NavigationToolManager:
             except Exception as e:
                 return {"success": False, "msg": f"获取pose列表失败: {str(e)}"}
 
-        @self.mcp.tool()
+        def get_pose_in_submap(pose_name: str, submap_id: str = None) -> Dict[str, Any]:
+            """
+            获取指定点位的完整 point_info（由 MapManager.get_pose_in_submap 提供）
+
+            :param pose_name: 点位名称
+            :param submap_id: 可选 submap ID，默认为当前 submap
+            :return: {success: bool, point_info: {...}} 或 error msg
+
+            point_info 中 `type` 字段说明：
+            - "single_pose": 单一位姿点；使用普通导航接口 `set_goal_by_name` 下发目标。
+            - "multi_pose": 多位姿点；需使用 `set_goal_by_multipose` 来依次导航到各个位姿。
+            - "elevator_call": 电梯呼叫点；机器人到达该点后应等待外部 agent 执行呼叫电梯的动作。
+            - "elevator_wait": 电梯等待点；机器人到达该点后应等待外部 agent 确认电梯已到达且车门已打开。
+            """
+            try:
+                if not self.map_manager:
+                    return {"success": False, "msg": "MapManager 未配置"}
+
+                point_info = self.map_manager.get_pose_in_submap(pose_name, submap_id)
+                if point_info is None:
+                    return {"success": False, "msg": f"点位 {pose_name} 在子地图 {submap_id or self.map_manager.get_current_submap()} 中不存在"}
+
+                return {"success": True, "pose_name": pose_name, "point_info": point_info}
+            except Exception as e:
+                return {"success": False, "msg": f"获取点位失败: {str(e)}"}
+
         def get_submap_list() -> Dict[str, Any]:
             """
             获取所有子地图 ID 列表
@@ -529,7 +551,6 @@ class NavigationToolManager:
             except Exception as e:
                 return {"success": False, "msg": f"获取子地图列表失败: {str(e)}"}
 
-        @self.mcp.tool()
         def get_submap_info(submap_id: str) -> Dict[str, Any]:
             """
             获取指定子地图的详细信息
@@ -553,7 +574,6 @@ class NavigationToolManager:
             except Exception as e:
                 return {"success": False, "msg": f"获取子地图信息失败: {str(e)}"}
 
-        @self.mcp.tool()
         def get_current_map_id() -> Dict[str, Any]:
             """
             获取当前加载的地图信息
@@ -579,7 +599,6 @@ class NavigationToolManager:
             except Exception as e:
                 return {"success": False, "msg": f"获取当前地图失败: {str(e)}"}
 
-        @self.mcp.tool()
         def change_map(map_id: str, timeout: float = 30.0) -> Dict[str, Any]:
             """
             切换到指定地图
@@ -693,7 +712,6 @@ class NavigationToolManager:
             except Exception as e:
                 return {"success": False, "msg": f"切换地图失败: {str(e)}"}
 
-        @self.mcp.tool()
         def get_portal_to_submap(target_submap: str) -> Dict[str, Any]:
             """
             获取从当前子地图到目标子地图的传送门
@@ -744,7 +762,11 @@ class NavigationToolManager:
                 
                 # 获取传送门的位姿
                 portal_name = portal_config.get('portal')
-                portal_pose = self.map_manager.get_portal_pose(portal_name)
+                portal_point_info = self.map_manager.get_portal_pose(portal_name)
+                # MapManager.get_portal_pose now returns full point_info; here we only need the 'pose' field
+                portal_pose = None
+                if portal_point_info and isinstance(portal_point_info, dict):
+                    portal_pose = portal_point_info.get('pose')
                 
                 return {
                     "success": True,
@@ -757,7 +779,6 @@ class NavigationToolManager:
             except Exception as e:
                 return {"success": False, "msg": f"获取传送门失败: {str(e)}"}
 
-        @self.mcp.tool()
         def get_route_names() -> Dict[str, Any]:
             """
             获取所有巡逻线路名称
@@ -776,7 +797,6 @@ class NavigationToolManager:
             except Exception as e:
                 return {"success": False, "msg": f"获取路线列表失败: {str(e)}"}
 
-        @self.mcp.tool()
         def get_route(route_name: str) -> Dict[str, Any]:
             """
             根据路线名称获取巡逻点位列表。
@@ -803,7 +823,6 @@ class NavigationToolManager:
                 return {"success": False, "msg": f"获取路线失败: {str(e)}"}
         
                 
-        @self.mcp.tool()
         def get_status() -> Dict[str, Any]:
             """
             获取小车实时状态
@@ -837,7 +856,6 @@ class NavigationToolManager:
             except Exception as e:
                 return {"success": False, "msg": f"获取状态失败: {str(e)}"}
 
-        @self.mcp.tool()
         async def wait_goal_reached(target: str, timeout: float = 120.0, xy_tolerance: float = 0.1, yaw_tolerance: float = 0.1) -> Dict[str, Any]:
             """
             阻塞直到到达目标点或超时
@@ -866,7 +884,6 @@ class NavigationToolManager:
             except Exception as e:
                 return {"success": False, "msg": f"等待目标失败: {str(e)}"}
 
-        @self.mcp.tool()
         def get_nearest_point() -> Dict[str, Any]:
             """
             获取当前位置最接近的预设点
@@ -930,7 +947,6 @@ class NavigationToolManager:
             except Exception as e:
                 return {"success": False, "msg": f"获取最近点失败: {str(e)}"}
 
-        @self.mcp.tool()
         def get_map() -> Dict[str, Any]:
             """
             获取当前栅格地图
@@ -972,26 +988,98 @@ class NavigationToolManager:
             except Exception as e:
                 return {"success": False, "msg": f"获取地图失败: {str(e)}"}
 
+        self._handlers = {
+            "set_goal_by_name": set_goal_by_name,
+            "set_goal_by_multipose": set_goal_by_multipose,
+            "set_goal_by_lonlat": set_goal_by_lonlat,
+            "set_goal_by_xy": set_goal_by_xy,
+            "pause_navigation": pause_navigation,
+            "cancel_navigation": cancel_navigation,
+            "resume_navigation": resume_navigation,
+            "get_pose_list_in_current_submap": get_pose_list_in_current_submap,
+            "get_pose_in_submap": get_pose_in_submap,
+            "get_submap_list": get_submap_list,
+            "get_submap_info": get_submap_info,
+            "get_current_map_id": get_current_map_id,
+            "change_map": change_map,
+            "get_portal_to_submap": get_portal_to_submap,
+            "get_route_names": get_route_names,
+            "get_route": get_route,
+            "get_status": get_status,
+            "wait_goal_reached": wait_goal_reached,
+            "get_nearest_point": get_nearest_point,
+            "get_map": get_map,
+        }
+
+    async def call_method(self, method: str, params: Dict[str, Any]) -> Any:
+        """调度 WebSocket 请求的单个方法。"""
+        handler = self._handlers.get(method)
+        if handler is None:
+            return {"success": False, "msg": f"未知方法: {method}，可用: {sorted(self._handlers.keys())}"}
+        if not isinstance(params, dict):
+            params = {}
+        try:
+            if inspect.iscoroutinefunction(handler):
+                return await handler(**params)
+            return handler(**params)
+        except TypeError as e:
+            return {"success": False, "msg": f"参数不匹配: {e}"}
+        except Exception as e:
+            logging.exception("call_method %s", method)
+            return {"success": False, "msg": str(e)}
+
     async def start(self, port=8000):
         """
-        启动MCP服务
-        
-        功能：
-        1. 以异步方式启动MCP HTTP服务
-        2. 监听指定主机和端口
+        启动 FastAPI + WebSocket 服务
+
+        - WebSocket: ws://0.0.0.0:{port}/ws
+        - 健康检查: GET http://0.0.0.0:{port}/health
         """
-        print(f"启动MCP服务，监听端口: {port}")
-        try:
-            # 启动MCP异步HTTP服务
-            await self.mcp.run_async(
-                transport="streamable-http",  # 使用流式HTTP传输
-                host="0.0.0.0",  # 监听所有网络接口
-                port=port,  # 监听端口8000
-                log_level="warning"  # 设置日志级别为WARNING
-            )
-        except Exception as e:
-            logging.error(f"MCP服务启动失败: {e}")
-            raise
+        mgr = self
+        app = FastAPI(title="Navigation WebSocket API", version="1.0")
+
+        @app.get("/health")
+        def health():
+            return {"ok": True, "methods": sorted(mgr._handlers.keys())}
+
+        @app.websocket("/ws")
+        async def websocket_nav(websocket: WebSocket):
+            await websocket.accept()
+            try:
+                while True:
+                    try:
+                        data = await websocket.receive_json()
+                    except json.JSONDecodeError as e:
+                        await websocket.send_json({"error": f"invalid json: {e}"})
+                        continue
+
+                    req_id = data.get("id")
+                    method = data.get("method")
+                    params = data.get("params")
+                    if params is None:
+                        params = {}
+
+                    if not method:
+                        await websocket.send_json(
+                            {"id": req_id, "error": "missing field: method"}
+                        )
+                        continue
+
+                    result = await mgr.call_method(str(method), params)
+                    await websocket.send_json({"id": req_id, "result": result})
+            except WebSocketDisconnect:
+                logging.info("WebSocket 客户端断开")
+            except Exception as e:
+                logging.exception("WebSocket 异常: %s", e)
+                try:
+                    await websocket.send_json({"error": str(e)})
+                except Exception:
+                    pass
+
+        config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="warning")
+        server = uvicorn.Server(config)
+        print(f"FastAPI WebSocket: ws://0.0.0.0:{port}/ws  |  GET /health")
+        await server.serve()
 
     def cleanup(self):
         """
@@ -1045,7 +1133,7 @@ async def main():
     try:
         # 创建导航工具管理器
         mgr = NavigationToolManager(map_manager=map_manager)
-        # 启动MCP服务（阻塞运行）
+        # 启动 FastAPI WebSocket 服务
         await mgr.start(port=port)
     except KeyboardInterrupt:
         # 处理Ctrl+C中断信号

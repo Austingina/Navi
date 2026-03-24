@@ -10,6 +10,7 @@ from action_msgs.msg import GoalStatus, GoalStatusArray  # Action状态消息
 import logging  # 日志记录库
 import threading  # 线程处理库
 from collections import deque
+from typing import Optional, Tuple
 import time
 import math  # 数学库
 import os  # 文件路径处理
@@ -23,15 +24,23 @@ import tf2_geometry_msgs
 # 导入action相关库
 from nav2_msgs.action import NavigateToPose
 from rclpy.action import ActionClient
+
+
 class NavNode(Node):
     """
     导航节点类
-    
+
     功能：
     1. 发布导航目标点到ROS话题
     2. 订阅里程计数据获取当前位置
     3. 检测是否到达目标点
+
+    check_goal_reached 三态常量（供 server 等调用方判断）：
     """
+    GOAL_CHECK_REACHED = "reached"
+    GOAL_CHECK_PENDING = "pending"
+    GOAL_CHECK_FAILED = "failed"
+
     def __init__(self):
         """初始化ROS节点和相关发布者/订阅者"""
         # 先确保rclpy已经初始化
@@ -90,6 +99,8 @@ class NavNode(Node):
             # 存储导航状态 - 改为更简单的布尔状态
             self.nav_goal_reached = False
             self.nav_goal_active = False
+            # 导航已终止且未成功到达（中止/取消/未接受/精调卡住等），供 check_goal_reached 与上层立即结束等待
+            self._nav_terminal_message: Optional[str] = None
             # PID控制状态
             self.pid_control_active = False
             self.pid_rotation_phase = True  # True为旋转阶段，False为移动阶段
@@ -347,6 +358,8 @@ class NavNode(Node):
             if not goal_handle.accepted:
                 self.get_logger().error('导航目标未被接受')
                 self.nav_goal_active = False
+                self.nav_goal_reached = False
+                self._nav_terminal_message = "导航目标未被接受"
                 return
             self.current_goal_handle = goal_handle
             self.get_logger().info('导航目标已被接受，开始执行...')
@@ -385,11 +398,21 @@ class NavNode(Node):
                 self.nav_goal_reached = False
                 self.nav_goal_active = False
                 self.current_goal_handle = None
+                self.pid_control_active = False
+                self._nav_terminal_message = "Navigation2 导航被中止"
             elif status == GoalStatus.STATUS_CANCELED:
                 self.get_logger().info('Navigation2导航被取消')
                 self.nav_goal_reached = False
                 self.nav_goal_active = False
                 self.current_goal_handle = None
+                self.pid_control_active = False
+                self._nav_terminal_message = "Navigation2 导航已取消"
+            else:
+                self.nav_goal_reached = False
+                self.nav_goal_active = False
+                self.current_goal_handle = None
+                self.pid_control_active = False
+                self._nav_terminal_message = f"导航结束状态异常: {status_name}"
         except Exception as e:
             self.get_logger().error(f"导航结果回调出错: {e}")
             import traceback
@@ -405,6 +428,7 @@ class NavNode(Node):
             self.nav_goal_active = True
             self.pid_control_active = False
             self.current_goal_handle = None
+            self._nav_terminal_message = None
 
             # 构造action goal
             goal_msg = NavigateToPose.Goal()
@@ -425,6 +449,9 @@ class NavNode(Node):
             return self.schedule_sync_call(do_send, timeout=10.0)
         except Exception as e:
             self.get_logger().error(f"发布目标点失败: {e}")
+            self.nav_goal_active = False
+            self.nav_goal_reached = False
+            self._nav_terminal_message = f"发布导航目标失败: {e}"
             return False
 
     def pause_navigation(self):
@@ -609,6 +636,8 @@ class NavNode(Node):
             self.cmd_vel_sent = None
             self.stuck_count = 0
             self.pid_control_active = False
+            self.nav_goal_reached = False
+            self._nav_terminal_message = "精调阶段检测到机器人卡住"
             return False
 
         # # 设置10ms后停止的定时器
@@ -631,25 +660,36 @@ class NavNode(Node):
             
         self.get_logger().debug("机器人已停止（10ms后）")
 
-    def check_goal_reached(self, tolerance=0.5, yaw_tolerance=0.1):
+    def check_goal_reached(self, tolerance=0.5, yaw_tolerance=0.1) -> Tuple[str, Optional[str]]:
         """
-        检查是否到达目标点
-        
+        检查是否到达目标点（或导航已失败）。
+
         参数:
         tolerance: 到达判断的距离阈值（米）
         yaw_tolerance: yaw角度容差（弧度），默认0.1
-        
+
         返回:
-        bool: True表示已到达目标点，False表示未到达
+        (状态, 失败原因):
+            - (GOAL_CHECK_REACHED, None): 已到达
+            - (GOAL_CHECK_PENDING, None): 仍在导航或精调中
+            - (GOAL_CHECK_FAILED, msg): 导航失败/取消等，msg 为简短说明，上层应停止轮询
         """
+        if self._nav_terminal_message:
+            return (NavNode.GOAL_CHECK_FAILED, self._nav_terminal_message)
+
         # 确保有当前位置数据和目标点数据
         if not (self.current_pose and self.last_goal):
-            return False
+            return (NavNode.GOAL_CHECK_PENDING, None)
 
         # 如果已经在PID控制状态中，执行PID控制步骤
         if self.pid_control_active:
             print("pid_control_step")
-            return self.pid_control_step(yaw_tolerance, tolerance)
+            done = self.pid_control_step(yaw_tolerance, tolerance)
+            if done:
+                return (NavNode.GOAL_CHECK_REACHED, None)
+            if self._nav_terminal_message:
+                return (NavNode.GOAL_CHECK_FAILED, self._nav_terminal_message)
+            return (NavNode.GOAL_CHECK_PENDING, None)
 
         # 计算当前位置与目标点的距离误差
         dx = self.last_goal.pose.position.x - self.current_pose.pose.position.x
@@ -674,22 +714,22 @@ class NavNode(Node):
         # 检查是否同时满足距离和角度要求
         if dist < tolerance and abs(yaw_error) < yaw_tolerance:
             self.get_logger().info(f"目标已到达 - 距离: {dist:.3f}m, yaw误差: {abs(yaw_error):.3f}rad")
-            return True
+            return (NavNode.GOAL_CHECK_REACHED, None)
 
         # 检查Navigation2是否成功但精度不够
         if self.nav_goal_reached and not self.pid_control_active:
             self.get_logger().info("Navigation2已到达目标但精度不够，进入PID调整状态")
             self.pid_control_active = True
             self.pid_rotation_phase = True
-            return False
-            
-        # 如果目标不活跃且没有到达，说明导航失败了
-        if not self.nav_goal_active and not self.nav_goal_reached:
-            self.get_logger().debug("导航目标不活跃且未到达")
-            return False
-            
+            return (NavNode.GOAL_CHECK_PENDING, None)
+
+        # 目标已结束且未进入/未完成成功路径：导航失败（兜底，防止回调未写入 _nav_terminal_message）
+        if not self.nav_goal_active and not self.nav_goal_reached and not self.pid_control_active:
+            self.get_logger().warning("导航目标不活跃且未到达")
+            return (NavNode.GOAL_CHECK_FAILED, "导航未成功完成")
+
         # 导航仍在进行中
-        return False
+        return (NavNode.GOAL_CHECK_PENDING, None)
 
     def get_current_map_path(self, timeout_sec: float = 2.0) -> str:
         """

@@ -876,11 +876,17 @@ class NavigationToolManager:
                 while time.time() - start_time < timeout:
                     # 异步等待0.2秒再次检查
                     await asyncio.sleep(0.2)
-                    # 检查是否到达目标点
-                    if self.ros_node.check_goal_reached(xy_tolerance, yaw_tolerance):
+                    status, fail_msg = self.ros_node.check_goal_reached(xy_tolerance, yaw_tolerance)
+                    if status == self.ros_node.GOAL_CHECK_REACHED:
                         return {"success": True, "msg": f"已到达目标 {target}", "timestamp": int(time.time())}
-                # 超时未到达
-                return {"success": False, "msg": "等待超时或未到达"}
+                    if status == self.ros_node.GOAL_CHECK_FAILED:
+                        return {
+                            "success": False,
+                            "msg": fail_msg or "导航失败",
+                            "nav_failed": True,
+                        }
+                # 超时仍未到达（非导航失败）
+                return {"success": False, "msg": "等待超时或未到达", "nav_failed": False}
             except Exception as e:
                 return {"success": False, "msg": f"等待目标失败: {str(e)}"}
 
