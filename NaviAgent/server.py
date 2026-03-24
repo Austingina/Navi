@@ -913,7 +913,7 @@ class NavigationToolManager:
                             "plan": snap,
                             "msg": f"已获取全局路径，共 {snap['pose_count']} 个路径点",
                         }
-                    await asyncio.sleep(0.05)
+                    await asyncio.sleep(0.2)
                 return {
                     "success": False,
                     "msg": f"{timeout}s 内未收到非空的 /plan（请确认已下发导航目标且 Nav2 planner 已订阅）",

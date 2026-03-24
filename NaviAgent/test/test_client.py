@@ -121,9 +121,9 @@ class SimplePatrolClient:
             pose_list_data = await client.call("get_pose_list_in_current_submap")
             if pose_list_data.get("success"):
                 self.pose_list = pose_list_data["keys"]
-                logger.info(f"📋 目的地列表: {self.pose_list}")
+                logger.info(f"📋 当前层语义点位列表: {self.pose_list}")
             else:
-                logger.error(f"❌ 获取目的地列表失败: {pose_list_data.get('msg')}")
+                logger.error(f"❌ 当前层语义点位列表失败: {pose_list_data.get('msg')}")
                 return False
 
             route_waypoints = None
