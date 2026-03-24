@@ -4,7 +4,7 @@ from rclpy.node import Node  # ROS节点基类
 from rcl_interfaces.srv import GetParameters  # 参数服务
 from rclpy.executors import SingleThreadedExecutor  # 单线程执行器
 from geometry_msgs.msg import PoseStamped, Twist, TwistStamped  # 位姿消息类型和速度控制消息类型
-from nav_msgs.msg import OccupancyGrid  # 占据网格消息类型
+from nav_msgs.msg import OccupancyGrid, Path  # 占据网格、全局路径
 from std_msgs.msg import String  # 字符串消息类型
 from action_msgs.msg import GoalStatus, GoalStatusArray  # Action状态消息
 import logging  # 日志记录库
@@ -88,6 +88,16 @@ class NavNode(Node):
                 OccupancyGrid,
                 '/map',
                 self.map_callback,
+                10
+            )
+            # Nav2 全局路径（下发新 goal 后 planner 会先清空再发布新路径）
+            self._plan_lock = threading.Lock()
+            self._plan_epoch = 0
+            self._latest_plan: Optional[Path] = None
+            self.plan_sub = self.create_subscription(
+                Path,
+                '/plan',
+                self._nav_plan_callback,
                 10
             )
             # 存储当前机器人位姿
@@ -178,6 +188,71 @@ class NavNode(Node):
         if result["exc"]:
             raise result["exc"]
         return result["value"]
+
+    def _nav_plan_callback(self, msg: Path) -> None:
+        """缓存最近一次与当前 goal 代次一致的 /plan（Nav2 常见为 nav_msgs/Path）。"""
+        ep_at_receive = self._plan_epoch
+        copy = Path()
+        copy.header = msg.header
+        copy.poses = list(msg.poses)
+        with self._plan_lock:
+            if ep_at_receive != self._plan_epoch:
+                return
+            self._latest_plan = copy
+
+    @staticmethod
+    def path_msg_to_dict(path: Path) -> dict:
+        """将 nav_msgs/Path 转为可 JSON 序列化的字典。"""
+        poses_out = []
+        for p in path.poses:
+            poses_out.append({
+                "position": {
+                    "x": float(p.pose.position.x),
+                    "y": float(p.pose.position.y),
+                    "z": float(p.pose.position.z),
+                },
+                "orientation": {
+                    "x": float(p.pose.orientation.x),
+                    "y": float(p.pose.orientation.y),
+                    "z": float(p.pose.orientation.z),
+                    "w": float(p.pose.orientation.w),
+                },
+            })
+        return {
+            "frame_id": path.header.frame_id,
+            "stamp": {
+                "sec": int(path.header.stamp.sec),
+                "nanosec": int(path.header.stamp.nanosec),
+            },
+            "poses": poses_out,
+            "pose_count": len(poses_out),
+        }
+
+    def get_navigation_plan_snapshot(self) -> Optional[dict]:
+        """
+        返回当前缓存的非空全局路径；若无或 poses 为空则 None。
+        应在 publish_goal 之后轮询，直到 planner 发布新路径。
+        """
+        with self._plan_lock:
+            if self._latest_plan is None or len(self._latest_plan.poses) == 0:
+                return None
+            return NavNode.path_msg_to_dict(self._latest_plan)
+
+    def wait_for_navigation_plan(self, timeout_sec: float = 10.0, poll_interval: float = 0.05) -> Tuple[bool, Optional[dict], str]:
+        """
+        阻塞等待非空 /plan（适用于已调用 publish_goal 之后）。
+
+        返回:
+            (True, plan_dict, "") 成功
+            (False, None, 错误说明) 超时或失败
+        """
+        deadline = time.time() + timeout_sec
+        while time.time() < deadline:
+            snap = self.get_navigation_plan_snapshot()
+            if snap is not None:
+                return (True, snap, "")
+            time.sleep(poll_interval)
+        return (False, None, f"{timeout_sec}s 内未收到非空的 /plan 消息")
 
     def map_callback(self, msg):
         """
@@ -429,6 +504,10 @@ class NavNode(Node):
             self.pid_control_active = False
             self.current_goal_handle = None
             self._nav_terminal_message = None
+            # 新 goal：清空路径缓存并递增代次，忽略旧 goal 的迟到 /plan
+            with self._plan_lock:
+                self._plan_epoch += 1
+                self._latest_plan = None
 
             # 构造action goal
             goal_msg = NavigateToPose.Goal()

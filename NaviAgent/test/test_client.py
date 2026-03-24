@@ -402,22 +402,27 @@ async def main() -> int:
     args = parser.parse_args()
 
     try:
-        # If --set-xy provided, run a minimal test for set_goal_by_xy and wait_goal_reached
+        # If --set-xy provided, run a minimal test for set_goal_by_xy + get_navigation_plan
         if args.set_xy:
             x, y = args.set_xy
             logger.info(f"🔬 Running set_goal_by_xy test to x={x}, y={y} on {args.ws}")
             async with WsNavClient(args.ws) as client:
-                # send set_goal_by_xy
                 res = await client.call("set_goal_by_xy", {"x": float(x), "y": float(y), "distance": 0.05})
                 logger.info(f"set_goal_by_xy response: {res}")
+                if not res.get("success", True):
+                    return 1
 
-                # try to determine a target identifier to wait for
-                target = res.get("target_str") or res.get("target") or f"xy({x},{y})"
-
-                logger.info("等待到达目标（timeout=220s）...")
-                wait = await client.call("wait_goal_reached", {"target": target, "timeout": 220.0})
-                logger.info(f"wait_goal_reached response: {wait}")
-                return 0 if wait.get("success") else 1
+                logger.info("获取 /plan 全局路径（get_navigation_plan, timeout=30s）...")
+                plan_res = await client.call("get_navigation_plan", {"timeout": 30.0})
+                logger.info(f"get_navigation_plan response: {plan_res}")
+                if plan_res.get("success"):
+                    plan = plan_res.get("plan") or {}
+                    logger.info(
+                        "   frame_id=%s pose_count=%s",
+                        plan.get("frame_id"),
+                        plan.get("pose_count"),
+                    )
+                return 0 if plan_res.get("success") else 1
 
         # otherwise run full patrol test
         client = SimplePatrolClient(ws_url=args.ws)

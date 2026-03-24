@@ -876,13 +876,50 @@ class NavigationToolManager:
                 while time.time() - start_time < timeout:
                     # 异步等待0.2秒再次检查
                     await asyncio.sleep(0.2)
-                    # 检查是否到达目标点
-                    if self.ros_node.check_goal_reached(xy_tolerance, yaw_tolerance):
+                    status, fail_msg = self.ros_node.check_goal_reached(xy_tolerance, yaw_tolerance)
+                    if status == self.ros_node.GOAL_CHECK_REACHED:
                         return {"success": True, "msg": f"已到达目标 {target}", "timestamp": int(time.time())}
-                # 超时未到达
-                return {"success": False, "msg": "等待超时或未到达"}
+                    if status == self.ros_node.GOAL_CHECK_FAILED:
+                        return {
+                            "success": False,
+                            "msg": fail_msg or "导航失败",
+                            "nav_failed": True,
+                        }
+                # 超时仍未到达（非导航失败）
+                return {"success": False, "msg": "等待超时或未到达", "nav_failed": False}
             except Exception as e:
                 return {"success": False, "msg": f"等待目标失败: {str(e)}"}
+
+        async def get_navigation_plan(timeout: float = 10.0) -> Dict[str, Any]:
+            """
+            获取 Nav2 发布在 /plan 上的全局路径（nav_msgs/Path）。
+
+            注意：每次 ``publish_goal`` / ``set_goal_*`` 下发新目标时，节点会清空缓存并递增代次，
+            只保留与当前目标对应的新路径；请在下发目标后再调用本接口等待新 plan。
+
+            参数:
+            timeout: 等待非空路径的最长时间（秒）
+
+            返回:
+            success 为 True 时含 ``plan`` 字段：frame_id、stamp、poses、pose_count
+            """
+            start = time.time()
+            try:
+                while time.time() - start < timeout:
+                    snap = self.ros_node.get_navigation_plan_snapshot()
+                    if snap is not None:
+                        return {
+                            "success": True,
+                            "plan": snap,
+                            "msg": f"已获取全局路径，共 {snap['pose_count']} 个路径点",
+                        }
+                    await asyncio.sleep(0.05)
+                return {
+                    "success": False,
+                    "msg": f"{timeout}s 内未收到非空的 /plan（请确认已下发导航目标且 Nav2 planner 已订阅）",
+                }
+            except Exception as e:
+                return {"success": False, "msg": f"获取导航路径失败: {str(e)}"}
 
         def get_nearest_point() -> Dict[str, Any]:
             """
@@ -1007,6 +1044,7 @@ class NavigationToolManager:
             "get_route": get_route,
             "get_status": get_status,
             "wait_goal_reached": wait_goal_reached,
+            "get_navigation_plan": get_navigation_plan,
             "get_nearest_point": get_nearest_point,
             "get_map": get_map,
         }
