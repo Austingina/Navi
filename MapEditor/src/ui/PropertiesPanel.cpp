@@ -3,6 +3,7 @@
 #include <QVBoxLayout>
 #include <QScrollArea>
 #include <QMessageBox>
+#include <algorithm>
 
 namespace me {
 
@@ -308,9 +309,10 @@ void PropertiesPanel::setupPortalPage() {
     auto* group = new QGroupBox("传送门属性");
     auto* form = new QFormLayout(group);
     form->setContentsMargins(10, 20, 10, 10);
-    ptName_   = new QLineEdit();
+    ptName_   = new QComboBox();
+    ptName_->setMinimumContentsLength(12);
     ptTarget_ = new QComboBox();
-    form->addRow("传送门名称:", ptName_);
+    form->addRow("传送门名称 (所在子地图语义点):", ptName_);
     form->addRow("目标 Submap:", ptTarget_);
     layout->addWidget(group);
 
@@ -321,14 +323,41 @@ void PropertiesPanel::setupPortalPage() {
 
     connect(applyBtn, &QPushButton::clicked, [this]() {
         if (!ptSm_ || ptIdx_ < 0) return;
+
+        QString portalName = ptName_->currentText();
+        QString targetSm   = ptTarget_->currentText();
+
+        if (portalName.isEmpty()) {
+            QMessageBox::warning(this, "传送门", "请选择传送门对应的语义点名称。");
+            return;
+        }
+        if (!ptSm_->hasSemanticPoint(portalName)) {
+            QMessageBox::warning(this, "传送门",
+                QString("语义点 \"%1\" 不存在，请先在子地图中添加该语义点。").arg(portalName));
+            return;
+        }
+        if (targetSm.isEmpty()) {
+            QMessageBox::warning(this, "传送门", "请选择目标 Submap。");
+            return;
+        }
+
         auto portals = ptSm_->portals();
         if (ptIdx_ >= portals.size()) return;
-        // 直接修改: 先清除再加
+
         Portal p;
-        p.portalName = ptName_->text();
-        p.targetSubmap = ptTarget_->currentText();
-        // 简单方式: 重建 portals 列表
+        p.portalName   = portalName;
+        p.targetSubmap = targetSm;
         auto allPortals = ptSm_->portals();
+        const QString oldName = allPortals[ptIdx_].portalName;
+        if (portalName != oldName) {
+            for (int i = 0; i < allPortals.size(); ++i) {
+                if (i != ptIdx_ && allPortals[i].portalName == portalName) {
+                    QMessageBox::warning(this, "传送门",
+                        QString("已存在使用该语义点的传送门 \"%1\"。").arg(portalName));
+                    return;
+                }
+            }
+        }
         allPortals[ptIdx_] = p;
         ptSm_->clearPortals();
         for (const auto& pt : allPortals) ptSm_->addPortal(pt);
@@ -346,9 +375,33 @@ void PropertiesPanel::showPortalProperties(SubMap* sm, int portalIdx, const QStr
     ptIdx_ = portalIdx;
 
     const auto& p = sm->portals()[portalIdx];
-    ptName_->setText(p.portalName);
+
+    QStringList semNames;
+    semNames.reserve(sm->semanticPoints().size());
+    for (auto it = sm->semanticPoints().constBegin(); it != sm->semanticPoints().constEnd(); ++it) {
+        semNames.append(it.key());
+    }
+    std::sort(semNames.begin(), semNames.end());
+
+    ptName_->clear();
+    ptName_->addItems(semNames);
+    if (!p.portalName.isEmpty() && ptName_->findText(p.portalName) < 0) {
+        ptName_->addItem(p.portalName);
+    }
+    ptName_->setCurrentText(p.portalName);
+
     ptTarget_->clear();
-    ptTarget_->addItems(allSubmapIds);
+    QStringList targets;
+    for (const QString& id : allSubmapIds) {
+        if (id != sm->id()) {
+            targets.append(id);
+        }
+    }
+    std::sort(targets.begin(), targets.end());
+    ptTarget_->addItems(targets);
+    if (!p.targetSubmap.isEmpty() && ptTarget_->findText(p.targetSubmap) < 0) {
+        ptTarget_->addItem(p.targetSubmap);
+    }
     ptTarget_->setCurrentText(p.targetSubmap);
 
     stack_->setCurrentIndex(3);
@@ -360,6 +413,7 @@ void PropertiesPanel::clear() {
     spSm_ = nullptr;
     spCurrentName_.clear();
     ptSm_ = nullptr;
+    ptIdx_ = -1;
 }
 
 } // namespace me

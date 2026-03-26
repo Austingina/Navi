@@ -1,6 +1,7 @@
 #include "ui/MainWindow.h"
 #include "ui/AddSubmapDialog.h"
 #include "ui/AlignSubmapDialog.h"
+#include "ui/PortalEditorDialog.h"
 
 #include <QMenuBar>
 #include <QToolBar>
@@ -10,6 +11,7 @@
 #include <QInputDialog>
 #include <QSplitter>
 #include <QApplication>
+#include <QDialog>
 #include <QPushButton>
 
 namespace me {
@@ -159,6 +161,8 @@ void MainWindow::connectSignals() {
             this, &MainWindow::onColorChanged);
         connect(propsPanel_, &PropertiesPanel::semanticPointChanged,
             this, &MainWindow::onSemanticPointChanged);
+    connect(propsPanel_, &PropertiesPanel::portalChanged,
+            this, &MainWindow::onPortalPropertiesChanged);
     connect(propsPanel_, &PropertiesPanel::pickSemanticPositionRequested,
             this, &MainWindow::onSemanticPickPositionRequested);
 
@@ -338,6 +342,14 @@ void MainWindow::onSemanticPointChanged(const QString& smId, const QString& ptNa
 void MainWindow::onPortalSelected(const QString& smId, int portalIdx) {
     auto* sm = project_.submap(smId);
     if (sm) propsPanel_->showPortalProperties(sm, portalIdx, project_.submapIds());
+}
+
+void MainWindow::onPortalPropertiesChanged(const QString& smId, int /*portalIdx*/) {
+    submapPanel_->rebuild(&project_);
+    refreshMarkers();
+    if (!smId.isEmpty()) refreshSubmap(smId);
+    project_.setDirty();
+    statusBar()->showMessage(QString("传送门已更新: %1").arg(smId), 3000);
 }
 
 void MainWindow::onSubmapVisibilityChanged(const QString& id, bool visible) {
@@ -531,7 +543,7 @@ void MainWindow::onRemoveSubmap(const QString& id) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-//  添加语义点位 / 传送门 (需要在地图上拾取)
+//  添加语义点位 / 传送门（语义点用右侧属性栏；传送门用独立对话框新增）
 // ═══════════════════════════════════════════════════════════════════════
 
 void MainWindow::onAddSemanticPoint(const QString& smId) {
@@ -552,11 +564,17 @@ void MainWindow::onSemanticPickPositionRequested(const QString& smId) {
 }
 
 void MainWindow::onAddPortal(const QString& smId) {
-    pendingAction_   = PendingAddPortal;
-    pendingSubmapId_ = smId;
-    viewer_->setPickMode(PointCloudViewer::PickPointOnCloud);
-    viewer_->setCursor(Qt::CrossCursor);
-    statusLabel_->setText(QString("请在子地图 '%1' 上点击放置传送门...").arg(smId));
+    auto* sm = project_.submap(smId);
+    if (!sm) return;
+    PortalEditorDialog dlg(sm, project_.submapIds(), this);
+    if (dlg.exec() == QDialog::Accepted) {
+        submapPanel_->rebuild(&project_);
+        refreshMarkers();
+        refreshSubmap(smId);
+        project_.setDirty();
+        statusLabel_->setText(QString("已在子地图 %1 中添加传送门").arg(smId));
+        statusBar()->showMessage("传送门已添加", 3000);
+    }
 }
 
 void MainWindow::onAlignSubmap(const QString& smId) {
@@ -763,47 +781,6 @@ void MainWindow::onPointPicked(const Eigen::Vector3d& pos) {
                                   .arg(local.x(), 0, 'f', 2)
                                   .arg(local.y(), 0, 'f', 2)
                                   .arg(local.z(), 0, 'f', 2));
-        break;
-    }
-    case PendingAddPortal: {
-        if (!sm) break;
-        Eigen::Matrix4d invT = sm->transformMatrix().inverse();
-        Eigen::Vector4d local = invT * Eigen::Vector4d(pos.x(), pos.y(), pos.z(), 1.0);
-
-        // 选择目标 submap
-        QStringList others;
-        for (const auto& id : project_.submapIds()) {
-            if (id != pendingSubmapId_) others << id;
-        }
-        bool ok;
-        QString target = QInputDialog::getItem(this, "新增传送门",
-                                                "目标子地图:", others, 0, false, &ok);
-        if (!ok) break;
-
-        QString portalName = QInputDialog::getText(this, "新增传送门",
-                                                    "传送门名称:", QLineEdit::Normal, "", &ok);
-        if (!ok || portalName.isEmpty()) break;
-
-        // 同时添加语义点 (传送门位置)
-        if (!sm->hasSemanticPoint(portalName)) {
-            SemanticPoint sp;
-            sp.name = portalName;
-            sp.type = "single_pose";
-            Pose p;
-            p.position = Eigen::Vector3d(local.x(), local.y(), local.z());
-            sp.poses.append(p);
-            sm->addSemanticPoint(sp);
-        }
-
-        Portal portal;
-        portal.portalName   = portalName;
-        portal.targetSubmap = target;
-        sm->addPortal(portal);
-
-        project_.setDirty();
-        submapPanel_->rebuild(&project_);
-        refreshMarkers();
-        statusLabel_->setText(QString("已添加传送门: %1 → %2").arg(portalName, target));
         break;
     }
     case PendingAlignGuess:

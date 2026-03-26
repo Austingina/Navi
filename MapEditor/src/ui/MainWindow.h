@@ -31,6 +31,7 @@ private slots:
     void onSubmapSelected(const QString& id);
     void onSemanticPointSelected(const QString& smId, const QString& ptName);
     void onPortalSelected(const QString& smId, int portalIdx);
+    void onPortalPropertiesChanged(const QString& smId, int portalIdx);
     void onSemanticPointChanged(const QString& smId, const QString& ptName);
 
     void onSubmapVisibilityChanged(const QString& id, bool visible);
@@ -88,7 +89,7 @@ private:
     QString    currentProjectDir_;
 
     // 拾取回调
-    enum PendingAction { NoPending, PendingSemanticPanelPick, PendingAddPortal,
+    enum PendingAction { NoPending, PendingSemanticPanelPick,
                          PendingAlignGuess, PendingAlignSourceCenter };
     PendingAction pendingAction_ = NoPending;
     QString       pendingSubmapId_;

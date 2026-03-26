@@ -93,10 +93,10 @@ private:
 
     // ── Portal 页面 ──────────────────────────────────────────────────
     QWidget*        ptPage_ = nullptr;
-    QLineEdit*      ptName_ = nullptr;
+    QComboBox*      ptName_ = nullptr;   // 当前 submap 的语义点名称
     QComboBox*      ptTarget_ = nullptr;
     SubMap*         ptSm_ = nullptr;
-    int             ptIdx_ = -1;
+    int             ptIdx_ = -1;  ///< >=0 编辑已有传送门；-1 表示未打开传送门页
 
     // helpers
     QDoubleSpinBox* makeSpinBox(double min = -9999, double max = 9999, int decimals = 4);

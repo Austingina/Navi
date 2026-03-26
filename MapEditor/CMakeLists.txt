@@ -41,6 +41,7 @@ set(UI_SOURCES
     src/ui/PropertiesPanel.h   src/ui/PropertiesPanel.cpp
     src/ui/AddSubmapDialog.h   src/ui/AddSubmapDialog.cpp
     src/ui/AlignSubmapDialog.h src/ui/AlignSubmapDialog.cpp
+    src/ui/PortalEditorDialog.h src/ui/PortalEditorDialog.cpp
 )
 
 set(ALGO_SOURCES
