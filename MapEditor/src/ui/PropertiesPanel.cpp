@@ -2,6 +2,7 @@
 
 #include <QVBoxLayout>
 #include <QScrollArea>
+#include <QMessageBox>
 
 namespace me {
 
@@ -196,18 +197,41 @@ void PropertiesPanel::setupSemanticPointPage() {
     form->addRow("orient.w:", spOw_);
     layout->addWidget(group);
 
+    spPickPosBtn_ = new QPushButton("从点云选点（填写 position，子地图局部坐标）");
+    layout->addWidget(spPickPosBtn_);
+    connect(spPickPosBtn_, &QPushButton::clicked, [this]() {
+        if (!spSm_) return;
+        emit pickSemanticPositionRequested(spSm_->id());
+    });
+
     layout->addStretch();
 
     auto* applyBtn = new QPushButton("应用修改");
     layout->addWidget(applyBtn);
 
     connect(applyBtn, &QPushButton::clicked, [this]() {
-        if (!spSm_ || spCurrentName_.isEmpty()) return;
+        if (!spSm_) return;
+        QString newName = spName_->text().trimmed();
+        if (newName.isEmpty()) {
+            QMessageBox::warning(this, "语义点位", "请填写点位名称。");
+            return;
+        }
 
-        // 如果名称改变了, 先删旧的
-        auto newName = spName_->text();
-        if (newName != spCurrentName_) {
-            spSm_->removeSemanticPoint(spCurrentName_);
+        if (spCurrentName_.isEmpty()) {
+            if (spSm_->hasSemanticPoint(newName)) {
+                QMessageBox::warning(this, "语义点位",
+                    QString("名称 \"%1\" 已存在。").arg(newName));
+                return;
+            }
+        } else {
+            if (newName != spCurrentName_ && spSm_->hasSemanticPoint(newName)) {
+                QMessageBox::warning(this, "语义点位",
+                    QString("名称 \"%1\" 已存在。").arg(newName));
+                return;
+            }
+            if (newName != spCurrentName_) {
+                spSm_->removeSemanticPoint(spCurrentName_);
+            }
         }
 
         SemanticPoint sp;
@@ -224,6 +248,29 @@ void PropertiesPanel::setupSemanticPointPage() {
     });
 
     stack_->addWidget(spPage_);
+}
+
+void PropertiesPanel::beginNewSemanticPoint(SubMap* sm) {
+    if (!sm) { clear(); return; }
+    spSm_ = sm;
+    spCurrentName_.clear();
+    spName_->clear();
+    spType_->setCurrentText("single_pose");
+    spPx_->setValue(0.0);
+    spPy_->setValue(0.0);
+    spPz_->setValue(0.0);
+    spOx_->setValue(0.0);
+    spOy_->setValue(0.0);
+    spOz_->setValue(0.0);
+    spOw_->setValue(1.0);
+    stack_->setCurrentIndex(2);
+}
+
+void PropertiesPanel::setSemanticPositionLocal(double x, double y, double z) {
+    if (!spPx_ || !spPy_ || !spPz_) return;
+    spPx_->setValue(x);
+    spPy_->setValue(y);
+    spPz_->setValue(z);
 }
 
 void PropertiesPanel::showSemanticPointProperties(SubMap* sm, const QString& pointName) {
@@ -311,6 +358,7 @@ void PropertiesPanel::clear() {
     stack_->setCurrentIndex(0);
     currentSm_ = nullptr;
     spSm_ = nullptr;
+    spCurrentName_.clear();
     ptSm_ = nullptr;
 }
 

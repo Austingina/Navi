@@ -27,6 +27,10 @@ public:
     void showSubmapProperties(SubMap* sm);
     /// 显示语义点属性
     void showSemanticPointProperties(SubMap* sm, const QString& pointName);
+    /// 新建语义点：在右侧面板编辑，「应用修改」写入工程；可用「从点云选点」填 position
+    void beginNewSemanticPoint(SubMap* sm);
+    /// 设置语义点 position 输入框（子地图局部坐标）
+    void setSemanticPositionLocal(double x, double y, double z);
     /// 显示 portal 属性
     void showPortalProperties(SubMap* sm, int portalIdx, const QStringList& allSubmapIds);
     /// 清空面板
@@ -38,6 +42,8 @@ signals:
     void portalChanged(const QString& submapId, int portalIdx);
     void colorChanged(const QString& submapId, const QColor& color);
     void voxelSizeChanged(const QString& submapId, float size);
+    /// 语义点页：请求在点云上拾取以填写 position
+    void pickSemanticPositionRequested(const QString& submapId);
 
 private:
     void setupUI();
@@ -80,6 +86,7 @@ private:
     QDoubleSpinBox* spOy_ = nullptr;
     QDoubleSpinBox* spOz_ = nullptr;
     QDoubleSpinBox* spOw_ = nullptr;
+    QPushButton*    spPickPosBtn_ = nullptr;
 
     SubMap*  spSm_ = nullptr;
     QString  spCurrentName_;

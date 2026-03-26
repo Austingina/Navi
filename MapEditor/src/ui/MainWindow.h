@@ -58,6 +58,7 @@ private slots:
     // ── 拾取 ─────────────────────────────────────────────────────────
     void onPointPicked(const Eigen::Vector3d& pos);
     void onMarkerDragFinished(const QString& submapId, const QString& name, const Eigen::Vector3d& newPos);
+    void onSemanticPickPositionRequested(const QString& smId);
 
 private:
     void setupUI();
@@ -87,7 +88,7 @@ private:
     QString    currentProjectDir_;
 
     // 拾取回调
-    enum PendingAction { NoPending, PendingAddSemanticPoint, PendingAddPortal,
+    enum PendingAction { NoPending, PendingSemanticPanelPick, PendingAddPortal,
                          PendingAlignGuess, PendingAlignSourceCenter };
     PendingAction pendingAction_ = NoPending;
     QString       pendingSubmapId_;

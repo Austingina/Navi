@@ -159,6 +159,8 @@ void MainWindow::connectSignals() {
             this, &MainWindow::onColorChanged);
         connect(propsPanel_, &PropertiesPanel::semanticPointChanged,
             this, &MainWindow::onSemanticPointChanged);
+    connect(propsPanel_, &PropertiesPanel::pickSemanticPositionRequested,
+            this, &MainWindow::onSemanticPickPositionRequested);
 
     // ── Viewer ───────────────────────────────────────────────────────
     connect(viewer_, &PointCloudViewer::pointPicked,
@@ -326,6 +328,7 @@ void MainWindow::onSemanticPointSelected(const QString& smId, const QString& ptN
 
 void MainWindow::onSemanticPointChanged(const QString& smId, const QString& ptName) {
     // Refresh markers and specific submap so the updated semantic point is visible immediately
+    submapPanel_->rebuild(&project_);
     refreshMarkers();
     if (!smId.isEmpty()) refreshSubmap(smId);
     statusBar()->showMessage(QString("语义点已更新: %1").arg(ptName), 3000);
@@ -532,11 +535,20 @@ void MainWindow::onRemoveSubmap(const QString& id) {
 // ═══════════════════════════════════════════════════════════════════════
 
 void MainWindow::onAddSemanticPoint(const QString& smId) {
-    pendingAction_   = PendingAddSemanticPoint;
+    auto* sm = project_.submap(smId);
+    if (!sm) return;
+    propsPanel_->beginNewSemanticPoint(sm);
+    statusLabel_->setText(
+        QString("在右侧「属性编辑」填写新语义点，可点「从点云选点」填入 position（子地图 %1，局部坐标）").arg(smId));
+}
+
+void MainWindow::onSemanticPickPositionRequested(const QString& smId) {
+    if (!project_.submap(smId)) return;
+    pendingAction_   = PendingSemanticPanelPick;
     pendingSubmapId_ = smId;
     viewer_->setPickMode(PointCloudViewer::PickPointOnCloud);
     viewer_->setCursor(Qt::CrossCursor);
-    statusLabel_->setText(QString("请在子地图 '%1' 上点击放置语义点位...").arg(smId));
+    statusLabel_->setText("在点云上单击以设置语义点 position（子地图局部坐标）…");
 }
 
 void MainWindow::onAddPortal(const QString& smId) {
@@ -742,32 +754,15 @@ void MainWindow::onPointPicked(const Eigen::Vector3d& pos) {
     auto* sm = project_.submap(pendingSubmapId_);
 
     switch (pendingAction_) {
-    case PendingAddSemanticPoint: {
+    case PendingSemanticPanelPick: {
         if (!sm) break;
-        // 将世界坐标转回 submap 本地坐标
         Eigen::Matrix4d invT = sm->transformMatrix().inverse();
         Eigen::Vector4d local = invT * Eigen::Vector4d(pos.x(), pos.y(), pos.z(), 1.0);
-
-        bool ok;
-        QString name = QInputDialog::getText(this, "新增语义点位",
-                                              "点位名称:", QLineEdit::Normal, "", &ok);
-        if (ok && !name.isEmpty()) {
-            SemanticPoint sp;
-            sp.name = name;
-            sp.type = "single_pose";
-            Pose p;
-            p.position = Eigen::Vector3d(local.x(), local.y(), local.z());
-            sp.poses.append(p);
-            sm->addSemanticPoint(sp);
-            project_.setDirty();
-            submapPanel_->rebuild(&project_);
-            refreshMarkers();
-            statusLabel_->setText(QString("已添加语义点位: %1 @ (%2, %3, %4)")
-                                     .arg(name)
-                                     .arg(local.x(), 0, 'f', 2)
-                                     .arg(local.y(), 0, 'f', 2)
-                                     .arg(local.z(), 0, 'f', 2));
-        }
+        propsPanel_->setSemanticPositionLocal(local.x(), local.y(), local.z());
+        statusLabel_->setText(QString("已填入 position（局部）: (%1, %2, %3)，可在右侧面板继续编辑后点「应用修改」")
+                                  .arg(local.x(), 0, 'f', 2)
+                                  .arg(local.y(), 0, 'f', 2)
+                                  .arg(local.z(), 0, 'f', 2));
         break;
     }
     case PendingAddPortal: {
