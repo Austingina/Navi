@@ -61,6 +61,7 @@ examples-rclpy-minimal-publisher==0.15.4
 examples-rclpy-minimal-service==0.15.4
 examples-rclpy-minimal-subscriber==0.15.4
 exceptiongroup==1.3.0
+fastapi==0.115.6
 fastmcp==2.12.4
 ffmpy==0.6.0
 filelock==3.18.0
