@@ -69,8 +69,10 @@ public:
 
     // ── 标记点管理 ───────────────────────────────────────────────────
     /// 更新语义点位和传送门标记
+    /// markerEmphasis 与 markers 等长：非 0 表示该点用 2× 点半径绘制（用于当前选中语义点）
     void updateMarkers(const QVector<MarkerVertex>& markers,
-                       const QVector<MarkerInfo>& markerInfos = {});
+                       const QVector<MarkerInfo>& markerInfos = {},
+                       const QVector<quint8>& markerEmphasis = {});
     void setMarkersVisible(bool v) { showMarkers_ = v; update(); }
 
     // ── 路线折线管理 ─────────────────────────────────────────────────
@@ -136,10 +138,15 @@ private:
     // ── 标记点 ───────────────────────────────────────────────────────
     QOpenGLVertexArrayObject markerVAO_;
     QOpenGLBuffer            markerVBO_{QOpenGLBuffer::VertexBuffer};
-    int                      markerCount_ = 0;
+    QOpenGLVertexArrayObject markerEmphasisVAO_;
+    QOpenGLBuffer            markerEmphasisVBO_{QOpenGLBuffer::VertexBuffer};
+    int                      markerCount_        = 0;  // CPU 侧顶点数（与 infos / 拖拽索引一致）
+    int                      markerNormalCount_  = 0;  // GPU 普通点半径批次
+    int                      markerEmphasisCount_= 0; // GPU 2× 点半径批次
     bool                     showMarkers_ = true;
     QVector<MarkerInfo>      markerInfos_;   // 标记点元数据
     QVector<MarkerVertex>    markerVertices_; // 当前上传到 GPU 的标记顶点数据
+    QVector<quint8>        markerEmphasis_; // 与 markerVertices_ 等长，非 0 = 大点
     // 拖拽状态
     bool                     leftPressed_ = false;
     bool                     dragging_ = false;
@@ -153,6 +160,10 @@ signals:
     void markerDragFinished(const QString& submapId, const QString& name, const Eigen::Vector3d& newPos);
     
 private:
+    void uploadMarkerGlBuffers();
+    static constexpr float kMarkerPointSizeBase_     = 10.0f;
+    static constexpr float kMarkerPointSizeEmphasis_ = 20.0f;
+
     QVector<int> hitTestMarkers(const QPoint& screenPos, float threshold = 15.0f);
 
     // ── 路线折线 ─────────────────────────────────────────────────────

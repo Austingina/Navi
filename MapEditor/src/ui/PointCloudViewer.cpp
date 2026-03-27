@@ -63,6 +63,8 @@ PointCloudViewer::~PointCloudViewer() {
     }
     markerVAO_.destroy();
     markerVBO_.destroy();
+    markerEmphasisVAO_.destroy();
+    markerEmphasisVBO_.destroy();
     gridVAO_.destroy();
     gridVBO_.destroy();
     axisVAO_.destroy();
@@ -187,15 +189,23 @@ void PointCloudViewer::paintGL() {
         axisVAO_.release();
     }
 
-    // 绘制标记点 (GL_POINTS → uDrawMode=1)
+    // 绘制标记点 (GL_POINTS → uDrawMode=1)：普通点半径与选中语义点 2× 半径分两批
     if (showMarkers_ && markerCount_ > 0) {
         QMatrix4x4 mvp = proj * view;
         cloudShader_->setUniformValue("uMVP", mvp);
         cloudShader_->setUniformValue("uDrawMode", 1);
-        glPointSize(10.0f);
-        markerVAO_.bind();
-        glDrawArrays(GL_POINTS, 0, markerCount_);
-        markerVAO_.release();
+        if (markerNormalCount_ > 0) {
+            glPointSize(kMarkerPointSizeBase_);
+            markerVAO_.bind();
+            glDrawArrays(GL_POINTS, 0, markerNormalCount_);
+            markerVAO_.release();
+        }
+        if (markerEmphasisCount_ > 0) {
+            glPointSize(kMarkerPointSizeEmphasis_);
+            markerEmphasisVAO_.bind();
+            glDrawArrays(GL_POINTS, 0, markerEmphasisCount_);
+            markerEmphasisVAO_.release();
+        }
     }
 
     // 绘制路线折线 (GL_LINE_STRIP → uDrawMode=0)
@@ -341,27 +351,26 @@ void PointCloudViewer::setSubmapVisible(const QString& id, bool visible) {
 //  标记点上传
 // ═══════════════════════════════════════════════════════════════════════
 
-void PointCloudViewer::updateMarkers(const QVector<MarkerVertex>& markers,
-                                      const QVector<MarkerInfo>& markerInfos) {
-    makeCurrent();
-    markerInfos_ = markerInfos;
-    // 保存顶点数据以便拖拽时可以局部更新并重新上传
-    markerVertices_.clear();
-    markerVertices_ = markers;
-
-    if (!markerVAO_.isCreated()) markerVAO_.create();
-    if (!markerVBO_.isCreated()) markerVBO_.create();
-
-    markerCount_ = markerVertices_.size();
-    if (markerCount_ == 0) {
-        doneCurrent();
-        update();
-        return;
+void PointCloudViewer::uploadMarkerGlBuffers() {
+    QVector<MarkerVertex> normal;
+    QVector<MarkerVertex> emph;
+    normal.reserve(markerVertices_.size());
+    emph.reserve(markerVertices_.size());
+    for (int i = 0; i < markerVertices_.size(); ++i) {
+        const bool isEmphasis =
+            (i < markerEmphasis_.size() && markerEmphasis_[i] != 0);
+        if (isEmphasis) emph.append(markerVertices_[i]);
+        else normal.append(markerVertices_[i]);
     }
+    markerNormalCount_   = normal.size();
+    markerEmphasisCount_ = emph.size();
 
     markerVAO_.bind();
     markerVBO_.bind();
-    markerVBO_.allocate(markerVertices_.constData(), markerCount_ * sizeof(MarkerVertex));
+    if (markerNormalCount_ > 0)
+        markerVBO_.allocate(normal.constData(), markerNormalCount_ * sizeof(MarkerVertex));
+    else
+        markerVBO_.allocate(nullptr, 0);
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(MarkerVertex), nullptr);
     glEnableVertexAttribArray(1);
@@ -369,6 +378,52 @@ void PointCloudViewer::updateMarkers(const QVector<MarkerVertex>& markers,
                           reinterpret_cast<void*>(3 * sizeof(float)));
     markerVBO_.release();
     markerVAO_.release();
+
+    markerEmphasisVAO_.bind();
+    markerEmphasisVBO_.bind();
+    if (markerEmphasisCount_ > 0)
+        markerEmphasisVBO_.allocate(emph.constData(), markerEmphasisCount_ * sizeof(MarkerVertex));
+    else
+        markerEmphasisVBO_.allocate(nullptr, 0);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(MarkerVertex), nullptr);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(MarkerVertex),
+                          reinterpret_cast<void*>(3 * sizeof(float)));
+    markerEmphasisVBO_.release();
+    markerEmphasisVAO_.release();
+}
+
+void PointCloudViewer::updateMarkers(const QVector<MarkerVertex>& markers,
+                                      const QVector<MarkerInfo>& markerInfos,
+                                      const QVector<quint8>& markerEmphasis) {
+    makeCurrent();
+    markerInfos_ = markerInfos;
+    // 保存顶点数据以便拖拽时可以局部更新并重新上传
+    markerVertices_.clear();
+    markerVertices_ = markers;
+    markerCount_    = markerVertices_.size();
+
+    markerEmphasis_.clear();
+    if (static_cast<int>(markerEmphasis.size()) == markerCount_ && markerCount_ > 0)
+        markerEmphasis_ = markerEmphasis;
+    else if (markerCount_ > 0)
+        markerEmphasis_.fill(0, markerCount_);
+
+    if (!markerVAO_.isCreated()) markerVAO_.create();
+    if (!markerVBO_.isCreated()) markerVBO_.create();
+    if (!markerEmphasisVAO_.isCreated()) markerEmphasisVAO_.create();
+    if (!markerEmphasisVBO_.isCreated()) markerEmphasisVBO_.create();
+
+    if (markerCount_ == 0) {
+        markerNormalCount_   = 0;
+        markerEmphasisCount_ = 0;
+        doneCurrent();
+        update();
+        return;
+    }
+
+    uploadMarkerGlBuffers();
 
     doneCurrent();
     update();
@@ -678,9 +733,7 @@ void PointCloudViewer::mouseMoveEvent(QMouseEvent* e) {
         markerVertices_[dragIndex_].z = static_cast<float>(worldPos.z());
         markerInfos_[dragIndex_].worldPos = QVector3D((float)worldPos.x(), (float)worldPos.y(), (float)worldPos.z());
 
-        markerVBO_.bind();
-        markerVBO_.allocate(markerVertices_.constData(), markerCount_ * sizeof(MarkerVertex));
-        markerVBO_.release();
+        uploadMarkerGlBuffers();
         doneCurrent();
         update();
     }
@@ -733,8 +786,11 @@ QVector<int> PointCloudViewer::hitTestMarkers(const QPoint& screenPos, float thr
 
         float dx = sx - screenPos.x();
         float dy = sy - screenPos.y();
+        float th = threshold;
+        if (i < markerEmphasis_.size() && markerEmphasis_[i] != 0)
+            th = threshold * 2.0f;
         float dist = std::sqrt(dx * dx + dy * dy);
-        if (dist < threshold) {
+        if (dist < th) {
             result.append(i);
         }
     }

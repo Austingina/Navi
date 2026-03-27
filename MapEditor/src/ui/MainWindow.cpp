@@ -127,6 +127,11 @@ void MainWindow::connectSignals() {
             this, &MainWindow::onSemanticPointSelected);
     connect(submapPanel_, &SubmapPanel::portalSelected,
             this, &MainWindow::onPortalSelected);
+    connect(submapPanel_, &SubmapPanel::routeSelected, this, [this](const QString&) {
+        selectedSemanticSmId_.clear();
+        selectedSemanticPtName_.clear();
+        refreshMarkers();
+    });
 
     connect(submapPanel_, &SubmapPanel::submapVisibilityChanged,
             this, &MainWindow::onSubmapVisibilityChanged);
@@ -196,6 +201,8 @@ void MainWindow::onOpen() {
 
     currentProjectDir_ = path;
     colorIndex_ = 0;
+    selectedSemanticSmId_.clear();
+    selectedSemanticPtName_.clear();
 
     // 为每个 submap 分配颜色
     for (const auto& id : project_.submapIds()) {
@@ -275,22 +282,28 @@ void MainWindow::refreshSubmap(const QString& id) {
 void MainWindow::refreshMarkers() {
     QVector<MarkerVertex> markers;
     QVector<MarkerInfo>   markerInfos;
+    QVector<quint8>       markerEmphasis;
 
     for (const auto& id : project_.submapIds()) {
         auto* sm = project_.submap(id);
         if (!sm) continue;
         Eigen::Matrix4d T = sm->transformMatrix();
 
-        // 语义点位 (黄色)
+        // 语义点位 (默认黄色，当前选中项红色)
         if (sm->displayOptions().showSemanticPts) {
             for (auto it = sm->semanticPoints().begin(); it != sm->semanticPoints().end(); ++it) {
+                const bool selected =
+                    (id == selectedSemanticSmId_ && it.key() == selectedSemanticPtName_);
+                const float r = 1.0f;
+                const float g = selected ? 0.15f : 0.9f;
+                const float b = selected ? 0.15f : 0.2f;
                 for (const auto& pose : it.value().poses) {
                     Eigen::Vector4d pw = T * Eigen::Vector4d(
                         pose.position.x(), pose.position.y(), pose.position.z(), 1.0);
-                    markers.append({(float)pw.x(), (float)pw.y(), (float)pw.z(),
-                                    1.0f, 0.9f, 0.2f});
+                    markers.append({(float)pw.x(), (float)pw.y(), (float)pw.z(), r, g, b});
                     markerInfos.append({it.key(), id, "semantic",
                                         QVector3D((float)pw.x(), (float)pw.y(), (float)pw.z())});
+                    markerEmphasis.append(selected ? quint8(1) : quint8(0));
                 }
             }
         }
@@ -310,12 +323,13 @@ void MainWindow::refreshMarkers() {
                         QString("%1 → %2").arg(portal.portalName, portal.targetSubmap),
                         id, "portal",
                         QVector3D((float)pw.x(), (float)pw.y(), (float)pw.z())});
+                    markerEmphasis.append(quint8(0));
                 }
             }
         }
     }
 
-    viewer_->updateMarkers(markers, markerInfos);
+    viewer_->updateMarkers(markers, markerInfos, markerEmphasis);
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -323,16 +337,23 @@ void MainWindow::refreshMarkers() {
 // ═══════════════════════════════════════════════════════════════════════
 
 void MainWindow::onSubmapSelected(const QString& id) {
+    selectedSemanticSmId_.clear();
+    selectedSemanticPtName_.clear();
+    refreshMarkers();
     auto* sm = project_.submap(id);
     if (sm) propsPanel_->showSubmapProperties(sm);
 }
 
 void MainWindow::onSemanticPointSelected(const QString& smId, const QString& ptName) {
+    selectedSemanticSmId_   = smId;
+    selectedSemanticPtName_ = ptName;
+    refreshMarkers();
     auto* sm = project_.submap(smId);
     if (sm) propsPanel_->showSemanticPointProperties(sm, ptName);
 }
 
 void MainWindow::onSemanticPointChanged(const QString& smId, const QString& ptName) {
+    if (selectedSemanticSmId_ == smId) selectedSemanticPtName_ = ptName;
     // Refresh markers and specific submap so the updated semantic point is visible immediately
     submapPanel_->rebuild(&project_);
     refreshMarkers();
@@ -342,6 +363,9 @@ void MainWindow::onSemanticPointChanged(const QString& smId, const QString& ptNa
 }
 
 void MainWindow::onPortalSelected(const QString& smId, int portalIdx) {
+    selectedSemanticSmId_.clear();
+    selectedSemanticPtName_.clear();
+    refreshMarkers();
     auto* sm = project_.submap(smId);
     if (sm) propsPanel_->showPortalProperties(sm, portalIdx, project_.submapIds());
 }

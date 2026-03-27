@@ -89,6 +89,10 @@ private:
     MapProject project_;
     QString    currentProjectDir_;
 
+    /// 子图树中选中的语义点，用于 3D 中高亮（红色）
+    QString    selectedSemanticSmId_;
+    QString    selectedSemanticPtName_;
+
     // 拾取回调
     enum PendingAction { NoPending, PendingSemanticPanelPick,
                          PendingAlignGuess, PendingAlignSourceCenter };
