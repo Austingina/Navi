@@ -109,15 +109,34 @@ class SimplePatrolClient:
 
         self.patrol_sequence: list = []
 
-        self.route_name = os.environ.get("ROUTE_NAME", "线路A")
+        self.route_name = os.environ.get("ROUTE_NAME", "routeA")
 
     async def start_patrol_test(self) -> bool:
         """开始巡检测试"""
         logger.info("🚀 开始巡检路径测试 (WebSocket)")
         logger.info(f"📡 {self.ws_url}")
-        logger.info(f"📋 测试点位: {' -> '.join(map(str, self.patrol_sequence))}")
 
         async with WsNavClient(self.ws_url) as client:
+            # 先拉取全部路线，默认选用第一条；失败则回退到环境变量 ROUTE_NAME / 默认名
+            routes_data = await client.call("get_route_names")
+            if routes_data.get("success"):
+                names = routes_data.get("route_names") or []
+                cnt = routes_data.get("count", len(names))
+                logger.info(f"📋 服务器全部路线 ({cnt} 条): {names}")
+                if names:
+                    self.route_name = names[0]
+                    logger.info(f"📌 自动选择第一条路线进行测试: {self.route_name!r}")
+                else:
+                    logger.warning(
+                        "📋 路线列表为空，回退使用 ROUTE_NAME 环境变量或内置默认名称"
+                    )
+            else:
+                logger.warning(
+                    "⚠️  get_route_names 失败: %s，回退使用 ROUTE_NAME=%r",
+                    routes_data.get("msg"),
+                    self.route_name,
+                )
+
             pose_list_data = await client.call("get_pose_list_in_current_submap")
             if pose_list_data.get("success"):
                 self.pose_list = pose_list_data["keys"]
@@ -128,22 +147,36 @@ class SimplePatrolClient:
 
             route_waypoints = None
             if self.route_name:
-                logger.info(f"📌 配置了路线名称: {self.route_name}, 尝试从服务器获取对应路线")
+                logger.info(f"📌 拉取路线详情: {self.route_name!r}")
                 try:
                     route_data = await client.call(
                         "get_route", {"route_name": self.route_name}
                     )
                     if route_data.get("success") and route_data.get("waypoints"):
                         route_waypoints = route_data.get("waypoints")
-                        logger.info(f"✅ 获取到路线 {self.route_name}, waypoints={len(route_waypoints)}")
+                        logger.info(
+                            f"✅ 路线 {self.route_name} 共 {len(route_waypoints)} 个途经点"
+                        )
                     else:
-                        logger.warning(f"无法获取路线 {self.route_name}, 将使用默认点位列表")
+                        logger.warning(
+                            "无法获取路线 %r: %s",
+                            self.route_name,
+                            route_data.get("msg"),
+                        )
                 except Exception as e:
                     logger.warning(f"获取路线异常: {e}")
 
             if route_waypoints:
                 self.patrol_sequence = route_waypoints
-                logger.info(f"📋 使用服务器提供的路线点位: {self.patrol_sequence}")
+                logger.info(
+                    f"📋 本次测试点位序列 ({len(self.patrol_sequence)}): "
+                    f"{self.patrol_sequence}"
+                )
+            else:
+                logger.error(
+                    "❌ 未得到任何路线途经点（请检查地图 multifloor 是否配置 routes）"
+                )
+                return False
 
             logger.info("🔍 检查服务器连接和机器人状态...")
             status_data = await client.call("get_status")
