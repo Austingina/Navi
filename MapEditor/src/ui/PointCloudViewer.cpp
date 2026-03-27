@@ -65,6 +65,8 @@ PointCloudViewer::~PointCloudViewer() {
     markerVBO_.destroy();
     markerEmphasisVAO_.destroy();
     markerEmphasisVBO_.destroy();
+    semanticArrowVAO_.destroy();
+    semanticArrowVBO_.destroy();
     gridVAO_.destroy();
     gridVBO_.destroy();
     axisVAO_.destroy();
@@ -206,6 +208,18 @@ void PointCloudViewer::paintGL() {
             glDrawArrays(GL_POINTS, 0, markerEmphasisCount_);
             markerEmphasisVAO_.release();
         }
+    }
+
+    // 语义点朝向箭头 (GL_LINES)：局部 +X 为箭头方向，与机器人/地图常用前进方向一致
+    if (showMarkers_ && semanticArrowVertexCount_ >= 2) {
+        QMatrix4x4 mvp = proj * view;
+        cloudShader_->setUniformValue("uMVP", mvp);
+        cloudShader_->setUniformValue("uDrawMode", 0);
+        glLineWidth(2.5f);
+        semanticArrowVAO_.bind();
+        glDrawArrays(GL_LINES, 0, semanticArrowVertexCount_);
+        semanticArrowVAO_.release();
+        glLineWidth(1.0f);
     }
 
     // 绘制路线折线 (GL_LINE_STRIP → uDrawMode=0)
@@ -424,6 +438,36 @@ void PointCloudViewer::updateMarkers(const QVector<MarkerVertex>& markers,
     }
 
     uploadMarkerGlBuffers();
+
+    doneCurrent();
+    update();
+}
+
+void PointCloudViewer::updateSemanticArrows(const QVector<MarkerVertex>& lineVertices) {
+    makeCurrent();
+
+    if (!semanticArrowVAO_.isCreated()) semanticArrowVAO_.create();
+    if (!semanticArrowVBO_.isCreated()) semanticArrowVBO_.create();
+
+    semanticArrowVertexCount_ = lineVertices.size();
+    if (semanticArrowVertexCount_ < 2) {
+        semanticArrowVertexCount_ = 0;
+        doneCurrent();
+        update();
+        return;
+    }
+
+    semanticArrowVAO_.bind();
+    semanticArrowVBO_.bind();
+    semanticArrowVBO_.allocate(lineVertices.constData(),
+                               semanticArrowVertexCount_ * sizeof(MarkerVertex));
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(MarkerVertex), nullptr);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(MarkerVertex),
+                          reinterpret_cast<void*>(3 * sizeof(float)));
+    semanticArrowVBO_.release();
+    semanticArrowVAO_.release();
 
     doneCurrent();
     update();

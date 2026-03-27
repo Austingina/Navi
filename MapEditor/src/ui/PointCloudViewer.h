@@ -75,6 +75,9 @@ public:
                        const QVector<quint8>& markerEmphasis = {});
     void setMarkersVisible(bool v) { showMarkers_ = v; update(); }
 
+    /// 语义点朝向箭头 (世界系 GL_LINES，与语义点显示开关一致，由 MainWindow 刷新)
+    void updateSemanticArrows(const QVector<MarkerVertex>& lineVertices);
+
     // ── 路线折线管理 ─────────────────────────────────────────────────
     void updateRouteLines(const QString& routeName,
                           const QVector<MarkerVertex>& vertices);
@@ -147,6 +150,9 @@ private:
     QVector<MarkerInfo>      markerInfos_;   // 标记点元数据
     QVector<MarkerVertex>    markerVertices_; // 当前上传到 GPU 的标记顶点数据
     QVector<quint8>        markerEmphasis_; // 与 markerVertices_ 等长，非 0 = 大点
+    QOpenGLVertexArrayObject semanticArrowVAO_;
+    QOpenGLBuffer            semanticArrowVBO_{QOpenGLBuffer::VertexBuffer};
+    int                      semanticArrowVertexCount_ = 0;
     // 拖拽状态
     bool                     leftPressed_ = false;
     bool                     dragging_ = false;

@@ -14,7 +14,46 @@
 #include <QDialog>
 #include <QPushButton>
 
+#include <Eigen/Geometry>
+
 namespace me {
+
+namespace {
+
+/// 在 lines 中追加一段 GL_LINES 箭头：主线 + 箭头两翼；forwardWorld 为指向方向（不必已单位化）
+void appendSemanticArrowLines(QVector<MarkerVertex>&        lines,
+                              const Eigen::Vector3d&        baseWorld,
+                              const Eigen::Vector3d&        forwardWorld,
+                              float                         totalLen,
+                              float                         headLen,
+                              float                         headWidth,
+                              float                         r,
+                              float                         g,
+                              float                         b) {
+    Eigen::Vector3d fwd = forwardWorld;
+    const double    n   = fwd.norm();
+    if (n < 1e-9) return;
+    fwd /= n;
+    Eigen::Vector3d worldUp(0, 0, 1);
+    Eigen::Vector3d side = fwd.cross(worldUp);
+    if (side.norm() < 1e-6) side = fwd.cross(Eigen::Vector3d(0, 1, 0));
+    side.normalize();
+
+    const Eigen::Vector3d tip  = baseWorld + totalLen * fwd;
+    const Eigen::Vector3d neck = baseWorld + (totalLen - headLen) * fwd;
+
+    auto seg = [&](const Eigen::Vector3d& p0, const Eigen::Vector3d& p1) {
+        lines.append(MarkerVertex{(float)p0.x(), (float)p0.y(), (float)p0.z(), r, g, b});
+        lines.append(MarkerVertex{(float)p1.x(), (float)p1.y(), (float)p1.z(), r, g, b});
+    };
+    seg(baseWorld, neck);
+    const Eigen::Vector3d wingA = tip - headLen * fwd + headWidth * side;
+    const Eigen::Vector3d wingB = tip - headLen * fwd - headWidth * side;
+    seg(tip, wingA);
+    seg(tip, wingB);
+}
+
+} // namespace
 
 // ═══════════════════════════════════════════════════════════════════════
 //  默认颜色表
@@ -283,6 +322,11 @@ void MainWindow::refreshMarkers() {
     QVector<MarkerVertex> markers;
     QVector<MarkerInfo>   markerInfos;
     QVector<quint8>       markerEmphasis;
+    QVector<MarkerVertex> arrowLines;
+
+    constexpr float kArrowTotalLen   = 0.85f;
+    constexpr float kArrowHeadLen    = 0.25f;
+    constexpr float kArrowHeadWidth  = 0.14f;
 
     for (const auto& id : project_.submapIds()) {
         auto* sm = project_.submap(id);
@@ -304,6 +348,14 @@ void MainWindow::refreshMarkers() {
                     markerInfos.append({it.key(), id, "semantic",
                                         QVector3D((float)pw.x(), (float)pw.y(), (float)pw.z())});
                     markerEmphasis.append(selected ? quint8(1) : quint8(0));
+
+                    Eigen::Matrix4d Tworld = T * pose.toMatrix();
+                    Eigen::Vector3d baseW(Tworld(0, 3), Tworld(1, 3), Tworld(2, 3));
+                    Eigen::Matrix3d Rw = Tworld.block<3, 3>(0, 0);
+                    Eigen::Vector3d forwardW = Rw * Eigen::Vector3d(1, 0, 0);
+                    appendSemanticArrowLines(arrowLines, baseW, forwardW,
+                                             kArrowTotalLen, kArrowHeadLen, kArrowHeadWidth,
+                                             r, g, b);
                 }
             }
         }
@@ -330,6 +382,7 @@ void MainWindow::refreshMarkers() {
     }
 
     viewer_->updateMarkers(markers, markerInfos, markerEmphasis);
+    viewer_->updateSemanticArrows(arrowLines);
 }
 
 // ═══════════════════════════════════════════════════════════════════════
