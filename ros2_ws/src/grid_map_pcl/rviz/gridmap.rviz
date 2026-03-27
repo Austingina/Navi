@@ -9,6 +9,7 @@ Panels:
         - /GridMap1
         - /TF1/Frames1
         - /TF1/Tree1
+        - /Map2
       Splitter Ratio: 0.5
     Tree Height: 655
   - Class: rviz_common/Selection
@@ -151,9 +152,9 @@ Visualization Manager:
       Value: true
     - Alpha: 0.699999988079071
       Class: rviz_default_plugins/Map
-      Color Scheme: map
+      Color Scheme: costmap
       Draw Behind: false
-      Enabled: true
+      Enabled: false
       Name: Map
       Topic:
         Depth: 5
@@ -169,7 +170,7 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /global_costmap/costmap_updates
       Use Timestamp: false
-      Value: true
+      Value: false
     - Alpha: 0.699999988079071
       Class: rviz_default_plugins/Map
       Color Scheme: map
@@ -239,7 +240,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 138.38336181640625
+      Distance: 8.170090675354004
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -254,10 +255,10 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 1.435397744178772
+      Pitch: 1.5697963237762451
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 6.243585109710693
+      Yaw: 1.5003995895385742
     Saved: ~
 Window Geometry:
   Displays:
