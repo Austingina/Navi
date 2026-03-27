@@ -40,6 +40,7 @@ private slots:
     void onRouteVisibilityChanged(const QString& routeName, bool visible);
     void onRouteWaypointInserted(const QString& routeName, const QString& submapId,
                                  const QString& pointName, int insertIndex);
+    void onRouteWaypointRemoveRequested(const QString& routeName, int waypointIndex);
 
     void onAddSubmap();
     void onAddRoute();

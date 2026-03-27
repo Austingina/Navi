@@ -77,6 +77,7 @@ signals:
                                const QString& submapId,
                                const QString& pointName,
                                int insertIndex);
+    void routeWaypointRemoveRequested(const QString& routeName, int waypointIndex);
 
 private slots:
     void onItemClicked(QTreeWidgetItem* item, int column);

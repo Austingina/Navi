@@ -431,6 +431,19 @@ void SubmapPanel::onContextMenu(const QPoint& pos) {
         });
         break;
     }
+    case TypeRouteWaypoint: {
+        auto* routeItem = item->parent();
+        if (!routeItem || routeItem->data(0, RoleType).toInt() != TypeRoute) {
+            return;
+        }
+        QString rName = routeItem->data(0, RoleRouteName).toString();
+        int wpIdx = routeItem->indexOfChild(item);
+        if (wpIdx < 0) return;
+        menu.addAction("🗑️ 删除此途经点", [this, rName, wpIdx]() {
+            emit routeWaypointRemoveRequested(rName, wpIdx);
+        });
+        break;
+    }
     default:
         return;
     }

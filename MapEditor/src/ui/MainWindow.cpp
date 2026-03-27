@@ -138,6 +138,8 @@ void MainWindow::connectSignals() {
             this, &MainWindow::onRouteVisibilityChanged);
     connect(submapPanel_, &SubmapPanel::routeWaypointInserted,
             this, &MainWindow::onRouteWaypointInserted);
+    connect(submapPanel_, &SubmapPanel::routeWaypointRemoveRequested,
+            this, &MainWindow::onRouteWaypointRemoveRequested);
 
     connect(submapPanel_, &SubmapPanel::addSubmapRequested,
             this, &MainWindow::onAddSubmap);
@@ -402,6 +404,24 @@ void MainWindow::onRouteWaypointInserted(const QString& routeName, const QString
     statusLabel_->setText(QString("已插入路线点: %1/%2 → %3 (位置 %4)")
                              .arg(submapId, pointName, routeName)
                              .arg(insertIndex + 1));
+}
+
+void MainWindow::onRouteWaypointRemoveRequested(const QString& routeName, int waypointIndex) {
+    auto* r = project_.route(routeName);
+    if (!r) return;
+    if (waypointIndex < 0 || waypointIndex >= r->waypoints.size()) return;
+
+    const auto& w = r->waypoints[waypointIndex];
+    r->waypoints.removeAt(waypointIndex);
+    project_.setDirty();
+    submapPanel_->rebuild(&project_);
+    submapPanel_->expandRoute(routeName);
+    refreshRouteLines();
+    statusLabel_->setText(QString("已从路线 %1 删除途经点 #%2 (%3 / %4)")
+                              .arg(routeName)
+                              .arg(waypointIndex + 1)
+                              .arg(w.submapId)
+                              .arg(w.semanticPoint));
 }
 
 // ═══════════════════════════════════════════════════════════════════════
