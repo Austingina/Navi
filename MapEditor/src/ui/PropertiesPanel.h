@@ -82,6 +82,7 @@ private:
     QDoubleSpinBox* spPx_ = nullptr;
     QDoubleSpinBox* spPy_ = nullptr;
     QDoubleSpinBox* spPz_ = nullptr;
+    QDoubleSpinBox* spYaw_ = nullptr; ///< 绕 Z 轴 yaw（度），与四元数双向同步
     QDoubleSpinBox* spOx_ = nullptr;
     QDoubleSpinBox* spOy_ = nullptr;
     QDoubleSpinBox* spOz_ = nullptr;
@@ -90,6 +91,10 @@ private:
 
     SubMap*  spSm_ = nullptr;
     QString  spCurrentName_;
+    bool     spOrientationSyncGuard_ = false;
+
+    void syncSemanticYawFromQuaternionSpins();
+    void syncSemanticQuaternionSpinsFromYaw();
 
     // ── Portal 页面 ──────────────────────────────────────────────────
     QWidget*        ptPage_ = nullptr;

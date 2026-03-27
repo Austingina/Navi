@@ -4,8 +4,41 @@
 #include <QScrollArea>
 #include <QMessageBox>
 #include <algorithm>
+#include <cmath>
+
+#include <Eigen/Geometry>
 
 namespace me {
+
+namespace {
+
+constexpr double kPi = 3.14159265358979323846;
+
+inline double wrapYawDeg(double deg) {
+    while (deg > 180.0) deg -= 360.0;
+    while (deg <= -180.0) deg += 360.0;
+    return deg;
+}
+
+/// Eigen eulerAngles(2,1,0)：先绕 Z、再 Y、再 X；返回的 [0] 为绕 Z 角（yaw）
+inline double quaternionYawRadZyx(const Eigen::Quaterniond& q) {
+    Eigen::Quaterniond qq = q.normalized();
+    Eigen::Vector3d    euler = qq.toRotationMatrix().eulerAngles(2, 1, 0);
+    return euler[0];
+}
+
+inline Eigen::Quaterniond quaternionWithYawZyxPreservingPitchRollRad(
+    double yawRad, const Eigen::Quaterniond& qCurrent) {
+    Eigen::Quaterniond qc = qCurrent.normalized();
+    Eigen::Vector3d    euler = qc.toRotationMatrix().eulerAngles(2, 1, 0);
+    Eigen::Matrix3d R =
+        Eigen::AngleAxisd(yawRad, Eigen::Vector3d::UnitZ()).toRotationMatrix() *
+        Eigen::AngleAxisd(euler[1], Eigen::Vector3d::UnitY()).toRotationMatrix() *
+        Eigen::AngleAxisd(euler[2], Eigen::Vector3d::UnitX()).toRotationMatrix();
+    return Eigen::Quaterniond(R).normalized();
+}
+
+} // namespace
 
 PropertiesPanel::PropertiesPanel(QWidget* parent) : QWidget(parent) {
     setupUI();
@@ -184,6 +217,9 @@ void PropertiesPanel::setupSemanticPointPage() {
     spType_ = new QComboBox();
     spType_->addItems({"single_pose", "multi_pose"});
     spPx_ = makeSpinBox(); spPy_ = makeSpinBox(); spPz_ = makeSpinBox();
+    spYaw_ = makeSpinBox(-180.0, 180.0, 2);
+    spYaw_->setSuffix(" °");
+    spYaw_->setToolTip("绕世界 Z 轴的 yaw（Z-Y-X 顺序中的 Z 角）。修改 yaw 会保留当前 pitch/roll 并更新四元数。");
     spOx_ = makeSpinBox(-1,1); spOy_ = makeSpinBox(-1,1);
     spOz_ = makeSpinBox(-1,1); spOw_ = makeSpinBox(-1,1);
 
@@ -192,6 +228,7 @@ void PropertiesPanel::setupSemanticPointPage() {
     form->addRow("position.x:", spPx_);
     form->addRow("position.y:", spPy_);
     form->addRow("position.z:", spPz_);
+    form->addRow("yaw:", spYaw_);
     form->addRow("orient.x:", spOx_);
     form->addRow("orient.y:", spOy_);
     form->addRow("orient.z:", spOz_);
@@ -209,6 +246,20 @@ void PropertiesPanel::setupSemanticPointPage() {
 
     auto* applyBtn = new QPushButton("应用修改");
     layout->addWidget(applyBtn);
+
+    auto wireQuatYawSync = [this]() {
+        connect(spOx_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+                this, &PropertiesPanel::syncSemanticYawFromQuaternionSpins);
+        connect(spOy_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+                this, &PropertiesPanel::syncSemanticYawFromQuaternionSpins);
+        connect(spOz_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+                this, &PropertiesPanel::syncSemanticYawFromQuaternionSpins);
+        connect(spOw_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+                this, &PropertiesPanel::syncSemanticYawFromQuaternionSpins);
+        connect(spYaw_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+                this, &PropertiesPanel::syncSemanticQuaternionSpinsFromYaw);
+    };
+    wireQuatYawSync();
 
     connect(applyBtn, &QPushButton::clicked, [this]() {
         if (!spSm_) return;
@@ -251,6 +302,42 @@ void PropertiesPanel::setupSemanticPointPage() {
     stack_->addWidget(spPage_);
 }
 
+void PropertiesPanel::syncSemanticYawFromQuaternionSpins() {
+    if (!spYaw_ || !spOx_ || spOrientationSyncGuard_) return;
+    spOrientationSyncGuard_ = true;
+    Eigen::Quaterniond q(spOw_->value(), spOx_->value(), spOy_->value(), spOz_->value());
+    if (q.squaredNorm() < 1e-20) q = Eigen::Quaterniond::Identity();
+    else q.normalize();
+    const double yawDeg = wrapYawDeg(quaternionYawRadZyx(q) * 180.0 / kPi);
+    spYaw_->blockSignals(true);
+    spYaw_->setValue(yawDeg);
+    spYaw_->blockSignals(false);
+    spOrientationSyncGuard_ = false;
+}
+
+void PropertiesPanel::syncSemanticQuaternionSpinsFromYaw() {
+    if (!spYaw_ || !spOx_ || spOrientationSyncGuard_) return;
+    spOrientationSyncGuard_ = true;
+    Eigen::Quaterniond q(spOw_->value(), spOx_->value(), spOy_->value(), spOz_->value());
+    if (q.squaredNorm() < 1e-20) q = Eigen::Quaterniond::Identity();
+    else q.normalize();
+    const double yawRad = spYaw_->value() * kPi / 180.0;
+    Eigen::Quaterniond qn = quaternionWithYawZyxPreservingPitchRollRad(yawRad, q);
+    spOx_->blockSignals(true);
+    spOy_->blockSignals(true);
+    spOz_->blockSignals(true);
+    spOw_->blockSignals(true);
+    spOx_->setValue(qn.x());
+    spOy_->setValue(qn.y());
+    spOz_->setValue(qn.z());
+    spOw_->setValue(qn.w());
+    spOw_->blockSignals(false);
+    spOz_->blockSignals(false);
+    spOy_->blockSignals(false);
+    spOx_->blockSignals(false);
+    spOrientationSyncGuard_ = false;
+}
+
 void PropertiesPanel::beginNewSemanticPoint(SubMap* sm) {
     if (!sm) { clear(); return; }
     spSm_ = sm;
@@ -264,6 +351,7 @@ void PropertiesPanel::beginNewSemanticPoint(SubMap* sm) {
     spOy_->setValue(0.0);
     spOz_->setValue(0.0);
     spOw_->setValue(1.0);
+    syncSemanticYawFromQuaternionSpins();
     stack_->setCurrentIndex(2);
 }
 
@@ -293,7 +381,16 @@ void PropertiesPanel::showSemanticPointProperties(SubMap* sm, const QString& poi
         spOy_->setValue(pose.orientation.y());
         spOz_->setValue(pose.orientation.z());
         spOw_->setValue(pose.orientation.w());
+    } else {
+        spPx_->setValue(0.0);
+        spPy_->setValue(0.0);
+        spPz_->setValue(0.0);
+        spOx_->setValue(0.0);
+        spOy_->setValue(0.0);
+        spOz_->setValue(0.0);
+        spOw_->setValue(1.0);
     }
+    syncSemanticYawFromQuaternionSpins();
 
     stack_->setCurrentIndex(2);
 }
