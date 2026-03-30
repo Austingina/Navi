@@ -309,60 +309,73 @@ class SimplePatrolClient:
         xy_tolerance: float = 0.6,
         yaw_tolerance: float = 3.14,
     ) -> Dict[str, Any]:
-        """等待到达目标点，支持空格键暂停/恢复"""
-        start_time = time.time()
-        paused_duration = 0.0
-        pause_start: Optional[float] = None
+        """等待到达目标点，支持空格键暂停/恢复。单轮超时后自动再等待一轮（共最多 2 轮）。"""
+        last_result: Dict[str, Any] = {"success": False, "msg": "等待超时或未到达"}
 
-        self.is_paused = False
+        for attempt in range(2):
+            start_time = time.time()
+            paused_duration = 0.0
+            pause_start: Optional[float] = None
 
-        with KeyboardHandler() as kb:
-            while True:
-                elapsed = time.time() - start_time - paused_duration
-                if elapsed >= timeout:
-                    break
+            self.is_paused = False
 
-                key = kb.check_key()
-                if key == " ":
-                    if not self.is_paused:
-                        self.is_paused = True
-                        pause_start = time.time()
-                        logger.info("⏸️  [空格键] 导航已暂停，再次按空格键继续...")
-                        pause_data = await client.call("pause_navigation")
-                        if not pause_data.get("success"):
-                            logger.warning(f"暂停失败: {pause_data.get('msg')}")
-                    else:
-                        self.is_paused = False
-                        if pause_start is not None:
-                            paused_duration += time.time() - pause_start
-                            pause_start = None
-                        logger.info("▶️  [空格键] 导航已恢复...")
-                        resume_data = await client.call("resume_navigation")
-                        if not resume_data.get("success"):
-                            logger.warning(f"恢复失败: {resume_data.get('msg')}")
+            with KeyboardHandler() as kb:
+                while True:
+                    elapsed = time.time() - start_time - paused_duration
+                    if elapsed >= timeout:
+                        break
 
-                if self.is_paused:
-                    await asyncio.sleep(0.2)
-                    continue
+                    key = kb.check_key()
+                    if key == " ":
+                        if not self.is_paused:
+                            self.is_paused = True
+                            pause_start = time.time()
+                            logger.info("⏸️  [空格键] 导航已暂停，再次按空格键继续...")
+                            pause_data = await client.call("pause_navigation")
+                            if not pause_data.get("success"):
+                                logger.warning(f"暂停失败: {pause_data.get('msg')}")
+                        else:
+                            self.is_paused = False
+                            if pause_start is not None:
+                                paused_duration += time.time() - pause_start
+                                pause_start = None
+                            logger.info("▶️  [空格键] 导航已恢复...")
+                            resume_data = await client.call("resume_navigation")
+                            if not resume_data.get("success"):
+                                logger.warning(f"恢复失败: {resume_data.get('msg')}")
 
-                try:
-                    wait_data = await client.call(
-                        "wait_goal_reached",
-                        {
-                            "target": waypoint,
-                            "timeout": 0.5,
-                            "xy_tolerance": xy_tolerance,
-                            "yaw_tolerance": yaw_tolerance,
-                        },
-                    )
-                    if wait_data.get("success"):
-                        return wait_data
-                except Exception as e:
-                    logger.debug(f"等待检查异常: {e}")
+                    if self.is_paused:
+                        await asyncio.sleep(0.2)
+                        continue
 
-                await asyncio.sleep(0.1)
+                    try:
+                        wait_data = await client.call(
+                            "wait_goal_reached",
+                            {
+                                "target": waypoint,
+                                "timeout": 0.5,
+                                "xy_tolerance": xy_tolerance,
+                                "yaw_tolerance": yaw_tolerance,
+                            },
+                        )
+                        if wait_data.get("success"):
+                            return wait_data
+                        if wait_data.get("nav_failed"):
+                            return wait_data
+                    except Exception as e:
+                        logger.debug(f"等待检查异常: {e}")
 
-        return {"success": False, "msg": "等待超时或未到达"}
+                    await asyncio.sleep(0.1)
+
+            last_result = {"success": False, "msg": "等待超时或未到达"}
+            if attempt == 0:
+                logger.warning(
+                    "⏳ 目标 %s 本轮等待超时，重试一轮 (第 2/2 轮，每轮 %.0fs)...",
+                    waypoint,
+                    timeout,
+                )
+
+        return last_result
 
     def generate_report(self, success_count: int, total_count: int, total_time: float) -> None:
         logger.info(f"\n{'=' * 60}")
