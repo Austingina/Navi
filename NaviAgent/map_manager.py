@@ -131,7 +131,7 @@ class MapManager:
         - "multi_pose": 多位姿点；需使用 `set_goal_by_multipose` 来依次导航到各个位姿。
         - "elevator_call": 电梯呼叫点；机器人到达该点后应等待外部 agent 执行呼叫电梯的动作。
         - "elevator_wait": 电梯等待点；机器人到达该点后应等待外部 agent 确认电梯已到达且车门已打开。
-        - "elevator_in": 进梯后/新楼层落位点；服务端 `wait_goal_reached` 在到达后会等待约 120s 供重定位收敛。
+        - "elevator_in": 进梯后/新楼层落位点；`wait_goal_reached` 在到达后轮询 map 定位（`get_status.localized`），就绪即继续。
         """
         submap_id = submap_id or self.current_submap
         semantic_points = self.get_semantic_points_in_submap(submap_id)

@@ -355,6 +355,10 @@ class NavNode(Node):
         except Exception as e:
             self.get_logger().error(f"更新机器人位姿时出错: {e}")
 
+    def is_map_localized(self) -> bool:
+        """map→base_link TF 连续可用且有位姿缓存（与 get_status 中 localized 含义一致）。"""
+        return bool(self.tf_ready and self.current_pose is not None)
+
     def chassis_speed_callback(self, msg: TwistStamped):
         """
         底盘速度反馈回调函数

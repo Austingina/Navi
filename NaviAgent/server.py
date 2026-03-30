@@ -22,8 +22,8 @@ import argparse  # 添加在文件顶部
 # 加载地图配置文件的函数
 # 直接在此定义 load_intent_pose_map，兼容 intent_pose_map.json 的多种结构
 
-# elevator_in 语义点：到达后在本接口内额外等待，便于切换子地图后重定位收敛
-ELEVATOR_IN_POST_ARRIVAL_WAIT_SEC = 120.0
+# elevator_in：到达后轮询定位就绪；超过此时长仍继续（兜底）
+ELEVATOR_IN_RELOC_MAX_WAIT_SEC = 120.0
 
 # 导航工具管理器类
 class NavigationToolManager:
@@ -156,7 +156,7 @@ class NavigationToolManager:
             - 适用于 `type` 为 `single_pose` 的点位；调用此接口会使用普通导航下发目标。
             - 如果点位 `type` 为 `elevator_call`：机器人到达该点后应等待 agent 执行呼叫电梯的操作（本接口只负责下发导航）。
             - 如果点位 `type` 为 `elevator_wait`：机器人到达该点后应等待 agent 确认电梯已经到达并开门。
-            - 如果点位 `type` 为 `elevator_in`：`wait_goal_reached` 在判定到达后会自动等待约 120s，便于切换地图后重定位形成。
+            - 如果点位 `type` 为 `elevator_in`：`wait_goal_reached` 在判定到达后会轮询定位（与 `get_status` 的 `localized`），就绪即继续，最长约 `ELEVATOR_IN_RELOC_MAX_WAIT_SEC` 秒。
 
             返回:
             Dict: 包含操作结果的字典
@@ -529,7 +529,7 @@ class NavigationToolManager:
             - "multi_pose": 多位姿点；需使用 `set_goal_by_multipose` 来依次导航到各个位姿。
             - "elevator_call": 电梯呼叫点；机器人到达该点后应等待外部 agent 执行呼叫电梯的动作。
             - "elevator_wait": 电梯等待点；机器人到达该点后应等待外部 agent 确认电梯已到达且车门已打开。
-            - "elevator_in": 进梯/到达新楼层后点；`wait_goal_reached` 判定到达后会阻塞约 120s，便于重定位。
+            - "elevator_in": 进梯/到达新楼层后点；`wait_goal_reached` 到达后轮询 `localized`，就绪即继续。
             """
             try:
                 if not self.map_manager:
@@ -659,17 +659,17 @@ class NavigationToolManager:
                     init_pose_in_target = self.map_manager.get_init_pose_after_changemap(
                         current_pose, current_map_id, map_id
                     )
-                        # Ensure the z component is zeroed out (we want planar pose on target map)
-                        if init_pose_in_target and isinstance(init_pose_in_target, dict):
-                            pos = init_pose_in_target.get('position')
-                            if pos is None or not isinstance(pos, dict):
-                                init_pose_in_target['position'] = {'x': 0.0, 'y': 0.0, 'z': 0.0}
-                            else:
-                                # override z to 0 while preserving x/y if present
-                                try:
-                                    init_pose_in_target['position']['z'] = 0
-                                except Exception:
-                                    init_pose_in_target['position'] = {**init_pose_in_target.get('position', {}), 'z': 0}
+                    # Ensure the z component is zeroed out (we want planar pose on target map)
+                    if init_pose_in_target and isinstance(init_pose_in_target, dict):
+                        pos = init_pose_in_target.get('position')
+                        if pos is None or not isinstance(pos, dict):
+                            init_pose_in_target['position'] = {'x': 0.0, 'y': 0.0, 'z': 0.0}
+                        else:
+                            # override z to 0 while preserving x/y if present
+                            try:
+                                init_pose_in_target['position']['z'] = 0
+                            except Exception:
+                                init_pose_in_target['position'] = {**init_pose_in_target.get('position', {}), 'z': 0}
                 
                 # 获取目标地图的完整路径
                 target_map_path = self.map_manager.get_submap_full_map_path(map_id)
@@ -856,7 +856,7 @@ class NavigationToolManager:
             获取小车实时状态
             
             返回:
-            Dict: 包含位置、姿态、线速度、角速度的状态信息
+            Dict: success 为 True 时含 position、orientation，以及 localized（map→base_link TF 是否稳定可用）。
             """
             """获取小车实时状态"""
             try:
@@ -869,6 +869,7 @@ class NavigationToolManager:
                 # 构造状态信息字典
                 return {
                     "success": True,
+                    "localized": self.ros_node.is_map_localized(),
                     "position": {
                         "x": odom.pose.position.x,
                         "y": odom.pose.position.y,
@@ -879,7 +880,7 @@ class NavigationToolManager:
                         "y": odom.pose.orientation.y,
                         "z": odom.pose.orientation.z,
                         "w": odom.pose.orientation.w
-                    }
+                    },
                 }
             except Exception as e:
                 return {"success": False, "msg": f"获取状态失败: {str(e)}"}
@@ -908,12 +909,25 @@ class NavigationToolManager:
                     if status == self.ros_node.GOAL_CHECK_REACHED:
                         point_info = self.map_manager.get_pose_in_submap(target) if self.map_manager else None
                         if point_info and point_info.get("type") == "elevator_in":
+                            rel_deadline = time.time() + ELEVATOR_IN_RELOC_MAX_WAIT_SEC
                             logging.info(
-                                "elevator_in 点位 %s 已到达，等待 %.0fs 供重定位收敛（切换子地图后）",
+                                "elevator_in 点位 %s 已到达，等待 map 定位就绪（如 get_status.localized），最长 %.0fs",
                                 target,
-                                ELEVATOR_IN_POST_ARRIVAL_WAIT_SEC,
+                                ELEVATOR_IN_RELOC_MAX_WAIT_SEC,
                             )
-                            await asyncio.sleep(ELEVATOR_IN_POST_ARRIVAL_WAIT_SEC)
+                            while time.time() < rel_deadline:
+                                if self.ros_node.is_map_localized():
+                                    logging.info(
+                                        "elevator_in 点位 %s：定位已就绪，继续", target
+                                    )
+                                    break
+                                await asyncio.sleep(0.2)
+                            else:
+                                logging.warning(
+                                    "elevator_in 点位 %s：%.0fs 内 localized 仍未 true，继续下一步",
+                                    target,
+                                    ELEVATOR_IN_RELOC_MAX_WAIT_SEC,
+                                )
                         return {"success": True, "msg": f"已到达目标 {target}", "timestamp": int(time.time())}
                     if status == self.ros_node.GOAL_CHECK_FAILED:
                         return {
