@@ -157,6 +157,7 @@ float relocalize_xy_range = 5.0f;  // XY search range (±5m)
 float relocalize_z_range = 1.0f;   // Z search range (±1m)
 Eigen::Vector3f map_min_z(0.0f, 0.0f, 0.0f);  // Map min z from point cloud
 Eigen::Vector3f map_max_z(0.0f, 0.0f, 0.0f);  // Map max z from point cloud
+std::vector<Eigen::Vector3f> bbs_map_tar_points_full;  // Full map target for BBS (restore after hint crop)
 
 shared_ptr<Preprocess> p_pre(new Preprocess());
 shared_ptr<ImuProcess> p_imu(new ImuProcess());
@@ -838,6 +839,7 @@ bool load_map(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLas
     std::vector<Eigen::Vector3f> tar_points;
     for (auto p : ds_map_cloud->points)
         tar_points.push_back({p.x, p.y, p.z});
+    bbs_map_tar_points_full = tar_points;
     // Compute FPFH
     // teaser::FPFHEstimation fpfh;
     // scene_descriptors = fpfh.computeFPFHFeatures(tgt_cloud, voxel_size * 2, voxel_size * 5);
@@ -889,28 +891,47 @@ bool global_localize(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr
 
     double t0 = rclcpp::Clock().now().seconds();
 
-    // Set search range based on hint position if available
-    if (use_relocalize_hint) {
-        // Calculate z search range, clamp to map bounds
+    struct ScopedBbsFullMapRestore {
+        bool armed = false;
+        ~ScopedBbsFullMapRestore() {
+            if (!armed || bbs_map_tar_points_full.empty()) return;
+            bbs3d_ptr->set_tar_points(bbs_map_tar_points_full, static_cast<float>(bbs3d_min_level_res), bbs3d_max_level);
+            bbs3d_ptr->set_trans_search_range(bbs_map_tar_points_full);
+        }
+    } restore_full_bbs_tar;
+
+    // Hint relocalize: crop full map target by AABB, rebuild voxel maps on the crop, search only there
+    if (use_relocalize_hint && !bbs_map_tar_points_full.empty()) {
         float z_min = std::max(relocalize_hint_pos.z() - relocalize_z_range, map_min_z.z());
         float z_max = std::min(relocalize_hint_pos.z() + relocalize_z_range, map_max_z.z());
-        
+
         Eigen::Vector3f min_xyz(
             relocalize_hint_pos.x() - relocalize_xy_range,
             relocalize_hint_pos.y() - relocalize_xy_range,
-            z_min  // Use hint z with range
-        );
+            z_min);
         Eigen::Vector3f max_xyz(
             relocalize_hint_pos.x() + relocalize_xy_range,
             relocalize_hint_pos.y() + relocalize_xy_range,
-            z_max  // Use hint z with range
-        );
-        bbs3d_ptr->set_trans_search_range(min_xyz, max_xyz);
-        std::cout << "[Relocalize] Using hint position (" << relocalize_hint_pos.x() << ", " 
-                  << relocalize_hint_pos.y() << ", " << relocalize_hint_pos.z() << "), search range: xy=[" 
-                  << min_xyz.x() << "~" << max_xyz.x() << ", " 
-                  << min_xyz.y() << "~" << max_xyz.y() << "], z=[" 
-                  << min_xyz.z() << "~" << max_xyz.z() << "]" << std::endl;
+            z_max);
+
+        std::vector<Eigen::Vector3f> tar_cropped;
+        tar_cropped.reserve(bbs_map_tar_points_full.size());
+        for (const auto &p : bbs_map_tar_points_full) {
+            if (p.x() >= min_xyz.x() && p.x() <= max_xyz.x() && p.y() >= min_xyz.y() && p.y() <= max_xyz.y() &&
+                p.z() >= min_xyz.z() && p.z() <= max_xyz.z())
+                tar_cropped.push_back(p);
+        }
+        constexpr size_t k_min_cropped_tar_pts = 50;
+        std::cout << "[Relocalize] Using hint position (" << relocalize_hint_pos.x() << ", " << relocalize_hint_pos.y()
+                  << ", " << relocalize_hint_pos.z() << "), crop AABB: [" << min_xyz.transpose() << "] ~ [" << max_xyz.transpose()
+                  << "], cropped target pts: " << tar_cropped.size() << std::endl;
+        if (tar_cropped.size() >= k_min_cropped_tar_pts) {
+            bbs3d_ptr->set_tar_points(tar_cropped, static_cast<float>(bbs3d_min_level_res), bbs3d_max_level);
+            bbs3d_ptr->set_trans_search_range(tar_cropped);
+            restore_full_bbs_tar.armed = true;
+        } else {
+            std::cout << "[Relocalize] Cropped target too small; BBS uses full map this frame." << std::endl;
+        }
     }
 
     bbs3d_ptr->set_src_points(src_points);
