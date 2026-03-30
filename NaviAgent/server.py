@@ -654,6 +654,17 @@ class NavigationToolManager:
                     init_pose_in_target = self.map_manager.get_init_pose_after_changemap(
                         current_pose, current_map_id, map_id
                     )
+                        # Ensure the z component is zeroed out (we want planar pose on target map)
+                        if init_pose_in_target and isinstance(init_pose_in_target, dict):
+                            pos = init_pose_in_target.get('position')
+                            if pos is None or not isinstance(pos, dict):
+                                init_pose_in_target['position'] = {'x': 0.0, 'y': 0.0, 'z': 0.0}
+                            else:
+                                # override z to 0 while preserving x/y if present
+                                try:
+                                    init_pose_in_target['position']['z'] = 0
+                                except Exception:
+                                    init_pose_in_target['position'] = {**init_pose_in_target.get('position', {}), 'z': 0}
                 
                 # 获取目标地图的完整路径
                 target_map_path = self.map_manager.get_submap_full_map_path(map_id)
@@ -692,6 +703,12 @@ class NavigationToolManager:
                 
                 # 发布目标地图初始位姿到 /pose_in_target
                 if init_pose_in_target:
+                    # defensively force z to 0 before publish
+                    try:
+                        if isinstance(init_pose_in_target, dict) and 'position' in init_pose_in_target:
+                            init_pose_in_target['position']['z'] = 0
+                    except Exception:
+                        pass
                     self.ros_node.publish_pose_in_target(init_pose_in_target)
                 
                 result = {
@@ -706,6 +723,12 @@ class NavigationToolManager:
                 if current_pose:
                     result["pose_in_source"] = current_pose
                 if init_pose_in_target:
+                    # ensure returned pose has z==0
+                    try:
+                        if isinstance(init_pose_in_target, dict) and 'position' in init_pose_in_target:
+                            init_pose_in_target['position']['z'] = 0
+                    except Exception:
+                        pass
                     result["pose_in_target"] = init_pose_in_target
                 
                 return result
