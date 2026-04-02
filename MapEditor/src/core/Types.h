@@ -69,7 +69,7 @@ struct RigidTransform {
 // ── 语义点位 ─────────────────────────────────────────────────────────
 struct SemanticPoint {
     QString name;
-    QString type;            // single_pose | multi_pose | elevator_call | elevator_wait | elevator_in
+    QString type;            // single_pose | multi_pose | elevator_call | elevator_wait | elevator_in | elevator_out
     QVector<Pose> poses;     // single_pose 时仅一个元素
 };
 
