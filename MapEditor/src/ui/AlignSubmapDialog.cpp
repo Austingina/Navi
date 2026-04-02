@@ -35,19 +35,40 @@ void AlignSubmapDialog::setupUI() {
     layout->addWidget(desc);
 
     // ── 初始位置 ─────────────────────────────────────────────────────
-    auto* guessGroup = new QGroupBox("初始位置 (目标子地图)");
-    auto* guessLayout = new QHBoxLayout(guessGroup);
-    guessLayout->setContentsMargins(10, 20, 10, 10);
-    lblGuessPos_ = new QLabel("未选择");
-    auto* btnPick = new QPushButton("在地图上选择点");
-    guessLayout->addWidget(lblGuessPos_);
-    guessLayout->addWidget(btnPick);
-    layout->addWidget(guessGroup);
+    auto* guessGroup = new QGroupBox("初始位置 (目标子地图，可在选点后微调)");
+    auto* guessForm = new QFormLayout(guessGroup);
+    guessForm->setContentsMargins(10, 20, 10, 10);
 
-    setGuessPosition(Eigen::Vector3d(0.0, 0.0, 0.0));
+    auto makeCoordSpin = [](double init = 0.0) {
+        auto* sb = new QDoubleSpinBox();
+        sb->setRange(-9999.0, 9999.0);
+        sb->setDecimals(2);
+        sb->setSingleStep(0.1);
+        sb->setValue(init);
+        sb->setSuffix(" m");
+        return sb;
+    };
+    spinGuessX_ = makeCoordSpin(); spinGuessY_ = makeCoordSpin(); spinGuessZ_ = makeCoordSpin();
+    guessForm->addRow("X:", spinGuessX_);
+    guessForm->addRow("Y:", spinGuessY_);
+    guessForm->addRow("Z:", spinGuessZ_);
+
+    auto* btnPick = new QPushButton("在地图上选择点");
+    guessForm->addRow(btnPick);
+    layout->addWidget(guessGroup);
 
     connect(btnPick, &QPushButton::clicked, [this]() {
         emit requestPickPoint();
+    });
+
+    connect(spinGuessX_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [this](double v) {
+        guessPos_.x() = v; hasGuess_ = true;
+    });
+    connect(spinGuessY_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [this](double v) {
+        guessPos_.y() = v; hasGuess_ = true;
+    });
+    connect(spinGuessZ_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [this](double v) {
+        guessPos_.z() = v; hasGuess_ = true;
     });
 
     // ── 目标点云参数 ─────────────────────────────────────────────────
@@ -70,16 +91,36 @@ void AlignSubmapDialog::setupUI() {
     auto* srcForm = new QFormLayout(srcGroup);
     srcForm->setContentsMargins(10, 20, 10, 10);
 
-    // 裁剪中心选择
-    auto* centerLayout = new QHBoxLayout();
-    lblSrcCenter_ = new QLabel("(0.00, 0.00, 0.00)");
+    // 裁剪中心选择（选点后可微调）
+    auto makeSrcCoordSpin = [](double init = 0.0) {
+        auto* sb = new QDoubleSpinBox();
+        sb->setRange(-9999.0, 9999.0);
+        sb->setDecimals(2);
+        sb->setSingleStep(0.1);
+        sb->setValue(init);
+        sb->setSuffix(" m");
+        return sb;
+    };
+    spinSrcCenterX_ = makeSrcCoordSpin(); spinSrcCenterY_ = makeSrcCoordSpin(); spinSrcCenterZ_ = makeSrcCoordSpin();
+    srcForm->addRow("裁剪中心 X:", spinSrcCenterX_);
+    srcForm->addRow("裁剪中心 Y:", spinSrcCenterY_);
+    srcForm->addRow("裁剪中心 Z:", spinSrcCenterZ_);
+
     auto* btnPickSrcCenter = new QPushButton("在地图上选择裁剪中心");
-    centerLayout->addWidget(lblSrcCenter_);
-    centerLayout->addWidget(btnPickSrcCenter);
-    srcForm->addRow("裁剪中心:", centerLayout);
+    srcForm->addRow(btnPickSrcCenter);
 
     connect(btnPickSrcCenter, &QPushButton::clicked, [this]() {
         emit requestPickSourceCenter();
+    });
+
+    connect(spinSrcCenterX_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [this](double v) {
+        srcCropCenter_.x() = v;
+    });
+    connect(spinSrcCenterY_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [this](double v) {
+        srcCropCenter_.y() = v;
+    });
+    connect(spinSrcCenterZ_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [this](double v) {
+        srcCropCenter_.z() = v;
     });
 
     spinCropSize_ = new QDoubleSpinBox();
@@ -87,7 +128,7 @@ void AlignSubmapDialog::setupUI() {
     srcForm->addRow("裁剪范围 (立方):", spinCropSize_);
 
     spinBbsDownsample_ = new QDoubleSpinBox();
-    spinBbsDownsample_->setRange(0.05, 5.0); spinBbsDownsample_->setValue(0.5);
+    spinBbsDownsample_->setRange(0.1, 1.0); spinBbsDownsample_->setValue(0.1);
     spinBbsDownsample_->setDecimals(2); spinBbsDownsample_->setSingleStep(0.1);
     spinBbsDownsample_->setSuffix(" m");
     srcForm->addRow("BBS 降采样:", spinBbsDownsample_);
@@ -100,7 +141,7 @@ void AlignSubmapDialog::setupUI() {
     bbsForm->setContentsMargins(10, 20, 10, 10);
 
     spinBbsMinLevelRes_ = new QDoubleSpinBox();
-    spinBbsMinLevelRes_->setRange(0.1, 10.0); spinBbsMinLevelRes_->setValue(1.0);
+    spinBbsMinLevelRes_->setRange(0.1, 1.0); spinBbsMinLevelRes_->setValue(0.1);
     spinBbsMinLevelRes_->setDecimals(2); spinBbsMinLevelRes_->setSingleStep(0.1);
     spinBbsMinLevelRes_->setSuffix(" m");
     bbsForm->addRow("最细层分辨率:", spinBbsMinLevelRes_);
@@ -110,8 +151,8 @@ void AlignSubmapDialog::setupUI() {
     bbsForm->addRow("体素层级数:", spinBbsMaxLevel_);
 
     spinBbsScoreThresh_ = new QDoubleSpinBox();
-    spinBbsScoreThresh_->setRange(0.01, 1.0); spinBbsScoreThresh_->setValue(0.1);
-    spinBbsScoreThresh_->setDecimals(3); spinBbsScoreThresh_->setSingleStep(0.01);
+    spinBbsScoreThresh_->setRange(0.01, 1.0); spinBbsScoreThresh_->setValue(0.9);
+    spinBbsScoreThresh_->setDecimals(3); spinBbsScoreThresh_->setSingleStep(0.1);
     bbsForm->addRow("最低匹配得分:", spinBbsScoreThresh_);
 
     layout->addWidget(bbsGroup);
@@ -163,18 +204,28 @@ void AlignSubmapDialog::setupUI() {
 void AlignSubmapDialog::setGuessPosition(const Eigen::Vector3d& pos) {
     guessPos_ = pos;
     hasGuess_ = true;
-    lblGuessPos_->setText(QString("(%1, %2, %3)")
-                              .arg(pos.x(), 0, 'f', 2)
-                              .arg(pos.y(), 0, 'f', 2)
-                              .arg(pos.z(), 0, 'f', 2));
+    spinGuessX_->blockSignals(true);
+    spinGuessY_->blockSignals(true);
+    spinGuessZ_->blockSignals(true);
+    spinGuessX_->setValue(pos.x());
+    spinGuessY_->setValue(pos.y());
+    spinGuessZ_->setValue(pos.z());
+    spinGuessX_->blockSignals(false);
+    spinGuessY_->blockSignals(false);
+    spinGuessZ_->blockSignals(false);
 }
 
 void AlignSubmapDialog::setSrcCropCenter(const Eigen::Vector3d& localPos) {
     srcCropCenter_ = localPos;
-    lblSrcCenter_->setText(QString("(%1, %2, %3)")
-                               .arg(localPos.x(), 0, 'f', 2)
-                               .arg(localPos.y(), 0, 'f', 2)
-                               .arg(localPos.z(), 0, 'f', 2));
+    spinSrcCenterX_->blockSignals(true);
+    spinSrcCenterY_->blockSignals(true);
+    spinSrcCenterZ_->blockSignals(true);
+    spinSrcCenterX_->setValue(localPos.x());
+    spinSrcCenterY_->setValue(localPos.y());
+    spinSrcCenterZ_->setValue(localPos.z());
+    spinSrcCenterX_->blockSignals(false);
+    spinSrcCenterY_->blockSignals(false);
+    spinSrcCenterZ_->blockSignals(false);
 }
 
 void AlignSubmapDialog::updateProgress(int percent, const QString& msg) {

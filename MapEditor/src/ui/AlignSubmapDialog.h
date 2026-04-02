@@ -51,10 +51,14 @@ private:
     Eigen::Vector3d srcCropCenter_{0, 0, 0};
     bool        hasGuess_ = false;
 
-    // UI — 初始位置
-    QLabel*         lblGuessPos_ = nullptr;
-    // UI — 源点云裁剪中心
-    QLabel*         lblSrcCenter_ = nullptr;
+    // UI — 初始位置 (可手动微调)
+    QDoubleSpinBox* spinGuessX_ = nullptr;
+    QDoubleSpinBox* spinGuessY_ = nullptr;
+    QDoubleSpinBox* spinGuessZ_ = nullptr;
+    // UI — 源点云裁剪中心 (可手动微调)
+    QDoubleSpinBox* spinSrcCenterX_ = nullptr;
+    QDoubleSpinBox* spinSrcCenterY_ = nullptr;
+    QDoubleSpinBox* spinSrcCenterZ_ = nullptr;
 
     // UI — 目标点云组
     QDoubleSpinBox* spinSearchXY_ = nullptr;
