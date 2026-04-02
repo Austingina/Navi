@@ -198,21 +198,21 @@
                 "control point 1": {
                     "pose": {
                         "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
-                        "position": { "x": 4.8403, "y": -2.5575, "z": 0.0}
+                        "position": { "x": 10.9, "y": -2.6, "z": 0.0}
                     },
                     "type": "single_pose"
                 },
                 "control point2": {
                     "pose": {
-                        "orientation": { "w": 0.0, "x": 0.0, "y": 0.0, "z": 1.0},
-                        "position": { "x": 4.3399, "y": -2.6019, "z": 0.0}
+                        "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": 0.7071067811865476},
+                        "position": { "x": 11.2, "y": -4.6, "z": 0.0}
                     },
                     "type": "single_pose"
                 },
                 "elevator_in": {
                     "pose": {
                         "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
-                        "position": { "x": -2.3, "y": 0.5, "z": 0.0}
+                        "position": { "x": -2.5, "y": 0.5, "z": 0.0}
                     },
                     "type": "elevator_in"
                 },
@@ -247,7 +247,7 @@
                 "start": {
                     "pose": {
                         "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": 0.7071067811865476},
-                        "position": { "x": 0.9654, "y": -5.873, "z": 0.0}
+                        "position": { "x": 0.3, "y": -4.0, "z": 0.0}
                     },
                     "type": "single_pose"
                 }
