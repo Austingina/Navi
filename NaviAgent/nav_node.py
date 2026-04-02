@@ -6,6 +6,7 @@ from rclpy.executors import SingleThreadedExecutor  # 单线程执行器
 from geometry_msgs.msg import PoseStamped, Twist, TwistStamped  # 位姿消息类型和速度控制消息类型
 from nav_msgs.msg import OccupancyGrid, Path  # 占据网格、全局路径
 from std_msgs.msg import String  # 字符串消息类型
+from std_srvs.srv import SetBool  # 用于 lock_z_axis 服务
 from action_msgs.msg import GoalStatus, GoalStatusArray  # Action状态消息
 import logging  # 日志记录库
 import threading  # 线程处理库
@@ -948,3 +949,40 @@ class NavNode(Node):
         except Exception as e:
             self.get_logger().error(f'发布目标地图初始位姿失败: {e}')
             return False
+
+    def set_elevator_mode(self, enter: bool, timeout: float = 5.0) -> Tuple[bool, str]:
+        """
+        进入/退出电梯模式：调用 LIO 的 /lock_z_axis 服务锁定/解锁 Z 轴，防止电梯升降引起 Z 方向漂移。
+
+        :param enter: True=进入电梯模式（锁 Z），False=退出（解锁 Z）
+        :param timeout: 等待服务响应的超时（秒）
+        :return: (success, message)
+        """
+        srv_name = '/lock_z_axis'
+        cli = self.create_client(SetBool, srv_name)
+        if not cli.wait_for_service(timeout_sec=2.0):
+            msg = f'服务 {srv_name} 不可用'
+            self.get_logger().error(msg)
+            return False, msg
+
+        req = SetBool.Request()
+        req.data = enter
+        future = cli.call_async(req)
+
+        start = time.time()
+        while not future.done():
+            if time.time() - start > timeout:
+                msg = f'调用 {srv_name} 超时'
+                self.get_logger().error(msg)
+                return False, msg
+            time.sleep(0.05)
+
+        result = future.result()
+        if result is None:
+            msg = f'调用 {srv_name} 失败（无结果）'
+            self.get_logger().error(msg)
+            return False, msg
+
+        action = "进入" if enter else "退出"
+        self.get_logger().info(f'{action}电梯模式: success={result.success}, {result.message}')
+        return result.success, result.message

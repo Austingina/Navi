@@ -1075,6 +1075,34 @@ class NavigationToolManager:
             except Exception as e:
                 return {"success": False, "msg": f"获取地图失败: {str(e)}"}
 
+        def enter_elevator() -> Dict[str, Any]:
+            """
+            进入电梯模式：锁定 Z 轴，防止电梯升降导致定位漂移。
+            应在机器人进入电梯前调用。
+
+            返回:
+            Dict: {success, msg}
+            """
+            try:
+                ok, msg = self.ros_node.set_elevator_mode(enter=True)
+                return {"success": ok, "msg": msg}
+            except Exception as e:
+                return {"success": False, "msg": f"进入电梯模式失败: {str(e)}"}
+
+        def exit_elevator() -> Dict[str, Any]:
+            """
+            退出电梯模式：解锁 Z 轴，恢复正常 3D 里程计。
+            应在机器人出电梯后调用。
+
+            返回:
+            Dict: {success, msg}
+            """
+            try:
+                ok, msg = self.ros_node.set_elevator_mode(enter=False)
+                return {"success": ok, "msg": msg}
+            except Exception as e:
+                return {"success": False, "msg": f"退出电梯模式失败: {str(e)}"}
+
         self._handlers = {
             "set_goal_by_name": set_goal_by_name,
             "set_goal_by_multipose": set_goal_by_multipose,
@@ -1097,6 +1125,8 @@ class NavigationToolManager:
             "get_navigation_plan": get_navigation_plan,
             "get_nearest_point": get_nearest_point,
             "get_map": get_map,
+            "enter_elevator": enter_elevator,
+            "exit_elevator": exit_elevator,
         }
 
     async def call_method(self, method: str, params: Dict[str, Any]) -> Any:
