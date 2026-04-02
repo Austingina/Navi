@@ -757,8 +757,13 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
     if (effct_feat_num < 1)
     {
         ekfom_data.valid = false;
-        std::cerr << "No Effective Points! \n" << std::endl;
-        flg_first_scan = true;
+        if (lock_z_axis) {
+            RCLCPP_WARN(rclcpp::get_logger("laser_mapping"),
+                        "No Effective Points (elevator mode) — skip relocalization, keep IMU-only tracking");
+        } else {
+            std::cerr << "No Effective Points! \n" << std::endl;
+            flg_first_scan = true;
+        }
         return;
     }
 
