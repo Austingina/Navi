@@ -1063,6 +1063,26 @@ class NavigationToolManager:
             except Exception as e:
                 return {"success": False, "msg": f"获取地图失败: {str(e)}"}
 
+        def set_xy_goal_tolerance(tolerance: float) -> Dict[str, Any]:
+            """
+            临时修改 Nav2 controller_server 的 xy_goal_tolerance 参数。
+
+            参数:
+            tolerance: 新的位置容差（米），例如 0.3
+
+            返回:
+            Dict: {success, msg}
+            """
+            try:
+                ok, msg = self.ros_node.set_remote_parameter(
+                    '/controller_server',
+                    'general_goal_checker.xy_goal_tolerance',
+                    float(tolerance),
+                )
+                return {"success": ok, "msg": msg}
+            except Exception as e:
+                return {"success": False, "msg": f"设置 xy_goal_tolerance 失败: {str(e)}"}
+
         def enter_elevator() -> Dict[str, Any]:
             """
             进入电梯模式：锁定 Z 轴，防止电梯升降导致定位漂移。
@@ -1115,6 +1135,7 @@ class NavigationToolManager:
             "get_map": get_map,
             "enter_elevator": enter_elevator,
             "exit_elevator": exit_elevator,
+            "set_xy_goal_tolerance": set_xy_goal_tolerance,
         }
 
     async def call_method(self, method: str, params: Dict[str, Any]) -> Any:

@@ -1,7 +1,8 @@
 # ROS导航节点类
 import rclpy  # ROS2 Python客户端库
 from rclpy.node import Node  # ROS节点基类
-from rcl_interfaces.srv import GetParameters  # 参数服务
+from rcl_interfaces.srv import GetParameters, SetParameters  # 参数服务
+from rcl_interfaces.msg import Parameter as ParameterMsg, ParameterValue, ParameterType
 from rclpy.executors import SingleThreadedExecutor  # 单线程执行器
 from geometry_msgs.msg import PoseStamped, Twist, TwistStamped  # 位姿消息类型和速度控制消息类型
 from nav_msgs.msg import OccupancyGrid, Path  # 占据网格、全局路径
@@ -986,3 +987,67 @@ class NavNode(Node):
         action = "进入" if enter else "退出"
         self.get_logger().info(f'{action}电梯模式: success={result.success}, {result.message}')
         return result.success, result.message
+
+    def set_remote_parameter(
+        self,
+        node_name: str,
+        param_name: str,
+        value,
+        timeout: float = 3.0,
+    ) -> Tuple[bool, str]:
+        """
+        设置远程节点的 ROS2 参数。
+
+        :param node_name: 目标节点全名，如 '/controller_server'
+        :param param_name: 参数名，如 'general_goal_checker.xy_goal_tolerance'
+        :param value: int / float / bool / str
+        :param timeout: 超时秒数
+        :return: (success, message)
+        """
+        srv = f'{node_name}/set_parameters'
+        cli = self.create_client(SetParameters, srv)
+        if not cli.wait_for_service(timeout_sec=2.0):
+            msg = f'服务 {srv} 不可用'
+            self.get_logger().error(msg)
+            return False, msg
+
+        pv = ParameterValue()
+        if isinstance(value, bool):
+            pv.type = ParameterType.PARAMETER_BOOL
+            pv.bool_value = value
+        elif isinstance(value, int):
+            pv.type = ParameterType.PARAMETER_INTEGER
+            pv.integer_value = value
+        elif isinstance(value, float):
+            pv.type = ParameterType.PARAMETER_DOUBLE
+            pv.double_value = value
+        elif isinstance(value, str):
+            pv.type = ParameterType.PARAMETER_STRING
+            pv.string_value = value
+        else:
+            return False, f'不支持的参数类型: {type(value)}'
+
+        param_msg = ParameterMsg()
+        param_msg.name = param_name
+        param_msg.value = pv
+
+        req = SetParameters.Request()
+        req.parameters = [param_msg]
+        future = cli.call_async(req)
+
+        start = time.time()
+        while not future.done():
+            if time.time() - start > timeout:
+                return False, f'调用 {srv} 超时'
+            time.sleep(0.05)
+
+        result = future.result()
+        if result is None:
+            return False, f'调用 {srv} 失败（无结果）'
+
+        r = result.results[0]
+        if r.successful:
+            self.get_logger().info(f'已设置 {node_name} 参数 {param_name} = {value}')
+            return True, f'{param_name} = {value}'
+        else:
+            return False, f'设置失败: {r.reason}'
