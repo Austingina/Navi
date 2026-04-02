@@ -280,6 +280,19 @@ class SimplePatrolClient:
                             )
                             continue
 
+                point_meta = await client.call("get_pose_in_submap", {"name": target_name})
+                if point_meta.get("success") and point_meta.get("type") == "elevator_out":
+                    logger.info(
+                        f"🛗 目标 {target_name} 是 elevator_out 类型，"
+                        "请确认电梯已到达目标楼层并开门后输入 y 继续："
+                    )
+                    confirm = await asyncio.get_event_loop().run_in_executor(
+                        None, lambda: input("确认出电梯？(y/n): ").strip().lower()
+                    )
+                    if confirm != "y":
+                        logger.info(f"⏭️  用户取消，跳过 {target_name}")
+                        continue
+
                 logger.info(f"🎯 下发目标点: {target_name}")
                 goal_data = await client.call("set_goal_by_name", {"target": target_name})
 
@@ -301,7 +314,7 @@ class SimplePatrolClient:
                     "⏳ 等待到达目标点 (超时: 120秒)... [按空格键暂停/恢复]"
                 )
                 wait_data = await self.wait_goal_with_pause(
-                    client, target_name, timeout=120.0, xy_tolerance=0.1, yaw_tolerance=0.04
+                    client, target_name, timeout=120.0, xy_tolerance=0.1, yaw_tolerance=0.05
                 )
 
                 duration = time.time() - start_time
