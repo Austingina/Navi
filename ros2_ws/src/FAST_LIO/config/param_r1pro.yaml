@@ -92,7 +92,7 @@ controller_server:
     # Progress checker parameters
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker" # 进度检查插件类型
-      required_movement_radius: 0.2 # 所需移动半径（米）
+      required_movement_radius: 0.1 # 所需移动半径（米）
       movement_time_allowance: 10.0 # 允许移动时间（秒）
     # Goal checker parameters
     #precise_goal_checker:
@@ -103,7 +103,7 @@ controller_server:
     general_goal_checker:
       stateful: True # 是否有状态
       plugin: "nav2_controller::SimpleGoalChecker" # 目标检查插件类型
-      xy_goal_tolerance: 0.20 # 目标点xy容差（米）
+      xy_goal_tolerance: 0.60 # 目标点xy容差（米）
       yaw_goal_tolerance: 3.14 # 目标点yaw容差（弧度）
     # DWB parameters
     FollowPath:
