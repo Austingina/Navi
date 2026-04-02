@@ -1381,7 +1381,9 @@ private:
 
             /*** add the feature points to map kdtree ***/
             t3 = omp_get_wtime();
-            // map_incremental();
+            if (lock_z_axis) {
+                map_incremental();
+            }
             t5 = omp_get_wtime();
         
             /******* Publish points *******/
@@ -1431,14 +1433,31 @@ private:
             locked_z_pos = cur.pos(2);
             locked_z_vel = cur.vel(2);
             lock_z_axis = true;
+
+            PointVector empty_cloud;
+            ikdtree.Build(empty_cloud);
+            RCLCPP_INFO(this->get_logger(),
+                "Elevator mode ON: Z locked at %.3f, ikdtree cleared → historical frame accumulation",
+                locked_z_pos);
+
             res->success = true;
             res->message = "Z axis locked at pos.z=" + std::to_string(locked_z_pos);
-            RCLCPP_INFO(this->get_logger(), "Z axis locked at pos.z=%.3f (elevator mode ON)", locked_z_pos);
         } else {
             lock_z_axis = false;
+            RCLCPP_INFO(this->get_logger(), "Elevator mode OFF: reloading map into ikdtree...");
+
+            PointVector empty_cloud;
+            ikdtree.Build(empty_cloud);
+            if (!load_map(pubLaserCloudMap_, map_file_path)) {
+                RCLCPP_ERROR(this->get_logger(), "Failed to reload map: %s", map_file_path.c_str());
+                res->success = false;
+                res->message = "Z unlocked but map reload failed: " + map_file_path;
+                return;
+            }
+            RCLCPP_INFO(this->get_logger(), "Map reloaded, back to map-based localization");
+
             res->success = true;
-            res->message = "Z axis unlocked (elevator mode OFF)";
-            RCLCPP_INFO(this->get_logger(), "Z axis unlocked (elevator mode OFF)");
+            res->message = "Z axis unlocked, map reloaded";
         }
     }
 
