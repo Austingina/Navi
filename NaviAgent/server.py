@@ -154,7 +154,7 @@ class NavigationToolManager:
             - 适用于 `type` 为 `single_pose` 的点位；调用此接口会使用普通导航下发目标。
             - 如果点位 `type` 为 `elevator_call`：机器人到达该点后应等待 agent 执行呼叫电梯的操作（本接口只负责下发导航）。
             - 如果点位 `type` 为 `elevator_wait`：机器人到达该点后应等待 agent 确认电梯已经到达并开门。
-            - 如果点位 `type` 为 `elevator_in`：`wait_goal_reached` 在判定到达后自动调用 `enter_elevator`（锁定 Z 轴）。
+            - 如果点位 `type` 为 `elevator_in`：下发目标时自动调用 `enter_elevator`（锁定 Z 轴），在前往电梯途中即生效。
             - 如果点位 `type` 为 `elevator_out`：`wait_goal_reached` 在判定到达后自动调用 `exit_elevator`（解锁 Z 轴）。
 
             返回:
@@ -185,8 +185,12 @@ class NavigationToolManager:
                 pose.pose.orientation.z = pose_info["orientation"]["z"]
                 pose.pose.orientation.w = pose_info["orientation"]["w"]
                 
-                # 发布目标点
-                self.ros_node.publish_goal(pose,target)
+                point_info = self.map_manager.pose_map_current_submap[target]
+                if point_info.get("type") == "elevator_in":
+                    ok, emsg = self.ros_node.set_elevator_mode(enter=True)
+                    logging.info("前往 elevator_in 点位 %s，enter_elevator: %s %s", target, ok, emsg)
+
+                self.ros_node.publish_goal(pose, target)
                 return {"success": True, "msg": f"目标 {target} 已下发", "target": target}
             except Exception as e:
                 return {"success": False, "msg": f"设置目标失败: {str(e)}"}
@@ -528,7 +532,7 @@ class NavigationToolManager:
             - "multi_pose": 多位姿点；需使用 `set_goal_by_multipose` 来依次导航到各个位姿。
             - "elevator_call": 电梯呼叫点；机器人到达该点后应等待外部 agent 执行呼叫电梯的动作。
             - "elevator_wait": 电梯等待点；机器人到达该点后应等待外部 agent 确认电梯已到达且车门已打开。
-            - "elevator_in": 进梯点；`wait_goal_reached` 到达后自动调用 `enter_elevator`（锁 Z）。
+            - "elevator_in": 进梯点；`set_goal_by_name` 下发目标时自动调用 `enter_elevator`（锁 Z）。
             - "elevator_out": 出梯点；`wait_goal_reached` 到达后自动调用 `exit_elevator`（解锁 Z）。
             """
             try:
@@ -909,10 +913,7 @@ class NavigationToolManager:
                     if status == self.ros_node.GOAL_CHECK_REACHED:
                         point_info = self.map_manager.get_pose_in_submap(target) if self.map_manager else None
                         pt_type = point_info.get("type") if point_info else None
-                        if pt_type == "elevator_in":
-                            ok, msg = self.ros_node.set_elevator_mode(enter=True)
-                            logging.info("elevator_in 点位 %s 已到达，enter_elevator: %s %s", target, ok, msg)
-                        elif pt_type == "elevator_out":
+                        if pt_type == "elevator_out":
                             ok, msg = self.ros_node.set_elevator_mode(enter=False)
                             logging.info("elevator_out 点位 %s 已到达，exit_elevator: %s %s", target, ok, msg)
                         return {"success": True, "msg": f"已到达目标 {target}", "timestamp": int(time.time())}
