@@ -118,7 +118,10 @@ class NavNode(Node):
             # TF状态跟踪
             self.tf_ready = False  # TF是否可用（定位是否成功）
             self.tf_fail_count = 0  # TF连续失败计数
-            self.tf_fail_threshold = 10  # 连续失败多少次认为定位丢失
+            self.tf_fail_threshold = 3  # 连续失败多少次认为定位丢失
+            # 查询成功但 transform.stamp 落后此时钟超过该秒数时，认为可能是缓冲内旧 TF（换图后 LIO 暂停广播时常如此）
+            self._tf_stale_warn_sec = 1.5
+            self._last_stale_tf_warn_mono = 0.0  # time.monotonic()，节流 stale 警告
             
             # 底盘速度反馈订阅（用于检测卡住状态）
             self.chassis_speed = None  # 当前底盘速度反馈
@@ -301,6 +304,15 @@ class NavNode(Node):
             import traceback
             self.get_logger().error(f"详细错误: {traceback.format_exc()}")
 
+    def _on_relocalization_request(self, reason: str) -> None:
+        """换图/发初始位姿后：清定位标志，避免把旧 TF 当新定位；便于再次打出「TF定位成功」等日志。"""
+        self.tf_ready = False
+        self.tf_fail_count = 0
+        self.current_pose = None
+        self.get_logger().info(
+            f"{reason}：已清除位姿缓存并将定位判为未就绪，待 map→base_link 再次稳定。"
+        )
+
     def update_robot_pose(self):
         """
         定时更新机器人位姿（从tf获取）
@@ -313,6 +325,18 @@ class NavNode(Node):
                 rclpy.time.Time(),  # 获取最新的变换
                 timeout=rclpy.duration.Duration(seconds=0.1)
             )
+
+            now = self.get_clock().now()
+            stamp_tm = rclpy.time.Time.from_msg(transform.header.stamp)
+            stamp_age_sec = max(0.0, (now - stamp_tm).nanoseconds * 1e-9)
+            if stamp_age_sec > self._tf_stale_warn_sec:
+                mono = time.monotonic()
+                if mono - self._last_stale_tf_warn_mono >= 4.0:
+                    self._last_stale_tf_warn_mono = mono
+                    self.get_logger().warning(
+                        f"map→base_link 查询成功，但 TF 时间戳已落后约 {stamp_age_sec:.2f}s（tf2 仍可能返回缓冲中的旧变换）。"
+                        "换图后若 LIO 暂停发 TF，通常不会进入「无法获取tf变换」，除非整段 TF 链断裂。"
+                    )
             
             # 将Transform转换为PoseStamped格式（兼容原有代码）
             pose_stamped = PoseStamped()
@@ -342,8 +366,9 @@ class NavNode(Node):
                 self.get_logger().info("✓ TF定位成功，进入ready状态")
                 self.play_audio("success.mp3")
             
+        # 仅当 map→base_link 在 buffer 中无法求出（缺边、时间外推失败等）时才会抛出，与「缓冲里仍有旧变换」不同
         except TransformException as ex:
-            self.get_logger().debug(f"无法获取tf变换: {ex}")
+            self.get_logger().info(f"无法获取tf变换: {ex}")
             self.tf_fail_count += 1
             
             # 检测状态变化：从 ready 变为 not ready（连续失败超过阈值）
@@ -884,6 +909,7 @@ class NavNode(Node):
             msg.data = map_file_path
             self.change_map_pub.publish(msg)
             self.get_logger().info(f'已发送地图切换请求: {map_file_path}')
+            self._on_relocalization_request("已发送 change_map")
             return True
         except Exception as e:
             self.get_logger().error(f'发送地图切换请求失败: {e}')
@@ -917,6 +943,7 @@ class NavNode(Node):
             
             self.pose_in_target_pub.publish(msg)
             self.get_logger().info(f'已发布目标地图初始位姿: x={pos.get("x")}, y={pos.get("y")}')
+            self._on_relocalization_request("已发布 pose_in_target")
             return True
         except Exception as e:
             self.get_logger().error(f'发布目标地图初始位姿失败: {e}')
