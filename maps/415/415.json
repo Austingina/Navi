@@ -1,0 +1,340 @@
+{
+    "_comment": "多楼层地图配置文件 / Multi-floor map configuration",
+    "global": {
+        "default_submap": "2f"
+    },
+    "routes": {
+        "route01": {
+            "description": "",
+            "waypoints": [
+                {
+                    "semantic_point": "start",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "elevator_press",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "elevator_wait",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "elevator_in",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "elevator_out",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "control point 1",
+                    "submap": "6f"
+                },
+                {
+                    "semantic_point": "charge point",
+                    "submap": "6f"
+                },
+                {
+                    "semantic_point": "elevator_press",
+                    "submap": "6f"
+                },
+                {
+                    "semantic_point": "elevator_wait",
+                    "submap": "6f"
+                },
+                {
+                    "semantic_point": "elevator_in",
+                    "submap": "6f"
+                },
+                {
+                    "semantic_point": "elevator_out",
+                    "submap": "6f"
+                },
+                {
+                    "semantic_point": "control point 1",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "meetingroom_door",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "control point2",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "start",
+                    "submap": "2f"
+                }
+            ]
+        },
+        "route1": {
+            "description": "",
+            "waypoints": [
+                {
+                    "semantic_point": "control point 1",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "elevator_press",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "elevator_wait",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "elevator_in",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "elevator_in",
+                    "submap": "6f"
+                },
+                {
+                    "semantic_point": "elevator_out",
+                    "submap": "6f"
+                },
+                {
+                    "semantic_point": "control point 1",
+                    "submap": "6f"
+                },
+                {
+                    "semantic_point": "elevator_press",
+                    "submap": "6f"
+                },
+                {
+                    "semantic_point": "elevator_wait",
+                    "submap": "6f"
+                },
+                {
+                    "semantic_point": "elevator_in",
+                    "submap": "6f"
+                },
+                {
+                    "semantic_point": "elevator_in",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "elevator_out",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "control point 1",
+                    "submap": "2f"
+                }
+            ]
+        },
+        "route2": {
+            "description": "",
+            "waypoints": [
+            ]
+        },
+        "routeA": {
+            "description": "",
+            "waypoints": [
+                {
+                    "semantic_point": "control point 1",
+                    "submap": "6f"
+                },
+                {
+                    "semantic_point": "elevator_press",
+                    "submap": "6f"
+                },
+                {
+                    "semantic_point": "elevator_wait",
+                    "submap": "6f"
+                },
+                {
+                    "semantic_point": "elevator_in",
+                    "submap": "6f"
+                },
+                {
+                    "semantic_point": "elevator_in",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "elevator_out",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "control point 1",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "elevator_press",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "elevator_wait",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "elevator_in",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "elevator_in",
+                    "submap": "6f"
+                },
+                {
+                    "semantic_point": "elevator_out",
+                    "submap": "6f"
+                },
+                {
+                    "semantic_point": "control point 1",
+                    "submap": "6f"
+                }
+            ]
+        }
+    },
+    "submaps": {
+        "2f": {
+            "description": "",
+            "map_file": "416_2f.pcd",
+            "name": "",
+            "semantic_points": {
+                "control point 1": {
+                    "pose": {
+                        "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
+                        "position": { "x": 4.8403, "y": -2.5575, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "control point2": {
+                    "pose": {
+                        "orientation": { "w": 0.0, "x": 0.0, "y": 0.0, "z": 1.0},
+                        "position": { "x": 4.3399, "y": -2.6019, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "elevator_in": {
+                    "pose": {
+                        "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
+                        "position": { "x": -2.3, "y": 0.5, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "elevator_out": {
+                    "pose": {
+                        "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
+                        "position": { "x": 0.0, "y": 0.4, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "elevator_press": {
+                    "pose": {
+                        "orientation": { "w": 0.0, "x": 0.0, "y": 0.0, "z": 1.0},
+                        "position": { "x": -0.2, "y": 1.2, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "elevator_wait": {
+                    "pose": {
+                        "orientation": { "w": 0.0, "x": 0.0, "y": 0.0, "z": 1.0},
+                        "position": { "x": 0.0, "y": 0.4, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "meetingroom_door": {
+                    "pose": {
+                        "orientation": { "w": 0.0, "x": 0.0, "y": 0.0, "z": 1.0},
+                        "position": { "x": 7.7193, "y": -12.3384, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "start": {
+                    "pose": {
+                        "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": 0.7071067811865476},
+                        "position": { "x": 0.9654, "y": -5.873, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                }
+            },
+            "submap_portals": [
+                {
+                    "portal": "elevator_out",
+                    "submap": "6f"
+                }
+            ],
+            "transform": {
+                "rotation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
+                "translation": { "x": 0.0, "y": 0.0, "z": 0.0}
+            }
+        },
+        "6f": {
+            "description": "",
+            "map_file": "416_6f.pcd",
+            "name": "",
+            "semantic_points": {
+                "charge point": {
+                    "pose": {
+                        "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": 0.7071067811865476},
+                        "position": { "x": 25.0, "y": -4.3, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "control point 1": {
+                    "pose": {
+                        "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
+                        "position": { "x": 5.0, "y": 0.0, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "control point2": {
+                    "pose": {
+                        "orientation": { "w": 0.0, "x": 0.0, "y": 0.0, "z": 1.0},
+                        "position": { "x": 6.0, "y": 0.0, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "elevator_in": {
+                    "pose": {
+                        "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
+                        "position": { "x": -2.15, "y": -0.2, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "elevator_out": {
+                    "pose": {
+                        "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
+                        "position": { "x": -0.2, "y": -0.2, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "elevator_press": {
+                    "pose": {
+                        "orientation": { "w": 0.0, "x": 0.0, "y": 0.0, "z": 1.0},
+                        "position": { "x": -0.3, "y": 0.4, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "elevator_wait": {
+                    "pose": {
+                        "orientation": { "w": 0.0, "x": 0.0, "y": 0.0, "z": 1.0},
+                        "position": { "x": -0.2, "y": -0.2, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "start": {
+                    "pose": {
+                        "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": 0.7071067811865476},
+                        "position": { "x": 25.0, "y": -4.3, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                }
+            },
+            "submap_portals": [
+                {
+                    "portal": "elevator_out",
+                    "submap": "2f"
+                }
+            ],
+            "transform": {
+                "rotation": { "w": 0.9998217724002937, "x": 0.003321121914540473, "y": -0.004170978091330248, "z": 0.01811067434762856},
+                "translation": { "x": -0.2452586591243744, "y": 0.3702678680419922, "z": 15.460927963256836}
+            }
+        }
+    }
+}
