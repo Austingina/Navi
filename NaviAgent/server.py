@@ -22,8 +22,6 @@ import argparse  # 添加在文件顶部
 # 加载地图配置文件的函数
 # 直接在此定义 load_intent_pose_map，兼容 intent_pose_map.json 的多种结构
 
-# elevator_in：到达后轮询定位就绪；超过此时长仍继续（兜底）
-ELEVATOR_IN_RELOC_MAX_WAIT_SEC = 120.0
 
 # 导航工具管理器类
 class NavigationToolManager:
@@ -156,7 +154,8 @@ class NavigationToolManager:
             - 适用于 `type` 为 `single_pose` 的点位；调用此接口会使用普通导航下发目标。
             - 如果点位 `type` 为 `elevator_call`：机器人到达该点后应等待 agent 执行呼叫电梯的操作（本接口只负责下发导航）。
             - 如果点位 `type` 为 `elevator_wait`：机器人到达该点后应等待 agent 确认电梯已经到达并开门。
-            - 如果点位 `type` 为 `elevator_in`：`wait_goal_reached` 在判定到达后会轮询定位（与 `get_status` 的 `localized`），就绪即继续，最长约 `ELEVATOR_IN_RELOC_MAX_WAIT_SEC` 秒。
+            - 如果点位 `type` 为 `elevator_in`：`wait_goal_reached` 在判定到达后自动调用 `enter_elevator`（锁定 Z 轴）。
+            - 如果点位 `type` 为 `elevator_out`：`wait_goal_reached` 在判定到达后自动调用 `exit_elevator`（解锁 Z 轴）。
 
             返回:
             Dict: 包含操作结果的字典
@@ -529,7 +528,8 @@ class NavigationToolManager:
             - "multi_pose": 多位姿点；需使用 `set_goal_by_multipose` 来依次导航到各个位姿。
             - "elevator_call": 电梯呼叫点；机器人到达该点后应等待外部 agent 执行呼叫电梯的动作。
             - "elevator_wait": 电梯等待点；机器人到达该点后应等待外部 agent 确认电梯已到达且车门已打开。
-            - "elevator_in": 进梯/到达新楼层后点；`wait_goal_reached` 到达后轮询 `localized`，就绪即继续。
+            - "elevator_in": 进梯点；`wait_goal_reached` 到达后自动调用 `enter_elevator`（锁 Z）。
+            - "elevator_out": 出梯点；`wait_goal_reached` 到达后自动调用 `exit_elevator`（解锁 Z）。
             """
             try:
                 if not self.map_manager:
@@ -908,26 +908,13 @@ class NavigationToolManager:
                     status, fail_msg = self.ros_node.check_goal_reached(xy_tolerance, yaw_tolerance)
                     if status == self.ros_node.GOAL_CHECK_REACHED:
                         point_info = self.map_manager.get_pose_in_submap(target) if self.map_manager else None
-                        if point_info and point_info.get("type") == "elevator_in":
-                            rel_deadline = time.time() + ELEVATOR_IN_RELOC_MAX_WAIT_SEC
-                            logging.info(
-                                "elevator_in 点位 %s 已到达，等待 map 定位就绪（如 get_status.localized），最长 %.0fs",
-                                target,
-                                ELEVATOR_IN_RELOC_MAX_WAIT_SEC,
-                            )
-                            while time.time() < rel_deadline:
-                                if self.ros_node.is_map_localized():
-                                    logging.info(
-                                        "elevator_in 点位 %s：定位已就绪，继续", target
-                                    )
-                                    break
-                                await asyncio.sleep(0.2)
-                            else:
-                                logging.warning(
-                                    "elevator_in 点位 %s：%.0fs 内 localized 仍未 true，继续下一步",
-                                    target,
-                                    ELEVATOR_IN_RELOC_MAX_WAIT_SEC,
-                                )
+                        pt_type = point_info.get("type") if point_info else None
+                        if pt_type == "elevator_in":
+                            ok, msg = self.ros_node.set_elevator_mode(enter=True)
+                            logging.info("elevator_in 点位 %s 已到达，enter_elevator: %s %s", target, ok, msg)
+                        elif pt_type == "elevator_out":
+                            ok, msg = self.ros_node.set_elevator_mode(enter=False)
+                            logging.info("elevator_out 点位 %s 已到达，exit_elevator: %s %s", target, ok, msg)
                         return {"success": True, "msg": f"已到达目标 {target}", "timestamp": int(time.time())}
                     if status == self.ros_node.GOAL_CHECK_FAILED:
                         return {
