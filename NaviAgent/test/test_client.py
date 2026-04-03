@@ -282,13 +282,22 @@ class SimplePatrolClient:
 
                 point_meta = await client.call("get_pose_in_submap", {"pose_name": target_name})
                 pt_type = point_meta.get("point_info", {}).get("type") if point_meta.get("success") else None
-                if pt_type == "elevator_out":
-                    logger.info(
-                        f"🛗 目标 {target_name} 是 elevator_out 类型，"
-                        "请确认电梯已到达目标楼层并开门后输入 y 继续："
-                    )
+                if pt_type in {"elevator_out", "elevator_in"}:
+                    if pt_type == "elevator_out":
+                        prompt_msg = "确认出电梯？(y/n): "
+                        logger.info(
+                            f"🛗 目标 {target_name} 是 elevator_out 类型，"
+                            "请确认电梯已到达目标楼层并开门后输入 y 继续："
+                        )
+                    else:
+                        prompt_msg = "确认进电梯？(y/n): "
+                        logger.info(
+                            f"🛗 目标 {target_name} 是 elevator_in 类型，"
+                            "请确认电梯已到达且门已打开、可安全进梯后输入 y 继续："
+                        )
+
                     confirm = await asyncio.get_event_loop().run_in_executor(
-                        None, lambda: input("确认出电梯？(y/n): ").strip().lower()
+                        None, lambda: input(prompt_msg).strip().lower()
                     )
                     if confirm != "y":
                         logger.info(f"⏭️  用户取消，跳过 {target_name}")
