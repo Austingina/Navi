@@ -59,6 +59,7 @@
 #include <std_srvs/srv/trigger.hpp>
 #include <std_srvs/srv/set_bool.hpp>
 #include <std_msgs/msg/string.hpp>
+#include <std_msgs/msg/bool.hpp>
 #include <tf2_ros/transform_broadcaster.h>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <geometry_msgs/msg/vector3.hpp>
@@ -160,10 +161,21 @@ Eigen::Vector3f map_min_z(0.0f, 0.0f, 0.0f);  // Map min z from point cloud
 Eigen::Vector3f map_max_z(0.0f, 0.0f, 0.0f);  // Map max z from point cloud
 std::vector<Eigen::Vector3f> bbs_map_tar_points_full;  // Full map target for BBS (restore after hint crop)
 
-// Z 轴锁定（电梯模式）：锁定后每帧将 pos.z / vel.z 钳回开启时的值，防止电梯升降导致 IMU Z 方向漂移
-bool   lock_z_axis = false;
-double locked_z_pos = 0.0;
-double locked_z_vel = 0.0;
+// 电梯模式
+bool   elevator_mode      = false;   // 总开关（进入电梯后由服务打开）
+bool   elevator_z_moving  = false;   // 检测到 Z 加速度异常 → 电梯正在升降
+double locked_z_pos       = 0.0;     // 进入电梯时的 Z 位置（始终锁）
+double locked_z_vel       = 0.0;
+Eigen::Vector3d locked_xy_pos(0.0, 0.0, 0.0);  // 检测到升降时冻结的 XY+Z
+Eigen::Vector3d locked_xy_vel(0.0, 0.0, 0.0);
+
+// Z 加速度基线 & 检测参数
+double imu_az_baseline    = 0.0;     // 进入电梯时 IMU Z 加速度滑动均值（含重力）
+double imu_az_ema         = 0.0;     // 指数移动平均
+constexpr double AZ_EMA_ALPHA      = 0.05;   // EMA 平滑系数
+constexpr double AZ_TRIGGER_THRESH = 0.3;    // |ema - baseline| > 此值视为电梯升降 (m/s²)
+constexpr double AZ_RELEASE_THRESH = 0.1;    // 恢复到此值以下视为电梯停止
+rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr g_pub_elevator_moving;
 
 shared_ptr<Preprocess> p_pre(new Preprocess());
 shared_ptr<ImuProcess> p_imu(new ImuProcess());
@@ -395,9 +407,38 @@ void imu_cbk(const sensor_msgs::msg::Imu::UniquePtr msg_in)
     last_timestamp_imu = timestamp;
     
     imu_buffer.push_back(msg);
-    //std::cout << "IMU time: " << std::fixed << std::setprecision(10) << last_timestamp_imu << " imu_buffer.size() =" << imu_buffer.size() << std::endl;
     mtx_buffer.unlock();
     sig_buffer.notify_all();
+
+    if (elevator_mode) {
+        double az = msg->linear_acceleration.z;
+        imu_az_ema = AZ_EMA_ALPHA * az + (1.0 - AZ_EMA_ALPHA) * imu_az_ema;
+
+        if (!elevator_z_moving && std::fabs(imu_az_ema - imu_az_baseline) > AZ_TRIGGER_THRESH) {
+            elevator_z_moving = true;
+            state_ikfom cur = kf.get_x();
+            locked_xy_pos = cur.pos;
+            locked_xy_vel = cur.vel;
+            locked_xy_pos(2) = locked_z_pos;
+            locked_xy_vel(2) = locked_z_vel;
+            RCLCPP_WARN(rclcpp::get_logger("laser_mapping"),
+                "Elevator moving detected (az_ema=%.3f, baseline=%.3f, delta=%.3f) → XY locked",
+                imu_az_ema, imu_az_baseline, imu_az_ema - imu_az_baseline);
+            if (g_pub_elevator_moving) {
+                std_msgs::msg::Bool m; m.data = true;
+                g_pub_elevator_moving->publish(m);
+            }
+        } else if (elevator_z_moving && std::fabs(imu_az_ema - imu_az_baseline) < AZ_RELEASE_THRESH) {
+            elevator_z_moving = false;
+            RCLCPP_INFO(rclcpp::get_logger("laser_mapping"),
+                "Elevator stopped (az_ema=%.3f ≈ baseline=%.3f) → XY unlocked",
+                imu_az_ema, imu_az_baseline);
+            if (g_pub_elevator_moving) {
+                std_msgs::msg::Bool m; m.data = false;
+                g_pub_elevator_moving->publish(m);
+            }
+        }
+    }
 }
 
 double lidar_mean_scantime = 0.0;
@@ -757,7 +798,7 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
     if (effct_feat_num < 1)
     {
         ekfom_data.valid = false;
-        if (lock_z_axis) {
+        if (elevator_mode) {
             RCLCPP_WARN(rclcpp::get_logger("laser_mapping"),
                         "No Effective Points (elevator mode) — skip relocalization, keep IMU-only tracking");
         } else {
@@ -1213,13 +1254,14 @@ public:
         pubLaserCloudMap_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/Laser_map", custom_qos);
         pubOdomAftMapped_ = this->create_publisher<nav_msgs::msg::Odometry>("/Odometry", 20);
         pubPath_ = this->create_publisher<nav_msgs::msg::Path>("/path", 20);
+        g_pub_elevator_moving = this->create_publisher<std_msgs::msg::Bool>("/elevator_moving", 10);
         tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
         if (!load_map(pubLaserCloudMap_, map_file_path)) {rclcpp::shutdown(); return;}
         //------------------------------------------------------------------------------------------------------
         auto period_ms = std::chrono::milliseconds(static_cast<int64_t>(1000.0 / 100.0)); // 10ms, 100hz
         timer_ = rclcpp::create_timer(this, this->get_clock(), period_ms, std::bind(&LaserOdometryNode::timer_callback, this));
 	    relocalize_srv_ = this->create_service<std_srvs::srv::Trigger>("global_relocalize", std::bind(&LaserOdometryNode::relocalize_callback, this, std::placeholders::_1, std::placeholders::_2));
-        lock_z_srv_ = this->create_service<std_srvs::srv::SetBool>("lock_z_axis", std::bind(&LaserOdometryNode::lock_z_callback, this, std::placeholders::_1, std::placeholders::_2));
+        elevator_srv_ = this->create_service<std_srvs::srv::SetBool>("elevator_mode", std::bind(&LaserOdometryNode::elevator_mode_callback, this, std::placeholders::_1, std::placeholders::_2));
         relocalize_pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(
             "pose_in_target", 10, 
             std::bind(&LaserOdometryNode::relocalize_pose_callback, this, std::placeholders::_1));
@@ -1279,7 +1321,7 @@ private:
 
             p_imu->Process(Measures, kf, feats_undistort);
 
-            if (lock_z_axis) {
+            if (elevator_mode) {
                 state_ikfom s_tmp = kf.get_x();
                 s_tmp.pos(2) = locked_z_pos;
                 s_tmp.vel(2) = locked_z_vel;
@@ -1359,7 +1401,7 @@ private:
             double solve_H_time = 0;
             kf.update_iterated_dyn_share_modified(LASER_POINT_COV, solve_H_time);
 
-            if (lock_z_axis) {
+            if (elevator_mode) {
                 state_ikfom s_tmp = kf.get_x();
                 s_tmp.pos(2) = locked_z_pos;
                 s_tmp.vel(2) = locked_z_vel;
@@ -1381,7 +1423,7 @@ private:
 
             /*** add the feature points to map kdtree ***/
             t3 = omp_get_wtime();
-            if (lock_z_axis) {
+            if (elevator_mode) {
                 map_incremental();
             }
             t5 = omp_get_wtime();
@@ -1425,14 +1467,14 @@ private:
         }
     }
 
-    void lock_z_callback(const std::shared_ptr<std_srvs::srv::SetBool::Request> req,
+    void elevator_mode_callback(const std::shared_ptr<std_srvs::srv::SetBool::Request> req,
                          std::shared_ptr<std_srvs::srv::SetBool::Response> res)
     {
         if (req->data) {
             state_ikfom cur = kf.get_x();
             locked_z_pos = cur.pos(2);
             locked_z_vel = cur.vel(2);
-            lock_z_axis = true;
+            elevator_mode = true;
 
             PointVector empty_cloud;
             ikdtree.Build(empty_cloud);
@@ -1443,7 +1485,7 @@ private:
             res->success = true;
             res->message = "Z axis locked at pos.z=" + std::to_string(locked_z_pos);
         } else {
-            lock_z_axis = false;
+            elevator_mode = false;
             RCLCPP_INFO(this->get_logger(), "Elevator mode OFF: reloading map into ikdtree...");
 
             PointVector empty_cloud;
@@ -1503,6 +1545,16 @@ private:
         // 同步更新 ROS2 参数服务器
         this->set_parameter(rclcpp::Parameter("map_file_path", new_map_path));
 
+        if (elevator_mode) {
+            elevator_mode = false;
+            elevator_z_moving = false;
+            if (g_pub_elevator_moving) {
+                std_msgs::msg::Bool m; m.data = false;
+                g_pub_elevator_moving->publish(m);
+            }
+            RCLCPP_INFO(this->get_logger(), "Elevator mode auto-cleared by change_map");
+        }
+
         // Trigger relocalization
         flg_first_scan = true;
         RCLCPP_INFO(this->get_logger(), "Map switched to: %s, relocalization triggered.", new_map_path.c_str());
@@ -1522,7 +1574,7 @@ private:
     std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
     rclcpp::TimerBase::SharedPtr timer_;
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr relocalize_srv_;
-    rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr lock_z_srv_;
+    rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr elevator_srv_;
     rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr relocalize_pose_sub_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr change_map_sub_;
 
