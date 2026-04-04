@@ -7,7 +7,7 @@ from rclpy.executors import SingleThreadedExecutor  # 单线程执行器
 from geometry_msgs.msg import PoseStamped, Twist, TwistStamped  # 位姿消息类型和速度控制消息类型
 from nav_msgs.msg import OccupancyGrid, Path  # 占据网格、全局路径
 from std_msgs.msg import String  # 字符串消息类型
-from std_srvs.srv import SetBool  # 用于 lock_z_axis 服务
+from std_srvs.srv import SetBool  # 用于 elevator_mode 服务
 from action_msgs.msg import GoalStatus, GoalStatusArray  # Action状态消息
 import logging  # 日志记录库
 import threading  # 线程处理库
@@ -953,13 +953,13 @@ class NavNode(Node):
 
     def set_elevator_mode(self, enter: bool, timeout: float = 5.0) -> Tuple[bool, str]:
         """
-        进入/退出电梯模式：调用 LIO 的 /lock_z_axis 服务锁定/解锁 Z 轴，防止电梯升降引起 Z 方向漂移。
+        进入/退出电梯模式：调用 LIO 的 /elevator_mode 服务，进入后锁 Z 轴、切换历史帧累积；检测到升降时自动锁 XY。
 
         :param enter: True=进入电梯模式（锁 Z），False=退出（解锁 Z）
         :param timeout: 等待服务响应的超时（秒）
         :return: (success, message)
         """
-        srv_name = '/lock_z_axis'
+        srv_name = '/elevator_mode'
         cli = self.create_client(SetBool, srv_name)
         if not cli.wait_for_service(timeout_sec=2.0):
             msg = f'服务 {srv_name} 不可用'

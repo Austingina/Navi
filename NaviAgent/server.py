@@ -911,11 +911,6 @@ class NavigationToolManager:
                     await asyncio.sleep(0.2)
                     status, fail_msg = self.ros_node.check_goal_reached(xy_tolerance, yaw_tolerance)
                     if status == self.ros_node.GOAL_CHECK_REACHED:
-                        point_info = self.map_manager.get_pose_in_submap(target) if self.map_manager else None
-                        pt_type = point_info.get("type") if point_info else None
-                        if pt_type == "elevator_out":
-                            ok, msg = self.ros_node.set_elevator_mode(enter=False)
-                            logging.info("elevator_out 点位 %s 已到达，exit_elevator: %s %s", target, ok, msg)
                         return {"success": True, "msg": f"已到达目标 {target}", "timestamp": int(time.time())}
                     if status == self.ros_node.GOAL_CHECK_FAILED:
                         return {
