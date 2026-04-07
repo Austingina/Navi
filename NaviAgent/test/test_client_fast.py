@@ -13,7 +13,7 @@ import sys
 import termios
 import time
 import tty
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import websockets
 
@@ -102,14 +102,21 @@ class KeyboardHandler:
 
 
 class SimplePatrolClient:
-    def __init__(self, ws_url: str = "ws://localhost:9999/ws"):
+    def __init__(
+        self,
+        ws_url: str = "ws://localhost:9999/ws",
+        route_name: Optional[str] = None,
+    ):
         self.ws_url = ws_url
         self.pose_list: list = []
         self.is_paused = False
 
         self.patrol_sequence: list = []
 
-        self.route_name = os.environ.get("ROUTE_NAME", "routeA")
+        #: 命令行 -r；为 None 时表示在 start 里选用服务器第一条路线
+        _r = route_name.strip() if route_name else ""
+        self.route_cli: Optional[str] = _r if _r else None
+        self.route_name: str = ""
 
     async def start_patrol_test(self) -> bool:
         """开始巡检测试"""
@@ -117,25 +124,34 @@ class SimplePatrolClient:
         logger.info(f"📡 {self.ws_url}")
 
         async with WsNavClient(self.ws_url) as client:
-            # 先拉取全部路线，默认选用第一条；失败则回退到环境变量 ROUTE_NAME / 默认名
             routes_data = await client.call("get_route_names")
-            if routes_data.get("success"):
-                names = routes_data.get("route_names") or []
-                cnt = routes_data.get("count", len(names))
-                logger.info(f"📋 服务器全部路线 ({cnt} 条): {names}")
-                if names:
-                    self.route_name = names[0]
-                    logger.info(f"📌 自动选择第一条路线进行测试: {self.route_name!r}")
-                else:
-                    logger.warning(
-                        "📋 路线列表为空，回退使用 ROUTE_NAME 环境变量或内置默认名称"
-                    )
-            else:
-                logger.warning(
-                    "⚠️  get_route_names 失败: %s，回退使用 ROUTE_NAME=%r",
+            if not routes_data.get("success"):
+                logger.error(
+                    "❌ get_route_names 失败: %s",
                     routes_data.get("msg"),
-                    self.route_name,
                 )
+                return False
+
+            names: List[str] = list(routes_data.get("route_names") or [])
+            cnt = routes_data.get("count", len(names))
+            logger.info(f"📋 服务器全部路线 ({cnt} 条): {names}")
+            if not names:
+                logger.error("❌ 服务器未配置任何路线")
+                return False
+
+            if self.route_cli:
+                if self.route_cli not in names:
+                    logger.error(
+                        "❌ 路线 %r 不存在，可用: %s",
+                        self.route_cli,
+                        names,
+                    )
+                    return False
+                self.route_name = self.route_cli
+                logger.info("📌 使用 -r 指定路线: %r", self.route_name)
+            else:
+                self.route_name = names[0]
+                logger.info("📌 未指定 -r，使用第一条路线: %r", self.route_name)
 
             pose_list_data = await client.call("get_pose_list_in_current_submap")
             if pose_list_data.get("success"):
@@ -475,6 +491,13 @@ async def main() -> int:
         help="WebSocket URL，默认 ws://localhost:9999/ws（与 server -t 端口一致）",
     )
     parser.add_argument(
+        "-r",
+        "--route",
+        default=None,
+        metavar="NAME",
+        help="路线名称；省略则使用服务器返回的第一条路线",
+    )
+    parser.add_argument(
         "--set-xy",
         nargs=2,
         type=float,
@@ -507,7 +530,7 @@ async def main() -> int:
                 return 0 if plan_res.get("success") else 1
 
         # otherwise run full patrol test
-        client = SimplePatrolClient(ws_url=args.ws)
+        client = SimplePatrolClient(ws_url=args.ws, route_name=args.route)
         success = await client.start_patrol_test()
 
         if success:
