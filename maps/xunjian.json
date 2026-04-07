@@ -1,0 +1,146 @@
+{
+    "_comment": "多楼层地图配置文件 / Multi-floor map configuration",
+    "global": {
+        "default_submap": "x"
+    },
+    "routes": {
+    },
+    "submaps": {
+        "x": {
+            "description": "",
+            "map_file": "xunjian_2cm.pcd",
+            "name": "",
+            "semantic_points": {
+                "charging point start": {
+                    "desc": "charging point start",
+                    "pose": {
+                        "position": {"x": 0.000, "y": -0.800, "z": 0.000},
+                        "orientation": {"x": 0.000, "y": 0.000, "z": -1.000, "w": 0.000}
+                    }
+                },
+                "control point 1": {
+                    "desc": "control point 1",
+                    "pose": {
+                        "position": {"x": -1.427, "y": 29.681, "z": 0.000},
+                        "orientation": {"x": 0.000, "y": 0.000, "z": 0.707, "w": 0.707}
+                    }
+                },
+                "control point 2": {
+                    "desc": "control point 2",
+                    "pose": {
+                        "position": {"x": -19.856, "y": 30.042, "z": 0.000},
+                        "orientation": {"x": 0.000, "y": 0.000, "z": -1.000, "w": 0.000}
+                    }
+                },
+                "control point 3": {
+                    "desc": "control point 3",
+                    "pose": {
+                        "position": {"x": -20.993, "y": 16.285, "z": 0.000},
+                        "orientation": {"x": 0.000, "y": 0.000, "z": 0.866, "w": -0.500}
+                    }
+                },
+                "control point 4": {
+                    "desc": "control point 4",
+                    "pose": {
+                        "position": {"x": -25.7200, "y": -46.4000, "z": 0.000},
+                        "orientation": {"x": 0.000, "y": 0.000, "z": -0.707, "w": 0.707}
+                    }
+                },
+                "control point 5": {
+                    "desc": "control point 5",
+                    "pose": {
+                        "position": {"x": 15.5640, "y": -37.0220, "z": 0.000},
+                        "orientation": {"x": 0.000, "y": 0.000, "z": 0.707, "w": 0.707}
+                    }
+                },
+                "control point 6": {
+                    "desc": "control point 6",
+                    "pose": {
+                        "position": {"x": -18.67, "y": -47.03, "z": 0.000},
+                        "orientation": {"x": 0.000, "y": 0.000, "z": -1.000, "w": 0.000}
+                    }
+                },
+                "control point 7": {
+                    "desc": "control point 7",
+                    "pose": {
+                        "position": {"x": 16.588, "y": -48.393, "z": 0.000},
+                        "orientation": {"x": 0.000, "y": 0.000, "z": 0.000, "w": 1.000}
+                    }
+                },
+                "control point 8": {
+                    "desc": "control point 8",
+                    "pose": {
+                        "position": {"x": 21.6460, "y": 10.557, "z": 0.000},
+                        "orientation": {"x": 0.000, "y": 0.000, "z": 0.707, "w": 0.707}
+                    }
+                },
+                "control point 9": {
+                    "desc": "control point 9",
+                    "pose": {
+                        "position": {"x": 17.5600, "y": 51.8790, "z": 0.000},
+                        "orientation": {"x": 0.000, "y": 0.000, "z": -1.000, "w": 0.000}
+                    }
+                },
+                "control point 10": {
+                    "desc": "control point 10",
+                    "pose": {
+                        "position": {"x": -14.33, "y": 53.2310, "z": 0.000},
+                        "orientation": {"x": 0.000, "y": 0.000, "z": -1.000, "w": 0.000}
+                    }
+                },
+                "control point 11": {
+                    "desc": "control point 11",
+                    "pose": {
+                        "position": {"x": -55.191, "y": 53.245, "z": 0.000},
+                        "orientation": {"x": 0.000, "y": 0.000, "z": -1.000, "w": 0.000}
+                    }
+                },
+                "control point 12": {
+                    "desc": "control point 12",
+                    "pose": {
+                        "position": {"x": -57.2020, "y": 6.3660, "z": 0.000},
+                        "orientation": {"x": 0.000, "y": 0.000, "z": -0.707, "w": 0.707}
+                    }
+                },
+                "control point 13": {
+                    "desc": "control point 13",
+                    "pose": {
+                        "position": {"x": -30.1330, "y": -1.0300, "z": 0.000},
+                        "orientation": {"x": 0.000, "y": 0.000, "z": 0.000, "w": 0.000}
+                    }
+                },
+                "control point 14": {
+                    "desc": "control point 14",
+                    "pose": {
+                        "position": {"x": -20.993, "y": 16.285, "z": 0.000},
+                        "orientation": {"x": 0.000, "y": 0.000, "z": 0.500, "w": 0.866}
+                    }
+                },
+                "control point 15": {
+                    "desc": "control point 15",
+                    "pose": {
+                        "position": {"x": -19.856, "y": 30.042, "z": 0.000},
+                        "orientation": {"x": 0.000, "y": 0.000, "z": 0.000, "w": 0.000}
+                    }
+                },
+                "control point 16": {
+                    "desc": "control point 16",
+                    "pose": {
+                        "position": {"x": -1.427, "y": 29.681, "z": 0.000},
+                        "orientation": {"x": 0.000, "y": 0.000, "z": -0.707, "w": 0.707}
+                    }
+                },
+                "charging point end": {
+                    "desc": "charging point end",
+                    "pose": {
+                        "position": {"x": 0.000, "y": -0.800, "z": 0.000},
+                        "orientation": {"x": 0.000, "y": 0.000, "z": -1.000, "w": 0.000}
+                    }
+                }
+            }
+
+            
+        }
+        
+    }
+}
