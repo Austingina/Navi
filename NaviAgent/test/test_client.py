@@ -303,7 +303,20 @@ class SimplePatrolClient:
                         logger.info(f"⏭️  用户取消，跳过 {target_name}")
                         continue
 
-                logger.info(f"🎯 下发目标点: {target_name}, type: {pt_type}")
+                pinfo = point_meta.get("point_info") or {}
+                pose_ = pinfo.get("pose") or {}
+                if not pose_ and pinfo.get("poses"):
+                    pose_ = (pinfo["poses"] or [None])[0] or {}
+                pos = pose_.get("position") or {}
+                if pos:
+                    logger.info(
+                        f"🎯 下发目标点: {target_name}, type: {pt_type}, "
+                        f"pos: x={pos.get('x', 0.0):.3f} y={pos.get('y', 0.0):.3f} z={pos.get('z', 0.0):.3f}"
+                    )
+                else:
+                    logger.info(
+                        f"🎯 下发目标点: {target_name}, type: {pt_type} (无 pose 坐标)"
+                    )
                 goal_data = await client.call("set_goal_by_name", {"target": target_name})
 
                 if not goal_data.get("success"):
