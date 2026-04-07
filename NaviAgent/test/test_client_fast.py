@@ -109,41 +109,74 @@ class SimplePatrolClient:
 
         self.patrol_sequence: list = []
 
-        self.route_name = os.environ.get("ROUTE_NAME", "线路A")
+        self.route_name = os.environ.get("ROUTE_NAME", "routeA")
 
     async def start_patrol_test(self) -> bool:
         """开始巡检测试"""
         logger.info("🚀 开始巡检路径测试 (WebSocket)")
         logger.info(f"📡 {self.ws_url}")
-        logger.info(f"📋 测试点位: {' -> '.join(map(str, self.patrol_sequence))}")
 
         async with WsNavClient(self.ws_url) as client:
+            # 先拉取全部路线，默认选用第一条；失败则回退到环境变量 ROUTE_NAME / 默认名
+            routes_data = await client.call("get_route_names")
+            if routes_data.get("success"):
+                names = routes_data.get("route_names") or []
+                cnt = routes_data.get("count", len(names))
+                logger.info(f"📋 服务器全部路线 ({cnt} 条): {names}")
+                if names:
+                    self.route_name = names[0]
+                    logger.info(f"📌 自动选择第一条路线进行测试: {self.route_name!r}")
+                else:
+                    logger.warning(
+                        "📋 路线列表为空，回退使用 ROUTE_NAME 环境变量或内置默认名称"
+                    )
+            else:
+                logger.warning(
+                    "⚠️  get_route_names 失败: %s，回退使用 ROUTE_NAME=%r",
+                    routes_data.get("msg"),
+                    self.route_name,
+                )
+
             pose_list_data = await client.call("get_pose_list_in_current_submap")
             if pose_list_data.get("success"):
                 self.pose_list = pose_list_data["keys"]
-                logger.info(f"📋 目的地列表: {self.pose_list}")
+                logger.info(f"📋 当前层语义点位列表: {self.pose_list}")
             else:
-                logger.error(f"❌ 获取目的地列表失败: {pose_list_data.get('msg')}")
+                logger.error(f"❌ 当前层语义点位列表失败: {pose_list_data.get('msg')}")
                 return False
 
             route_waypoints = None
             if self.route_name:
-                logger.info(f"📌 配置了路线名称: {self.route_name}, 尝试从服务器获取对应路线")
+                logger.info(f"📌 拉取路线详情: {self.route_name!r}")
                 try:
                     route_data = await client.call(
                         "get_route", {"route_name": self.route_name}
                     )
                     if route_data.get("success") and route_data.get("waypoints"):
                         route_waypoints = route_data.get("waypoints")
-                        logger.info(f"✅ 获取到路线 {self.route_name}, waypoints={len(route_waypoints)}")
+                        logger.info(
+                            f"✅ 路线 {self.route_name} 共 {len(route_waypoints)} 个途经点"
+                        )
                     else:
-                        logger.warning(f"无法获取路线 {self.route_name}, 将使用默认点位列表")
+                        logger.warning(
+                            "无法获取路线 %r: %s",
+                            self.route_name,
+                            route_data.get("msg"),
+                        )
                 except Exception as e:
                     logger.warning(f"获取路线异常: {e}")
 
             if route_waypoints:
                 self.patrol_sequence = route_waypoints
-                logger.info(f"📋 使用服务器提供的路线点位: {self.patrol_sequence}")
+                logger.info(
+                    f"📋 本次测试点位序列 ({len(self.patrol_sequence)}): "
+                    f"{self.patrol_sequence}"
+                )
+            else:
+                logger.error(
+                    "❌ 未得到任何路线途经点（请检查地图 multifloor 是否配置 routes）"
+                )
+                return False
 
             logger.info("🔍 检查服务器连接和机器人状态...")
             status_data = await client.call("get_status")
@@ -224,7 +257,7 @@ class SimplePatrolClient:
 
                             logger.info("⏳ 等待到达传送门...")
                             wait_portal = await self.wait_goal_with_pause(
-                                client, f"portal_{i}", timeout=1200.0
+                                client, f"portal_{i}", timeout=120.0
                             )
                             if not wait_portal.get("success"):
                                 logger.error("❌ 到达传送门超时或失败，跳过此目标")
@@ -247,7 +280,43 @@ class SimplePatrolClient:
                             )
                             continue
 
-                logger.info(f"🎯 下发目标点: {target_name}")
+                point_meta = await client.call("get_pose_in_submap", {"pose_name": target_name})
+                pt_type = point_meta.get("point_info", {}).get("type") if point_meta.get("success") else None
+                if pt_type in {"elevator_out", "elevator_in"}:
+                    if pt_type == "elevator_out":
+                        prompt_msg = "确认出电梯？(y/n): "
+                        logger.info(
+                            f"🛗 目标 {target_name} 是 elevator_out 类型，"
+                            "请确认电梯已到达目标楼层并开门后输入 y 继续："
+                        )
+                    else:
+                        prompt_msg = "确认进电梯？(y/n): "
+                        logger.info(
+                            f"🛗 目标 {target_name} 是 elevator_in 类型，"
+                            "请确认电梯已到达且门已打开、可安全进梯后输入 y 继续："
+                        )
+
+                    confirm = await asyncio.get_event_loop().run_in_executor(
+                        None, lambda: input(prompt_msg).strip().lower()
+                    )
+                    if confirm != "y":
+                        logger.info(f"⏭️  用户取消，跳过 {target_name}")
+                        continue
+
+                pinfo = point_meta.get("point_info") or {}
+                pose_ = pinfo.get("pose") or {}
+                if not pose_ and pinfo.get("poses"):
+                    pose_ = (pinfo["poses"] or [None])[0] or {}
+                pos = pose_.get("position") or {}
+                if pos:
+                    logger.info(
+                        f"🎯 下发目标点: {target_name}, type: {pt_type}, "
+                        f"pos: x={pos.get('x', 0.0):.3f} y={pos.get('y', 0.0):.3f} z={pos.get('z', 0.0):.3f}"
+                    )
+                else:
+                    logger.info(
+                        f"🎯 下发目标点: {target_name}, type: {pt_type} (无 pose 坐标)"
+                    )
                 goal_data = await client.call("set_goal_by_name", {"target": target_name})
 
                 if not goal_data.get("success"):
@@ -265,10 +334,10 @@ class SimplePatrolClient:
                     logger.info(f"📍 响应后位置: x={post_pos['x']:.3f}, y={post_pos['y']:.3f}")
 
                 logger.info(
-                    "⏳ 等待到达目标点 (超时: 1200秒)... [按空格键暂停/恢复]"
+                    "⏳ 等待到达目标点 (超时: 120秒)... [按空格键暂停/恢复]"
                 )
                 wait_data = await self.wait_goal_with_pause(
-                    client, target_name, timeout=1200.0, xy_tolerance=0.6, yaw_tolerance=3.14
+                    client, target_name, timeout=120.0, xy_tolerance=0.6, yaw_tolerance=3.15
                 )
 
                 duration = time.time() - start_time
@@ -405,9 +474,39 @@ async def main() -> int:
         default=os.environ.get("NAV_WS_URL", "ws://localhost:9999/ws"),
         help="WebSocket URL，默认 ws://localhost:9999/ws（与 server -t 端口一致）",
     )
+    parser.add_argument(
+        "--set-xy",
+        nargs=2,
+        type=float,
+        metavar=("X", "Y"),
+        help="测试 set_goal_by_xy: 提供 X Y 坐标",
+    )
     args = parser.parse_args()
 
     try:
+        # If --set-xy provided, run a minimal test for set_goal_by_xy + get_navigation_plan
+        if args.set_xy:
+            x, y = args.set_xy
+            logger.info(f"🔬 Running set_goal_by_xy test to x={x}, y={y} on {args.ws}")
+            async with WsNavClient(args.ws) as client:
+                res = await client.call("set_goal_by_xy", {"x": float(x), "y": float(y), "distance": 0.05})
+                logger.info(f"set_goal_by_xy response: {res}")
+                if not res.get("success", True):
+                    return 1
+
+                logger.info("获取 /plan 全局路径（get_navigation_plan, timeout=30s）...")
+                plan_res = await client.call("get_navigation_plan", {"timeout": 30.0})
+                logger.info(f"get_navigation_plan response: {plan_res}")
+                if plan_res.get("success"):
+                    plan = plan_res.get("plan") or {}
+                    logger.info(
+                        "   frame_id=%s pose_count=%s",
+                        plan.get("frame_id"),
+                        plan.get("pose_count"),
+                    )
+                return 0 if plan_res.get("success") else 1
+
+        # otherwise run full patrol test
         client = SimplePatrolClient(ws_url=args.ws)
         success = await client.start_patrol_test()
 
