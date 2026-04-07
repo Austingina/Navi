@@ -73,6 +73,9 @@ private:
     void refreshSubmap(const QString& id);
     /// 刷新标记点 (语义点+传送门)
     void refreshMarkers();
+
+    /// 将轨道相机 target 设到语义点在世界系下的位置（multi_pose 取位姿均值）
+    void setViewerOrbitCenterAtSemantic(const QString& smId, const QString& ptName);
     /// 刷新所有路线折线
     void refreshRouteLines();
 

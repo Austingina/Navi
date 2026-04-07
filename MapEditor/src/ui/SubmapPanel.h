@@ -49,6 +49,9 @@ public:
     /// 展开指定路线项
     void expandRoute(const QString& routeName);
 
+    /// 勾选后，在树中点击语义点时将以该点世界坐标为轨道相机旋转/缩放中心
+    bool orbitCenterFollowsSemantic() const;
+
 signals:
     // ── 选中事件 ─────────────────────────────────────────────────────
     void submapSelected(const QString& submapId);
@@ -61,6 +64,9 @@ signals:
     void showSemanticPointsChanged(const QString& submapId, bool show);
     void showPortalsChanged(const QString& submapId, bool show);
     void routeVisibilityChanged(const QString& routeName, bool visible);
+
+    /// 右键菜单：将视角轨道中心设到该语义点
+    void orbitCenterAtSemanticRequested(const QString& submapId, const QString& pointName);
 
     // ── 操作请求 ─────────────────────────────────────────────────────
     void addSubmapRequested();
@@ -91,6 +97,7 @@ private:
 
     DragDropTree* tree_ = nullptr;
     QPushButton* btnAdd_ = nullptr;
+    QCheckBox* orbitSemanticCenterCk_ = nullptr;
 
     // 记录 item 类型和数据
     enum ItemRole { RoleType = Qt::UserRole, RoleSubmapId, RolePointName, RolePortalIdx, RoleRouteName };

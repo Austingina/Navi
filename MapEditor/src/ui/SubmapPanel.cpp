@@ -5,6 +5,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QDataStream>
+#include <QCheckBox>
 
 namespace me {
 
@@ -111,6 +112,16 @@ void SubmapPanel::setupUI() {
     connect(tree_, &DragDropTree::waypointDropped, this, &SubmapPanel::routeWaypointInserted);
 
     layout->addWidget(tree_);
+
+    orbitSemanticCenterCk_ = new QCheckBox(QStringLiteral("旋转/缩放以选中语义点为中心"));
+    orbitSemanticCenterCk_->setToolTip(
+        QStringLiteral("勾选后，在树中点击语义点位时，将以该点在世界坐标系下的位置作为视角旋转与滚轮缩放的中心（不再固定为原点）。\n"
+                       "也可在语义点上右键选择「设为视角中心」。"));
+    layout->addWidget(orbitSemanticCenterCk_);
+}
+
+bool SubmapPanel::orbitCenterFollowsSemantic() const {
+    return orbitSemanticCenterCk_ && orbitSemanticCenterCk_->isChecked();
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -441,6 +452,13 @@ void SubmapPanel::onContextMenu(const QPoint& pos) {
         if (wpIdx < 0) return;
         menu.addAction("🗑️ 删除此途经点", [this, rName, wpIdx]() {
             emit routeWaypointRemoveRequested(rName, wpIdx);
+        });
+        break;
+    }
+    case TypeSemPoint: {
+        QString ptName = item->data(0, RolePointName).toString();
+        menu.addAction("🎯 设为视角旋转/缩放中心", [this, smId, ptName]() {
+            emit orbitCenterAtSemanticRequested(smId, ptName);
         });
         break;
     }

@@ -164,6 +164,10 @@ void MainWindow::connectSignals() {
             this, &MainWindow::onSubmapSelected);
     connect(submapPanel_, &SubmapPanel::semanticPointSelected,
             this, &MainWindow::onSemanticPointSelected);
+    connect(submapPanel_, &SubmapPanel::orbitCenterAtSemanticRequested,
+            this, [this](const QString& smId, const QString& ptName) {
+        setViewerOrbitCenterAtSemantic(smId, ptName);
+    });
     connect(submapPanel_, &SubmapPanel::portalSelected,
             this, &MainWindow::onPortalSelected);
     connect(submapPanel_, &SubmapPanel::routeSelected, this, [this](const QString&) {
@@ -403,6 +407,25 @@ void MainWindow::onSemanticPointSelected(const QString& smId, const QString& ptN
     refreshMarkers();
     auto* sm = project_.submap(smId);
     if (sm) propsPanel_->showSemanticPointProperties(sm, ptName);
+    if (submapPanel_->orbitCenterFollowsSemantic())
+        setViewerOrbitCenterAtSemantic(smId, ptName);
+}
+
+void MainWindow::setViewerOrbitCenterAtSemantic(const QString& smId, const QString& ptName) {
+    auto* sm = project_.submap(smId);
+    if (!sm) return;
+    auto* sp = sm->semanticPoint(ptName);
+    if (!sp || sp->poses.isEmpty()) return;
+
+    const Eigen::Matrix4d T = sm->transformMatrix();
+    Eigen::Vector3d sum(0, 0, 0);
+    for (const auto& pose : sp->poses) {
+        Eigen::Vector4d pw = T * Eigen::Vector4d(
+            pose.position.x(), pose.position.y(), pose.position.z(), 1.0);
+        sum += Eigen::Vector3d(pw.x(), pw.y(), pw.z());
+    }
+    sum /= static_cast<double>(sp->poses.size());
+    viewer_->lookAt(QVector3D(sum.x(), sum.y(), sum.z()));
 }
 
 void MainWindow::onSemanticPointChanged(const QString& smId, const QString& ptName) {
