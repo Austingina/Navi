@@ -1,8 +1,8 @@
 # 地图语义管理类
 import os
 import json
+import math
 from typing import Dict, List, Optional, Tuple, Any
-from collections import deque
 
 
 class MapManager:
@@ -210,23 +210,89 @@ class MapManager:
             return []
         return self.submaps[submap_id].get('submap_portals', [])
     
-    def get_portal_to_submap(self, target_submap: str, from_submap: str = None) -> Optional[Dict]:
+    def get_portals_to_submap(self, target_submap: str, from_submap: str = None) -> List[Dict]:
         """
-        获取从当前 submap 到目标 submap 的传送门
-        
+        获取从起始 submap 直达目标 submap 的所有传送门配置（可能多条）。
+        """
+        from_submap = from_submap or self.current_submap
+        if not from_submap:
+            return []
+        return [
+            p for p in self.get_submap_portals(from_submap)
+            if p.get('submap') == target_submap
+        ]
+
+    def _portal_semantic_position(
+        self, portal_name: str, submap_id: str = None
+    ) -> Optional[Tuple[float, float, float]]:
+        """传送门语义点位置（portal 非 multi_pose，仅用单 pose.position）。"""
+        pi = self.get_pose_in_submap(portal_name, submap_id)
+        if not pi:
+            return None
+        pose = pi.get('pose')
+        if not pose:
+            return None
+        pos = pose.get('position') or {}
+        return (
+            float(pos.get('x', 0.0)),
+            float(pos.get('y', 0.0)),
+            float(pos.get('z', 0.0)),
+        )
+
+    def get_portal_to_submap(
+        self,
+        target_submap: str,
+        from_submap: str = None,
+        robot_position: Optional[Tuple[float, float, float]] = None,
+        xy_distance_only: bool = True,
+    ) -> Optional[Dict]:
+        """
+        获取从当前 submap 到目标 submap 的传送门。
+
+        若存在多个 portal 均可直达目标 submap，且提供了 ``robot_position`` ``(x,y,z)``，
+        则按与 portal 对应语义点位置的距离选最近的一条；距离默认仅使用 XY 平面。
+        若无位姿或无法解析某 portal 坐标，则回退为列表中的第一条。
+
         :param target_submap: 目标 submap ID
         :param from_submap: 起始 submap ID，默认为当前 submap
-        :return: 传送门配置 {portal, submap}
+        :param robot_position: 机器人当前位置（与地图语义点一致坐标系，通常为 map/odom）
+        :param xy_distance_only: True 时只用 sqrt(dx^2+dy^2) 比较
+        :return: 传送门配置 {portal, submap, ...}
         """
         from_submap = from_submap or self.current_submap
         if not from_submap:
             return None
-        
-        portals = self.get_submap_portals(from_submap)
-        for portal_config in portals:
-            if portal_config.get('submap') == target_submap:
-                return portal_config
-        return None
+
+        candidates = self.get_portals_to_submap(target_submap, from_submap)
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            return candidates[0]
+
+        if robot_position is None:
+            return candidates[0]
+
+        rx, ry, rz = robot_position[0], robot_position[1], robot_position[2]
+        best: Optional[Dict] = None
+        best_d = float('inf')
+
+        for cfg in candidates:
+            pname = cfg.get('portal')
+            if not pname:
+                continue
+            pos = self._portal_semantic_position(pname, from_submap)
+            if pos is None:
+                continue
+            px, py, pz = pos
+            if xy_distance_only:
+                d = math.hypot(px - rx, py - ry)
+            else:
+                d = math.sqrt((px - rx) ** 2 + (py - ry) ** 2 + (pz - rz) ** 2)
+            if d < best_d:
+                best_d = d
+                best = cfg
+
+        return best if best is not None else candidates[0]
     
     def get_portal_pose(self, portal_name: str, submap_id: str = None) -> Optional[Dict]:
         """获取传送门点位的位姿（传送门点位也是语义点位）"""
@@ -238,44 +304,6 @@ class MapManager:
         :return: point_info 字典（包含 type, pose 等），找不到返回 None
         """
         return self.get_pose_in_submap(portal_name, submap_id)
-    
-    def find_path_between_submaps(self, from_submap: str, to_submap: str) -> Optional[List[Dict]]:
-        """
-        查找从起始 submap 到目标 submap 的路径（通过传送门）
-        
-        :param from_submap: 起始 submap ID
-        :param to_submap: 目标 submap ID
-        :return: 路径列表 [{submap, portal, next_submap}, ...]，如果无法到达返回 None
-        """
-        if from_submap == to_submap:
-            return []
-        
-        # BFS 查找路径
-        queue = deque([(from_submap, [])])
-        visited = {from_submap}
-        
-        while queue:
-            current_submap, path = queue.popleft()
-            portals = self.get_submap_portals(current_submap)
-            
-            for portal_config in portals:
-                next_submap = portal_config.get('submap')
-                if not next_submap or next_submap in visited:
-                    continue
-                
-                new_path = path + [{
-                    'submap': current_submap,
-                    'portal': portal_config.get('portal'),
-                    'next_submap': next_submap
-                }]
-                
-                if next_submap == to_submap:
-                    return new_path
-                
-                visited.add(next_submap)
-                queue.append((next_submap, new_path))
-        
-        return None  # 无法到达
     
     def get_all_pose_names_in_submap(self, submap_id: str = None) -> List[str]:
         """获取指定 submap 的所有点位名称"""

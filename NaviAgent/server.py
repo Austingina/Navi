@@ -751,8 +751,12 @@ class NavigationToolManager:
             参数:
             target_submap: 目标子地图 ID（如 floor, underground, 5floor）
 
+            若当前子地图有多条 portal 均可直达同一目标子地图，则根据机器人当前位姿
+            （map→base 可用时）与各 portal 语义点位置的 XY 距离选取最近的一条。
+
             返回:
-            Dict: {"success": True, "portal": "...", "target_submap": "...", "from_submap": "..."}
+            Dict: {"success": True, "portal": "...", "target_submap": "...", "from_submap": "...",
+                   "portal_candidates": [...], "selected_by_nearest": bool}
             """
             try:
                 # 获取当前 submap
@@ -775,22 +779,29 @@ class NavigationToolManager:
                         "msg": f"目标子地图 {target_submap} 就是当前子地图，无需传送门"
                     }
                 
-                # 获取传送门
-                portal_config = self.map_manager.get_portal_to_submap(target_submap)
+                candidates = self.map_manager.get_portals_to_submap(
+                    target_submap, current_submap
+                )
+                robot_xyz = None
+                cp = self.ros_node.current_pose
+                if cp is not None:
+                    try:
+                        p = cp.pose.position
+                        robot_xyz = (float(p.x), float(p.y), float(p.z))
+                    except Exception:
+                        robot_xyz = None
+
+                portal_config = self.map_manager.get_portal_to_submap(
+                    target_submap,
+                    from_submap=current_submap,
+                    robot_position=robot_xyz,
+                    xy_distance_only=True,
+                )
                 if not portal_config:
-                    # 尝试查找路径
-                    path = self.map_manager.find_path_between_submaps(current_submap, target_submap)
-                    if path:
-                        return {
-                            "success": False,
-                            "msg": f"从 {current_submap} 无法直接到达 {target_submap}，需要经过中间子地图",
-                            "path": path
-                        }
-                    else:
-                        return {
-                            "success": False,
-                            "msg": f"从 {current_submap} 无法到达 {target_submap}"
-                        }
+                    return {
+                        "success": False,
+                        "msg": f"从 {current_submap} 无直达传送门到 {target_submap}",
+                    }
                 
                 # 获取传送门的位姿
                 portal_name = portal_config.get('portal')
@@ -799,14 +810,29 @@ class NavigationToolManager:
                 portal_pose = None
                 if portal_point_info and isinstance(portal_point_info, dict):
                     portal_pose = portal_point_info.get('pose')
-                
+
+                cand_names = [
+                    c.get("portal")
+                    for c in candidates
+                    if c.get("portal")
+                ]
+                selected_by_nearest = len(candidates) > 1 and robot_xyz is not None
+                msg = f"从 {current_submap} 到 {target_submap} 的传送门是: {portal_name}"
+                if len(candidates) > 1:
+                    if robot_xyz is not None:
+                        msg += f"（共 {len(candidates)} 个候选，已按当前位置选最近）"
+                    else:
+                        msg += f"（共 {len(candidates)} 个候选，无当前位姿时使用第一个: {cand_names}）"
+
                 return {
                     "success": True,
                     "portal": portal_name,
                     "target_submap": target_submap,
                     "from_submap": current_submap,
                     "portal_pose": portal_pose,
-                    "msg": f"从 {current_submap} 到 {target_submap} 的传送门是: {portal_name}"
+                    "portal_candidates": cand_names,
+                    "selected_by_nearest": selected_by_nearest,
+                    "msg": msg,
                 }
             except Exception as e:
                 return {"success": False, "msg": f"获取传送门失败: {str(e)}"}
