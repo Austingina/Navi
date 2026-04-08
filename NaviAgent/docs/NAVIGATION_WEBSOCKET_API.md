@@ -94,6 +94,7 @@ python server_fast.py -t -m /path/to/multifloor.json
 
 - `set_goal_by_multipose`
 - `wait_goal_reached`
+- `get_navigation_plan`
 
 ---
 
@@ -107,12 +108,28 @@ python server_fast.py -t -m /path/to/multifloor.json
   "methods": [
     "cancel_navigation",
     "change_map",
+    "enter_elevator",
+    "exit_elevator",
     "get_current_map_id",
     "get_map",
+    "get_navigation_plan",
     "get_nearest_point",
+    "get_pose_in_submap",
     "get_pose_list_in_current_submap",
     "get_portal_to_submap",
-    ...
+    "get_route",
+    "get_route_names",
+    "get_status",
+    "get_submap_info",
+    "get_submap_list",
+    "pause_navigation",
+    "resume_navigation",
+    "set_goal_by_lonlat",
+    "set_goal_by_multipose",
+    "set_goal_by_name",
+    "set_goal_by_xy",
+    "set_xy_goal_tolerance",
+    "wait_goal_reached"
   ]
 }
 ```
@@ -134,6 +151,10 @@ python server_fast.py -t -m /path/to/multifloor.json
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `target` | string | 是 | 预设点名称，须在 `pose_map_current_submap` 中。 |
+
+**自动行为：**
+
+- 若目标点 `type` 为 `elevator_in`，下发目标时 **自动调用 `enter_elevator`**（锁定 XYZ 轴），在前往电梯途中即生效。
 
 **成功示例字段：** `success`, `msg`, `target`。
 
@@ -190,7 +211,45 @@ python server_fast.py -t -m /path/to/multifloor.json
 
 ---
 
-### 4.3 地图与点位查询
+### 4.3 电梯模式
+
+用于多楼层电梯场景。进入电梯模式后，FAST-LIO 会锁定 XYZ 轴位姿，避免电梯升降导致 IMU 定位漂移；同时节点会动态检测 IMU Z 加速度判断电梯是否在运动，并通过 `/elevator_moving` 话题通知上游。切换地图（`change_map`）时电梯模式会自动重置。
+
+#### `enter_elevator`
+
+进入电梯模式：锁定位姿，防止电梯升降导致定位漂移。应在机器人进入电梯**前**调用。
+
+无参数。
+
+**成功：** `success`, `msg`。
+
+> **提示：** 通常不需要手动调用——`set_goal_by_name` 目标为 `elevator_in` 类型点时会**自动触发**。
+
+---
+
+#### `exit_elevator`
+
+退出电梯模式：解锁轴向，恢复正常 3D 里程计。应在机器人出电梯**后**调用。
+
+无参数。
+
+**成功：** `success`, `msg`。
+
+---
+
+#### `set_xy_goal_tolerance`
+
+临时修改 Nav2 `controller_server` 的 `xy_goal_tolerance` 参数。适合电梯场景需要放大到位容差时使用。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `tolerance` | number | 是 | 新的位置容差（米），例如 `0.3`。 |
+
+**成功：** `success`, `msg`。
+
+---
+
+### 4.4 地图与点位查询
 
 #### `get_pose_list_in_current_submap`
 
@@ -229,14 +288,18 @@ python server_fast.py -t -m /path/to/multifloor.json
 
 `point_info` 中 `type` 字段说明与使用建议：
 
-- `single_pose`: 单一位姿点；使用 `set_goal_by_name` 下发目标并导航到该点。
-- `multi_pose`: 多位姿点；需要使用 `set_goal_by_multipose`，服务端会依次导航到该点的所有位姿。
-- `elevator_call`: 电梯呼叫点；机器人到达该点后应由外部 agent 执行呼叫电梯操作（本服务仅负责导航到该位置）。
-- `elevator_wait`: 电梯等待点；机器人到达该点后应等待外部 agent 确认电梯已到达且车门已打开，随后才继续下一步。
+| type 值 | 说明 | 客户端使用方式 |
+|---------|------|----------------|
+| `single_pose` | 单一位姿点 | `set_goal_by_name` 下发目标并导航。 |
+| `multi_pose` | 多位姿点 | `set_goal_by_multipose`，服务端依次导航到各个位姿。 |
+| `elevator_call` | 电梯呼叫点 | 到达后由外部 agent 执行呼叫电梯操作。 |
+| `elevator_wait` | 电梯等待点 | 到达后等待 agent 确认电梯已到达且门已打开。 |
+| `elevator_in` | 进梯点 | `set_goal_by_name` 下发时 **自动 `enter_elevator`**（锁 XYZ）。 |
+| `elevator_out` | 出梯点 | 到达后应调用 `exit_elevator`（解锁轴向）。 |
 
-客户端使用建议：先调用 `get_pose_in_submap` 检查点位 `type`，再选择合适的导航或外部协同流程（例如：
-对 `multi_pose` 调用 `set_goal_by_multipose`；对 `single_pose` 调用 `set_goal_by_name`；对电梯相关点与电梯控制 agent 协作）。
+客户端使用建议：先调用 `get_pose_in_submap` 检查点位 `type`，再选择合适的导航或外部协同流程。
 
+---
 
 #### `get_current_map_id`
 
@@ -249,7 +312,7 @@ python server_fast.py -t -m /path/to/multifloor.json
 
 #### `change_map`
 
-切换到指定子图（含等待加载超时）。
+切换到指定子图（含等待加载超时）。切换成功后会**自动重置电梯模式**。
 
 | 参数 | 类型 | 默认 | 说明 |
 |------|------|------|------|
@@ -263,18 +326,18 @@ python server_fast.py -t -m /path/to/multifloor.json
 
 #### `get_portal_to_submap`
 
-从 **当前子图** 到 **目标子图** 的传送门信息。
+从 **当前子图** 到 **目标子图** 的传送门信息。当存在多条可直达的 portal 时，若机器人当前位姿可用，则**按 XY 距离选最近的一条**。
 
 | 参数 | 类型 | 必填 |
 |------|------|------|
 | `target_submap` | string | 是 |
 
-**成功：** `success`, `portal`, `target_submap`, `from_submap`, `portal_pose`, `msg`。  
-**无法直达：** 可能 `success=false` 且带 `path` 提示经中间子图。
+**成功：** `success`, `portal`, `target_submap`, `from_submap`, `portal_pose`, `portal_candidates`（所有候选 portal 名称列表）, `selected_by_nearest`（bool，是否按距离选取）, `msg`。  
+**无法直达：** `success=false` 且带提示信息。
 
 ---
 
-### 4.4 路线（巡逻）
+### 4.5 路线（巡逻）
 
 #### `get_route_names`
 
@@ -295,13 +358,13 @@ python server_fast.py -t -m /path/to/multifloor.json
 
 ---
 
-### 4.5 状态与到达判定
+### 4.6 状态与到达判定
 
 #### `get_status`
 
-无参数。当前里程计位姿。
+无参数。当前里程计位姿及定位状态。
 
-**成功：** `success`, `position` `{x,y,z}`, `orientation` 四元数。
+**成功：** `success`, `localized`（bool, map→base_link TF 是否稳定可用）, `position` `{x,y,z}`, `orientation` 四元数。
 
 ---
 
@@ -317,9 +380,23 @@ python server_fast.py -t -m /path/to/multifloor.json
 | `yaw_tolerance` | number | 0.1 | 弧度。 |
 
 **成功：** `success`, `msg`, `timestamp`。  
-**超时：** `success=false`, `msg` 提示超时或未到达。
+**超时：** `success=false`, `msg` 提示超时或未到达, `nav_failed=false`。  
+**导航失败：** `success=false`, `msg` 含失败原因, `nav_failed=true`。
 
 适合与 `set_goal_by_name` 等配合；短 `timeout` 可形成轮询（见测试客户端）。
+
+---
+
+#### `get_navigation_plan`
+
+获取 Nav2 当前全局路径（`/plan` 话题）。每次下发新目标后服务端会清空缓存并递增代次，只保留与当前目标对应的新路径。
+
+| 参数 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `timeout` | number | 10.0 | 等待非空路径的最长时间（秒）。 |
+
+**成功：** `success`, `plan`（含 `frame_id`, `stamp`, `poses`, `pose_count`）, `msg`。  
+**超时：** `success=false`，提示未收到 `/plan`。
 
 ---
 
@@ -413,57 +490,76 @@ async def patrol_by_route(ws_url, route_name):
 asyncio.run(patrol_by_route('ws://127.0.0.1:9000/ws', '巡逻线路A'))
 ```
 
-### 5.3 模拟 agent处理电梯点位（elevator_call / elevator_wait）
+### 5.3 跨楼层电梯巡检完整流程
 
-下面示例展示如何在巡检中与外部 agent 协作：当遇到 `elevator_call`，机器人到达后等待 agent 执行呼叫；当遇到 `elevator_wait`，机器人到达后等待 agent 确认电梯已到达并开门后继续。
+当巡检路线跨楼层且涉及电梯时，完整的工作流如下：
 
-示例采用简单的本地回调/等待机制来模拟 agent 响应（真实系统中可通过 HTTP、消息队列或另一路 WebSocket 与电梯控制系统通信）：
+1. 在源楼层导航到 `elevator_call` 点 → agent 呼叫电梯；
+2. 导航到 `elevator_wait` 点 → agent 确认电梯到达、门已开；
+3. 导航到 `elevator_in` 点（自动 `enter_elevator`，锁定 XYZ）；
+4. 电梯运行中，`/elevator_moving` 话题会反映运动状态；
+5. 电梯到达目标楼层后，调用 `change_map` 切换子图（自动重置电梯模式）；
+6. 导航到 `elevator_out` 点 → 调用 `exit_elevator` 解锁轴向；
+7. 在目标楼层继续后续巡检。
 
 ```python
 import asyncio, json, websockets
 
-async def simulate_agent_wait_event(event_name, delay=5.0):
-  # 模拟外部 agent 在若干秒后完成动作
-  await asyncio.sleep(delay)
-  return {"event": event_name, "status": "ok"}
+async def rpc(ws, method, params=None, req_id=1):
+    await ws.send(json.dumps({"id": req_id, "method": method, "params": params or {}}))
+    return json.loads(await ws.recv())['result']
 
-async def handle_point(ws, point_name, point_info):
-  ptype = point_info.get('type', 'single_pose')
-  if ptype == 'multi_pose':
-    await ws.send(json.dumps({"id":1, "method":"set_goal_by_multipose", "params":{"target": point_name}}))
-    print(await ws.recv())
-  else:
-    await ws.send(json.dumps({"id":2, "method":"set_goal_by_name", "params":{"target": point_name}}))
-    print(await ws.recv())
-    await ws.send(json.dumps({"id":3, "method":"wait_goal_reached", "params":{"target": point_name}}))
-    print(await ws.recv())
+async def simulate_agent_wait(event_name, delay=5.0):
+    await asyncio.sleep(delay)
+    return {"event": event_name, "status": "ok"}
 
-  if ptype == 'elevator_call':
-    print('Reached elevator_call point; instructing agent to call elevator...')
-    # 模拟 agent 执行呼叫电梯
-    ev = await simulate_agent_wait_event('elevator_called', delay=3.0)
-    print('Agent response:', ev)
-
-  if ptype == 'elevator_wait':
-    print('Reached elevator_wait point; waiting for elevator arrival/open door...')
-    ev = await simulate_agent_wait_event('elevator_arrived', delay=6.0)
-    print('Agent response:', ev)
-
-async def patrol_with_agent(ws_url, route_name):
+async def patrol_with_elevator(ws_url, route_name):
   async with websockets.connect(ws_url) as ws:
-    await ws.send(json.dumps({"id":10, "method":"get_route", "params":{"route_name":route_name}}))
-    route = json.loads(await ws.recv())['result']
+    route = await rpc(ws, "get_route", {"route_name": route_name})
+    cur = await rpc(ws, "get_current_map_id")
+    current_map = cur.get('map_id')
+
     for wp in route.get('waypoints', []):
+      target_submap = wp.get('submap')
       point_name = wp.get('semantic_point') or wp.get('name')
       if not point_name:
         continue
-      await ws.send(json.dumps({"id":11, "method":"get_pose_in_submap", "params":{"pose_name": point_name}}))
-      info = json.loads(await ws.recv())['result']
-      if not info.get('success'):
-        continue
-      await handle_point(ws, point_name, info['point_info'])
 
-asyncio.run(patrol_with_agent('ws://127.0.0.1:9000/ws', '巡逻线路A'))
+      # 需要切换楼层时，先导航到 portal
+      if target_submap and target_submap != current_map:
+        portal = await rpc(ws, "get_portal_to_submap", {"target_submap": target_submap})
+        if portal.get('success') and portal.get('portal'):
+          await rpc(ws, "set_goal_by_name", {"target": portal['portal']})
+          await rpc(ws, "wait_goal_reached", {"target": portal['portal']})
+        await rpc(ws, "change_map", {"map_id": target_submap})
+        cur = await rpc(ws, "get_current_map_id")
+        current_map = cur.get('map_id')
+
+      # 获取点位信息
+      pinfo = await rpc(ws, "get_pose_in_submap", {"pose_name": point_name})
+      if not pinfo.get('success'):
+        print('skip', point_name)
+        continue
+
+      ptype = pinfo['point_info'].get('type', 'single_pose')
+
+      if ptype == 'multi_pose':
+        print(await rpc(ws, "set_goal_by_multipose", {"target": point_name}))
+      else:
+        print(await rpc(ws, "set_goal_by_name", {"target": point_name}))
+        print(await rpc(ws, "wait_goal_reached", {"target": point_name}))
+
+      # 电梯协同
+      if ptype == 'elevator_call':
+        print('Agent 呼叫电梯...')
+        await simulate_agent_wait('elevator_called', delay=3.0)
+      elif ptype == 'elevator_wait':
+        print('等待电梯到达并开门...')
+        await simulate_agent_wait('elevator_arrived', delay=6.0)
+      elif ptype == 'elevator_out':
+        print(await rpc(ws, "exit_elevator"))
+
+asyncio.run(patrol_with_elevator('ws://127.0.0.1:9000/ws', '跨楼层巡逻'))
 ```
 
 ### 5.4 切换楼层并继续巡检示例
@@ -582,6 +678,7 @@ asyncio.run(example_pause_resume('ws://127.0.0.1:9000/ws', 'PointA'))
 - 服务进程内初始化 **ROS 2**（`rclpy`）及 **`NavNode`**，需在机器人或已配置 ROS 的环境中运行。
 - **经纬度导航** 依赖 `WGS84Converter` 与标定。
 - 未使用 `-m` 加载 `MapManager` 时，凡访问 `self.map_manager` 的接口可能异常或返回错误，请以实际部署为准。
+- **电梯模式** 依赖 FAST-LIO 提供的 `/set_elevator_mode` 服务（`std_srvs/SetBool`），需确保定位节点已启动。
 
 ---
 
@@ -590,3 +687,4 @@ asyncio.run(example_pause_resume('ws://127.0.0.1:9000/ws', 'PointA'))
 - 实现文件：`NaviAgent/server_fast.py`
 - 方法注册：`NavigationToolManager.register_tools` 末尾 `self._handlers` 字典
 - 本文档随代码维护，如有新增方法请以 `GET /health` 返回列表与源码为准。
+- 最后更新：2026-04-08
