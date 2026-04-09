@@ -848,41 +848,48 @@ QVector<int> PointCloudViewer::hitTestMarkers(const QPoint& screenPos, float thr
 void PointCloudViewer::performPick(const QPoint& screenPos) {
     makeCurrent();
 
+    auto rayIntersectPlane = [&](const Eigen::Vector3d& planeOrig,
+                                 const Eigen::Vector3d& planeNorm) -> bool {
+        QMatrix4x4 invVP = (projMatrix() * viewMatrix()).inverted();
+        float nx = (2.0f * screenPos.x()) / width() - 1.0f;
+        float ny = 1.0f - (2.0f * screenPos.y()) / height();
+
+        QVector4D nearPt = invVP * QVector4D(nx, ny, -1.0f, 1.0f);
+        QVector4D farPt  = invVP * QVector4D(nx, ny,  1.0f, 1.0f);
+        nearPt /= nearPt.w();
+        farPt  /= farPt.w();
+
+        Eigen::Vector3d rayOrig(nearPt.x(), nearPt.y(), nearPt.z());
+        Eigen::Vector3d rayDir(farPt.x() - nearPt.x(),
+                               farPt.y() - nearPt.y(),
+                               farPt.z() - nearPt.z());
+
+        double denom = planeNorm.dot(rayDir);
+        if (std::abs(denom) < 1e-8) return false;
+        double t = planeNorm.dot(planeOrig - rayOrig) / denom;
+        if (t <= 0) return false;
+
+        Eigen::Vector3d hit = rayOrig + t * rayDir;
+        emit pointPicked(hit);
+        pickMode_ = NoPickMode;
+        setCursor(Qt::ArrowCursor);
+        return true;
+    };
+
+    if (pickMode_ == PickOnPlane) {
+        rayIntersectPlane(pickPlaneOrigin_, pickPlaneNormal_);
+        doneCurrent();
+        return;
+    }
+
     // 读取深度缓冲
     float depth = 1.0f;
     glReadPixels(screenPos.x(), height() - screenPos.y(), 1, 1,
                  GL_DEPTH_COMPONENT, GL_FLOAT, &depth);
 
     if (depth >= 1.0f) {
-        // 没有点击到任何物体, 使用地面平面 (z=0)
-        // 通过射线与 z=0 平面求交
-        QMatrix4x4 invVP = (projMatrix() * viewMatrix()).inverted();
-
-        // NDC 坐标
-        float nx = (2.0f * screenPos.x()) / width() - 1.0f;
-        float ny = 1.0f - (2.0f * screenPos.y()) / height();
-
-        QVector4D nearPt = invVP * QVector4D(nx, ny, -1.0f, 1.0f);
-        QVector4D farPt  = invVP * QVector4D(nx, ny, 1.0f, 1.0f);
-        nearPt /= nearPt.w();
-        farPt  /= farPt.w();
-
-        QVector3D rayOrig(nearPt);
-        QVector3D rayDir = QVector3D(farPt) - rayOrig;
-
-        // z = 0 平面
-        if (std::abs(rayDir.z()) > 1e-6) {
-            float t = -rayOrig.z() / rayDir.z();
-            if (t > 0) {
-                QVector3D hit = rayOrig + t * rayDir;
-                Eigen::Vector3d pos(hit.x(), hit.y(), hit.z());
-                emit pointPicked(pos);
-                pickMode_ = NoPickMode;
-                setCursor(Qt::ArrowCursor);
-            }
-        }
+        rayIntersectPlane(Eigen::Vector3d::Zero(), Eigen::Vector3d::UnitZ());
     } else {
-        // 反投影深度值到世界坐标
         auto pos = unproject(screenPos, depth);
         emit pointPicked(pos);
         pickMode_ = NoPickMode;

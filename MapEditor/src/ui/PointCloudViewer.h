@@ -92,8 +92,10 @@ public:
     void clearCropBoxes();
 
     // ── 拾取模式 ─────────────────────────────────────────────────────
-    enum PickMode { NoPickMode, PickPointOnCloud, PickGuessPosition };
+    enum PickMode { NoPickMode, PickPointOnCloud, PickGuessPosition, PickOnPlane };
     void setPickMode(PickMode mode) { pickMode_ = mode; }
+    void setPickPlane(const Eigen::Vector3d& origin, const Eigen::Vector3d& normal)
+    { pickPlaneOrigin_ = origin; pickPlaneNormal_ = normal.normalized(); }
 
     // ── 视角控制 ─────────────────────────────────────────────────────
     void resetCamera();
@@ -186,6 +188,8 @@ private:
 
     // ── 拾取 ─────────────────────────────────────────────────────────
     PickMode pickMode_ = NoPickMode;
+    Eigen::Vector3d pickPlaneOrigin_{0, 0, 0};
+    Eigen::Vector3d pickPlaneNormal_{0, 0, 1};
     Eigen::Vector3d unproject(const QPoint& screenPos, float depth = 0.0f);
     void performPick(const QPoint& screenPos);
 

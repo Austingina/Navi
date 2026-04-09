@@ -676,12 +676,18 @@ void MainWindow::onAddSemanticPoint(const QString& smId) {
 }
 
 void MainWindow::onSemanticPickPositionRequested(const QString& smId) {
-    if (!project_.submap(smId)) return;
+    auto* sm = project_.submap(smId);
+    if (!sm) return;
     pendingAction_   = PendingSemanticPanelPick;
     pendingSubmapId_ = smId;
-    viewer_->setPickMode(PointCloudViewer::PickPointOnCloud);
+
+    Eigen::Matrix4d T = sm->transformMatrix();
+    Eigen::Vector3d planeOrigin = T.block<3,1>(0,3);
+    Eigen::Vector3d planeNormal = T.block<3,3>(0,0) * Eigen::Vector3d::UnitZ();
+    viewer_->setPickPlane(planeOrigin, planeNormal);
+    viewer_->setPickMode(PointCloudViewer::PickOnPlane);
     viewer_->setCursor(Qt::CrossCursor);
-    statusLabel_->setText("在点云上单击以设置语义点 position（子地图局部坐标）…");
+    statusLabel_->setText("在地图上单击以设置语义点 position（当前子地图平面）…");
 }
 
 void MainWindow::onAddPortal(const QString& smId) {
@@ -897,11 +903,10 @@ void MainWindow::onPointPicked(const Eigen::Vector3d& pos) {
         if (!sm) break;
         Eigen::Matrix4d invT = sm->transformMatrix().inverse();
         Eigen::Vector4d local = invT * Eigen::Vector4d(pos.x(), pos.y(), pos.z(), 1.0);
-        propsPanel_->setSemanticPositionLocal(local.x(), local.y(), local.z());
-        statusLabel_->setText(QString("已填入 position（局部）: (%1, %2, %3)，可在右侧面板继续编辑后点「应用修改」")
+        propsPanel_->setSemanticPositionLocal(local.x(), local.y(), 0.0);
+        statusLabel_->setText(QString("已填入 position（局部坐标）: (%1, %2, 0.00)，可在右侧面板继续编辑后点「应用修改」")
                                   .arg(local.x(), 0, 'f', 2)
-                                  .arg(local.y(), 0, 'f', 2)
-                                  .arg(local.z(), 0, 'f', 2));
+                                  .arg(local.y(), 0, 'f', 2));
         break;
     }
     case PendingAlignGuess:
