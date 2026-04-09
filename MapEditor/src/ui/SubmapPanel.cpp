@@ -276,7 +276,7 @@ QTreeWidgetItem* SubmapPanel::makeRouteItem(const QString& name, const Route& ro
     auto* item = new QTreeWidgetItem({name});
     item->setData(0, RoleType, TypeRoute);
     item->setData(0, RoleRouteName, name);
-    item->setCheckState(1, Qt::Checked);
+    item->setCheckState(1, Qt::Unchecked);
     item->setToolTip(0, route.description);
     item->setFlags(item->flags() | Qt::ItemIsDropEnabled);
 

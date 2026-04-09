@@ -564,6 +564,7 @@ void MainWindow::refreshRouteLines() {
 
         if (lineVerts.size() >= 2) {
             viewer_->updateRouteLines(it.key(), lineVerts);
+            viewer_->setRouteVisible(it.key(), false);
         }
         colorIdx++;
     }
