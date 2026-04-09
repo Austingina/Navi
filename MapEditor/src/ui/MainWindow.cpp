@@ -511,7 +511,7 @@ void MainWindow::onRouteWaypointRemoveRequested(const QString& routeName, int wa
     if (!r) return;
     if (waypointIndex < 0 || waypointIndex >= r->waypoints.size()) return;
 
-    const auto& w = r->waypoints[waypointIndex];
+    const auto w = r->waypoints[waypointIndex];
     r->waypoints.removeAt(waypointIndex);
     project_.setDirty();
     submapPanel_->rebuild(&project_);
