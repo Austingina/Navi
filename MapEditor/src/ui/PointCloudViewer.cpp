@@ -742,40 +742,37 @@ void PointCloudViewer::mouseMoveEvent(QMouseEvent* e) {
 
     // 拖拽处理: 若处于拖拽状态，则根据当前屏幕位置计算世界坐标并更新该标记
     if (dragging_ && dragIndex_ >= 0 && dragIndex_ < markerCount_) {
-        // 将屏幕坐标转换为世界坐标（读取深度或投影到 z=0 平面）
         makeCurrent();
-        float depth = 1.0f;
-        glReadPixels(e->pos().x(), height() - e->pos().y(), 1, 1,
-                     GL_DEPTH_COMPONENT, GL_FLOAT, &depth);
 
-        Eigen::Vector3d worldPos;
-        if (depth >= 1.0f) {
-            // 与 z=0 平面相交
-            QMatrix4x4 invVP = (projMatrix() * viewMatrix()).inverted();
-            float nx = (2.0f * e->pos().x()) / width() - 1.0f;
-            float ny = 1.0f - (2.0f * e->pos().y()) / height();
-            QVector4D nearPt = invVP * QVector4D(nx, ny, -1.0f, 1.0f);
-            QVector4D farPt  = invVP * QVector4D(nx, ny, 1.0f, 1.0f);
-            nearPt /= nearPt.w();
-            farPt  /= farPt.w();
-            QVector3D rayOrig(nearPt);
-            QVector3D rayDir = QVector3D(farPt) - rayOrig;
-            if (std::abs(rayDir.z()) > 1e-6) {
-                float t = -rayOrig.z() / rayDir.z();
-                if (t > 0) {
-                    QVector3D hit = rayOrig + t * rayDir;
-                    worldPos = Eigen::Vector3d(hit.x(), hit.y(), hit.z());
-                }
+        const auto& mi = markerInfos_[dragIndex_];
+        Eigen::Vector3d planeOrig(mi.planeOrigin.x(), mi.planeOrigin.y(), mi.planeOrigin.z());
+        Eigen::Vector3d planeNorm(mi.planeNormal.x(), mi.planeNormal.y(), mi.planeNormal.z());
+
+        QMatrix4x4 invVP = (projMatrix() * viewMatrix()).inverted();
+        float nx = (2.0f * e->pos().x()) / width() - 1.0f;
+        float ny = 1.0f - (2.0f * e->pos().y()) / height();
+        QVector4D nearPt = invVP * QVector4D(nx, ny, -1.0f, 1.0f);
+        QVector4D farPt  = invVP * QVector4D(nx, ny,  1.0f, 1.0f);
+        nearPt /= nearPt.w();
+        farPt  /= farPt.w();
+
+        Eigen::Vector3d rayOrig(nearPt.x(), nearPt.y(), nearPt.z());
+        Eigen::Vector3d rayDir(farPt.x() - nearPt.x(),
+                               farPt.y() - nearPt.y(),
+                               farPt.z() - nearPt.z());
+
+        double denom = planeNorm.dot(rayDir);
+        if (std::abs(denom) > 1e-8) {
+            double t = planeNorm.dot(planeOrig - rayOrig) / denom;
+            if (t > 0) {
+                Eigen::Vector3d worldPos = rayOrig + t * rayDir;
+                markerVertices_[dragIndex_].x = static_cast<float>(worldPos.x());
+                markerVertices_[dragIndex_].y = static_cast<float>(worldPos.y());
+                markerVertices_[dragIndex_].z = static_cast<float>(worldPos.z());
+                markerInfos_[dragIndex_].worldPos = QVector3D(
+                    (float)worldPos.x(), (float)worldPos.y(), (float)worldPos.z());
             }
-        } else {
-            worldPos = unproject(e->pos(), depth);
         }
-
-        // 更新本地顶点缓存与元数据，并重新上传 GPU
-        markerVertices_[dragIndex_].x = static_cast<float>(worldPos.x());
-        markerVertices_[dragIndex_].y = static_cast<float>(worldPos.y());
-        markerVertices_[dragIndex_].z = static_cast<float>(worldPos.z());
-        markerInfos_[dragIndex_].worldPos = QVector3D((float)worldPos.x(), (float)worldPos.y(), (float)worldPos.z());
 
         uploadMarkerGlBuffers();
         doneCurrent();

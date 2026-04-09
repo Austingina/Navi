@@ -41,6 +41,8 @@ struct MarkerInfo {
     QString submapId;     // 所属 submap
     QString type;         // "semantic" 或 "portal"
     QVector3D worldPos;   // 世界坐标系下位置
+    QVector3D planeOrigin{0,0,0}; // 所属 submap Z=0 平面原点（世界系）
+    QVector3D planeNormal{0,0,1}; // 所属 submap Z=0 平面法线（世界系）
 };
 
 /// 路线折线的 GPU 渲染数据

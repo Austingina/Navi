@@ -102,6 +102,15 @@ private:
     PendingAction pendingAction_ = NoPending;
     QString       pendingSubmapId_;
 
+    // 拖拽撤销（最多一次）
+    void undoMarkerDrag();
+    struct MarkerDragUndo {
+        bool valid = false;
+        QString submapId;
+        QString pointName;
+        Eigen::Vector3d oldPosition{0, 0, 0};
+    } markerDragUndo_;
+
     static QVector<MarkerVertex> buildWireframeBox(
         const Eigen::Vector3d& center, const Eigen::Vector3d& halfExtents,
         const QColor& color, const Eigen::Matrix4d& transform = Eigen::Matrix4d::Identity());

@@ -128,6 +128,8 @@ void MainWindow::setupMenuBar() {
     viewMenu->addAction("重置视角", this, &MainWindow::onResetView, QKeySequence("R"));
 
     auto* editMenu = menuBar()->addMenu("编辑(&E)");
+    editMenu->addAction("撤销拖拽", this, &MainWindow::undoMarkerDrag, QKeySequence::Undo);
+    editMenu->addSeparator();
     editMenu->addAction("新增 Submap...", this, &MainWindow::onAddSubmap, QKeySequence("Ctrl+N"));
 
     // 工具栏
@@ -336,6 +338,10 @@ void MainWindow::refreshMarkers() {
         auto* sm = project_.submap(id);
         if (!sm) continue;
         Eigen::Matrix4d T = sm->transformMatrix();
+        Eigen::Vector3d smPlaneOrig = T.block<3,1>(0,3);
+        Eigen::Vector3d smPlaneNorm = (T.block<3,3>(0,0) * Eigen::Vector3d::UnitZ()).normalized();
+        QVector3D qPlaneOrig((float)smPlaneOrig.x(), (float)smPlaneOrig.y(), (float)smPlaneOrig.z());
+        QVector3D qPlaneNorm((float)smPlaneNorm.x(), (float)smPlaneNorm.y(), (float)smPlaneNorm.z());
 
         // 语义点位 (默认黄色，当前选中项红色)
         if (sm->displayOptions().showSemanticPts) {
@@ -350,7 +356,8 @@ void MainWindow::refreshMarkers() {
                         pose.position.x(), pose.position.y(), pose.position.z(), 1.0);
                     markers.append({(float)pw.x(), (float)pw.y(), (float)pw.z(), r, g, b});
                     markerInfos.append({it.key(), id, "semantic",
-                                        QVector3D((float)pw.x(), (float)pw.y(), (float)pw.z())});
+                                        QVector3D((float)pw.x(), (float)pw.y(), (float)pw.z()),
+                                        qPlaneOrig, qPlaneNorm});
                     markerEmphasis.append(selected ? quint8(1) : quint8(0));
 
                     Eigen::Matrix4d Tworld = T * pose.toMatrix();
@@ -378,7 +385,8 @@ void MainWindow::refreshMarkers() {
                     markerInfos.append({
                         QString("%1 → %2").arg(portal.portalName, portal.targetSubmap),
                         id, "portal",
-                        QVector3D((float)pw.x(), (float)pw.y(), (float)pw.z())});
+                        QVector3D((float)pw.x(), (float)pw.y(), (float)pw.z()),
+                        qPlaneOrig, qPlaneNorm});
                     markerEmphasis.append(quint8(0));
                 }
             }
@@ -928,22 +936,53 @@ void MainWindow::onPointPicked(const Eigen::Vector3d& pos) {
     pendingAction_ = NoPending;
 }
 
-void MainWindow::onMarkerDragFinished(const QString& submapId, const QString& name, const Eigen::Vector3d& newPos) {
-    // Update semantic point pose in project and refresh display
+void MainWindow::onMarkerDragFinished(const QString& submapId, const QString& name, const Eigen::Vector3d& newWorldPos) {
     auto* sm = project_.submap(submapId);
     if (!sm) return;
     auto* sp = sm->semanticPoint(name);
     if (!sp) return;
-    // For simplicity assume single_pose type and update first pose
+
+    Eigen::Matrix4d invT = sm->transformMatrix().inverse();
+    Eigen::Vector4d lp = invT * Eigen::Vector4d(newWorldPos.x(), newWorldPos.y(), newWorldPos.z(), 1.0);
+    Eigen::Vector3d localPos(lp.x(), lp.y(), 0.0);
+
     if (!sp->poses.isEmpty()) {
-        sp->poses[0].position = newPos;
+        markerDragUndo_ = {true, submapId, name, sp->poses[0].position};
+        sp->poses[0].position = localPos;
     } else {
-        Pose p; p.position = newPos; sp->poses.append(p);
+        markerDragUndo_.valid = false;
+        Pose p; p.position = localPos; sp->poses.append(p);
     }
     project_.setDirty();
     refreshMarkers();
     refreshSubmap(submapId);
-    statusBar()->showMessage(QString("已移动语义点 %1 到新位置").arg(name), 3000);
+    if (submapId == selectedSemanticSmId_ && name == selectedSemanticPtName_)
+        propsPanel_->showSemanticPointProperties(sm, name);
+    statusBar()->showMessage(QString("已移动语义点 %1 到新位置 (Ctrl+Z 撤销)").arg(name), 5000);
+}
+
+void MainWindow::undoMarkerDrag() {
+    if (!markerDragUndo_.valid) {
+        statusBar()->showMessage("没有可撤销的拖拽操作", 3000);
+        return;
+    }
+    auto* sm = project_.submap(markerDragUndo_.submapId);
+    if (!sm) return;
+    auto* sp = sm->semanticPoint(markerDragUndo_.pointName);
+    if (!sp || sp->poses.isEmpty()) return;
+
+    sp->poses[0].position = markerDragUndo_.oldPosition;
+    QString undoneSmId = markerDragUndo_.submapId;
+    QString undonePtName = markerDragUndo_.pointName;
+    markerDragUndo_.valid = false;
+
+    project_.setDirty();
+    refreshMarkers();
+    refreshSubmap(undoneSmId);
+    if (undoneSmId == selectedSemanticSmId_ && undonePtName == selectedSemanticPtName_)
+        propsPanel_->showSemanticPointProperties(sm, undonePtName);
+    statusBar()->showMessage(
+        QString("已撤销语义点 %1 的拖拽").arg(undonePtName), 3000);
 }
 
 } // namespace me
