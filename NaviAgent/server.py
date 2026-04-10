@@ -1264,6 +1264,8 @@ async def main():
     parser.add_argument('-t', '--test', action='store_true', help='测试环境')
     parser.add_argument('-m', '--map', type=str, default=None,
                         help='多楼层地图配置文件路径 (multifloor.json)')
+    parser.add_argument('-s', '--submap', type=str, default=None,
+                        help='初始 submap ID；省略则使用配置文件中的 default_submap')
     args = parser.parse_args()
 
     port = 9999 if args.test else 9000
@@ -1274,6 +1276,11 @@ async def main():
         try:
             map_manager = MapManager(args.map)
             logging.info(f"已加载多楼层地图: {args.map}")
+            if args.submap:
+                if map_manager.set_current_submap(args.submap):
+                    logging.info(f"已指定初始 submap: {args.submap}")
+                else:
+                    logging.error(f"指定的 submap '{args.submap}' 不存在，可用: {map_manager.get_submap_list()}")
         except Exception as e:
             logging.error(f"加载地图配置失败: {e}")
 
