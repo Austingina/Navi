@@ -299,7 +299,7 @@
                 "meetingroom_door": {
                     "pose": {
                         "orientation": { "w": 0.0, "x": 0.0, "y": 0.0, "z": 1.0},
-                        "position": { "x": 7.7193, "y": -12.3384, "z": 0.0}
+                        "position": { "x": 7.986, "y": -12.418, "z": 0.0}
                     },
                     "type": "single_pose"
                 },
