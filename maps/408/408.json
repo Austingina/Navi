@@ -355,21 +355,21 @@
                 "elevator_out": {
                     "pose": {
                         "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
-                        "position": { "x": -0.2, "y": 0.1, "z": 0.0}
+                        "position": { "x": -0.2, "y": 0.15, "z": 0.0}
                     },
                     "type": "elevator_out"
                 },
                 "elevator_press": {
                     "pose": {
                         "orientation": { "w": 0.0, "x": 0.0, "y": 0.0, "z": 1.0},
-                        "position": { "x": -0.2, "y": 1.2, "z": 0.0}
+                        "position": { "x": -0.2, "y": 0.7, "z": 0.0}
                     },
                     "type": "elevator_call"
                 },
                 "elevator_wait": {
                     "pose": {
                         "orientation": { "w": 0.0, "x": 0.0, "y": 0.0, "z": 1.0},
-                        "position": { "x": -0.2, "y": 0.1, "z": 0.0}
+                        "position": { "x": -0.2, "y": 0.15, "z": 0.0}
                     },
                     "type": "elevator_wait"
                 }
@@ -438,9 +438,16 @@
                 "elevator_in": {
                     "pose": {
                         "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
-                        "position": { "x": -2.15, "y": -0.2, "z": 0.0}
+                        "position": { "x": -2.15, "y": -0.3, "z": 0.0}
                     },
                     "type": "elevator_in"
+                },
+                "elevator_in_press": {
+                    "pose": {
+                        "orientation": { "w": 0.9978130514800705, "x": 0.0020000261605132704, "y": -0.0030000392407699052, "z": -0.06600086329693793},
+                        "position": { "x": -1.9229, "y": -0.6, "z": 0.0}
+                    },
+                    "type": "elevator_call"
                 },
                 "elevator_out": {
                     "pose": {
