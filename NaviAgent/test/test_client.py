@@ -106,12 +106,13 @@ class SimplePatrolClient:
         self,
         ws_url: str = "ws://localhost:9999/ws",
         route_name: Optional[str] = None,
+        patrol_sequence: Optional[List[str]] = None,
     ):
         self.ws_url = ws_url
         self.pose_list: list = []
         self.is_paused = False
 
-        self.patrol_sequence: list = []
+        self.patrol_sequence: list = list(patrol_sequence) if patrol_sequence else []
 
         _r = route_name.strip() if route_name else ""
         self.route_cli: Optional[str] = _r if _r else None
@@ -123,35 +124,6 @@ class SimplePatrolClient:
         logger.info(f"📡 {self.ws_url}")
 
         async with WsNavClient(self.ws_url) as client:
-            routes_data = await client.call("get_route_names")
-            if not routes_data.get("success"):
-                logger.error(
-                    "❌ get_route_names 失败: %s",
-                    routes_data.get("msg"),
-                )
-                return False
-
-            names: List[str] = list(routes_data.get("route_names") or [])
-            cnt = routes_data.get("count", len(names))
-            logger.info(f"📋 服务器全部路线 ({cnt} 条): {names}")
-            if not names:
-                logger.error("❌ 服务器未配置任何路线")
-                return False
-
-            if self.route_cli:
-                if self.route_cli not in names:
-                    logger.error(
-                        "❌ 路线 %r 不存在，可用: %s",
-                        self.route_cli,
-                        names,
-                    )
-                    return False
-                self.route_name = self.route_cli
-                logger.info("📌 使用 -r 指定路线: %r", self.route_name)
-            else:
-                self.route_name = names[0]
-                logger.info("📌 未指定 -r，使用第一条路线: %r", self.route_name)
-
             pose_list_data = await client.call("get_pose_list_in_current_submap")
             if pose_list_data.get("success"):
                 self.pose_list = pose_list_data["keys"]
@@ -160,17 +132,51 @@ class SimplePatrolClient:
                 logger.error(f"❌ 当前层语义点位列表失败: {pose_list_data.get('msg')}")
                 return False
 
-            route_waypoints = None
-            if self.route_name:
+            if self.patrol_sequence:
+                logger.info(
+                    "📌 使用 -p 指定的巡检序列 (%d 个目的地): %s",
+                    len(self.patrol_sequence),
+                    self.patrol_sequence,
+                )
+            else:
+                routes_data = await client.call("get_route_names")
+                if not routes_data.get("success"):
+                    logger.error(
+                        "❌ get_route_names 失败: %s",
+                        routes_data.get("msg"),
+                    )
+                    return False
+
+                names: List[str] = list(routes_data.get("route_names") or [])
+                cnt = routes_data.get("count", len(names))
+                logger.info(f"📋 服务器全部路线 ({cnt} 条): {names}")
+                if not names:
+                    logger.error("❌ 服务器未配置任何路线")
+                    return False
+
+                if self.route_cli:
+                    if self.route_cli not in names:
+                        logger.error(
+                            "❌ 路线 %r 不存在，可用: %s",
+                            self.route_cli,
+                            names,
+                        )
+                        return False
+                    self.route_name = self.route_cli
+                    logger.info("📌 使用 -r 指定路线: %r", self.route_name)
+                else:
+                    self.route_name = names[0]
+                    logger.info("📌 未指定 -r，使用第一条路线: %r", self.route_name)
+
                 logger.info(f"📌 拉取路线详情: {self.route_name!r}")
                 try:
                     route_data = await client.call(
                         "get_route", {"route_name": self.route_name}
                     )
                     if route_data.get("success") and route_data.get("waypoints"):
-                        route_waypoints = route_data.get("waypoints")
+                        self.patrol_sequence = route_data["waypoints"]
                         logger.info(
-                            f"✅ 路线 {self.route_name} 共 {len(route_waypoints)} 个途经点"
+                            f"✅ 路线 {self.route_name} 共 {len(self.patrol_sequence)} 个途经点"
                         )
                     else:
                         logger.warning(
@@ -181,17 +187,16 @@ class SimplePatrolClient:
                 except Exception as e:
                     logger.warning(f"获取路线异常: {e}")
 
-            if route_waypoints:
-                self.patrol_sequence = route_waypoints
-                logger.info(
-                    f"📋 本次测试点位序列 ({len(self.patrol_sequence)}): "
-                    f"{self.patrol_sequence}"
-                )
-            else:
-                logger.error(
-                    "❌ 未得到任何路线途经点（请检查地图 multifloor 是否配置 routes）"
-                )
-                return False
+                if not self.patrol_sequence:
+                    logger.error(
+                        "❌ 未得到任何路线途经点（请检查地图 multifloor 是否配置 routes）"
+                    )
+                    return False
+
+            logger.info(
+                f"📋 本次测试点位序列 ({len(self.patrol_sequence)}): "
+                f"{self.patrol_sequence}"
+            )
 
             logger.info("🔍 检查服务器连接和机器人状态...")
             status_data = await client.call("get_status")
@@ -500,7 +505,15 @@ async def main() -> int:
         "--route",
         default=None,
         metavar="NAME",
-        help="路线名称；省略则使用服务器返回的第一条路线",
+        help="路线名称；省略则使用服务器返回的第一条路线（当 -p 未指定时生效）",
+    )
+    parser.add_argument(
+        "-p",
+        "--patrol",
+        nargs="+",
+        default=None,
+        metavar="DEST",
+        help="直接指定巡检目的地序列（优先级最高，会忽略 -r 路线）",
     )
     parser.add_argument(
         "--set-xy",
@@ -535,7 +548,11 @@ async def main() -> int:
                 return 0 if plan_res.get("success") else 1
 
         # otherwise run full patrol test
-        client = SimplePatrolClient(ws_url=args.ws, route_name=args.route)
+        client = SimplePatrolClient(
+            ws_url=args.ws,
+            route_name=args.route,
+            patrol_sequence=args.patrol,
+        )
         success = await client.start_patrol_test()
 
         if success:
