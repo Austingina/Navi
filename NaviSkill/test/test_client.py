@@ -124,14 +124,6 @@ class SimplePatrolClient:
         logger.info(f"📡 {self.ws_url}")
 
         async with WsNavClient(self.ws_url) as client:
-            pose_list_data = await client.call("get_pose_list_in_current_submap")
-            if pose_list_data.get("success"):
-                self.pose_list = pose_list_data["keys"]
-                logger.info(f"📋 当前层语义点位列表: {self.pose_list}")
-            else:
-                logger.error(f"❌ 当前层语义点位列表失败: {pose_list_data.get('msg')}")
-                return False
-
             if self.patrol_sequence:
                 logger.info(
                     "📌 使用 -p 指定的巡检序列 (%d 个目的地): %s",
