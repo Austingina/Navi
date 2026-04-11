@@ -145,6 +145,30 @@
         "route2": {
             "description": "",
             "waypoints": [
+                {
+                    "semantic_point": "meetingroom_out",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "control point2",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "elevator_in_press",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "control point 1",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "meetingroom_door",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "meetingroom_patrol",
+                    "submap": "2f"
+                }
             ]
         },
         "routeA": {
