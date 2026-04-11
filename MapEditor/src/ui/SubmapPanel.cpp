@@ -274,7 +274,9 @@ QTreeWidgetItem* SubmapPanel::makeSubmapItem(const QString& id, SubMap* sm) {
 }
 
 QTreeWidgetItem* SubmapPanel::makeRouteItem(const QString& name, const Route& route) {
-    auto* item = new QTreeWidgetItem({name});
+    bool isDefault = (project_ && project_->defaultRouteId() == name);
+    QString label = isDefault ? (name + " ⭐") : name;
+    auto* item = new QTreeWidgetItem({label});
     item->setData(0, RoleType, TypeRoute);
     item->setData(0, RoleRouteName, name);
     item->setCheckState(1, Qt::Unchecked);
@@ -438,6 +440,13 @@ void SubmapPanel::onContextMenu(const QPoint& pos) {
         break;
     case TypeRoute: {
         QString rName = item->data(0, RoleRouteName).toString();
+        bool isDefaultRoute = (project_ && project_->defaultRouteId() == rName);
+        if (!isDefaultRoute) {
+            menu.addAction("⭐ 设为默认路线", [this, rName]() {
+                emit setDefaultRouteRequested(rName);
+            });
+            menu.addSeparator();
+        }
         menu.addAction("✏️ 重命名路线", [this, rName]() {
             bool ok;
             QString newName = QInputDialog::getText(

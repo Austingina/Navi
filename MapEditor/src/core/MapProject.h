@@ -34,6 +34,9 @@ public:
     int  submapCount() const { return static_cast<int>(submaps_.size()); }
 
     // ── Route 管理 ───────────────────────────────────────────────────
+    QString defaultRouteId() const { return defaultRouteId_; }
+    void setDefaultRouteId(const QString& name) { defaultRouteId_ = name; }
+
     const QMap<QString, Route>& routes() const { return routes_; }
     Route* route(const QString& name);
     void addRoute(const Route& r) { routes_[r.name] = r; }
@@ -59,6 +62,7 @@ private:
 
     QString  projectDir_;
     QString  defaultSubmapId_;
+    QString  defaultRouteId_;
     bool     dirty_ = false;
 
     // 使用 ordered map 保持插入顺序

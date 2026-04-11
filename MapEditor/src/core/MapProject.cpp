@@ -203,6 +203,7 @@ bool MapProject::load(const QString& dirPath) {
     if (root.contains("global")) {
         auto global = root["global"].toObject();
         defaultSubmapId_ = global["default_submap"].toString("floor");
+        defaultRouteId_ = global["default_route"].toString();
     }
 
     // ── submaps ──────────────────────────────────────────────────────
@@ -316,7 +317,15 @@ bool MapProject::save(const QString& dirPath) const {
 
     // ── global ───────────────────────────────────────────────────────
     root["_comment"] = QString("多楼层地图配置文件 / Multi-floor map configuration");
-    root["global"] = QJsonObject{{"default_submap", defaultSubmapId_}};
+    QString savedDefaultRoute = defaultRouteId_;
+    if (savedDefaultRoute.isEmpty() || !routes_.contains(savedDefaultRoute)) {
+        if (!routes_.isEmpty())
+            savedDefaultRoute = routes_.firstKey();
+    }
+    root["global"] = QJsonObject{
+        {"default_submap", defaultSubmapId_},
+        {"default_route", savedDefaultRoute}
+    };
 
     // ── submaps ──────────────────────────────────────────────────────
     QJsonObject submapsObj;
@@ -451,6 +460,8 @@ bool MapProject::renameRoute(const QString& oldName, const QString& newName) {
     r.name = newName;
     routes_.remove(oldName);
     routes_[newName] = r;
+    if (defaultRouteId_ == oldName)
+        defaultRouteId_ = newName;
     return true;
 }
 

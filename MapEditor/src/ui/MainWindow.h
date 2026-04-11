@@ -45,6 +45,7 @@ private slots:
     void onAddSubmap();
     void onAddRoute();
     void onRenameRoute(const QString& oldName, const QString& newName);
+    void onSetDefaultRoute(const QString& routeName);
     void onRemoveSubmap(const QString& id);
     void onAddSemanticPoint(const QString& smId);
     void onAddPortal(const QString& smId);

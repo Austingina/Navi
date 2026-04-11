@@ -197,6 +197,8 @@ void MainWindow::connectSignals() {
             this, &MainWindow::onAddRoute);
     connect(submapPanel_, &SubmapPanel::renameRouteRequested,
             this, &MainWindow::onRenameRoute);
+    connect(submapPanel_, &SubmapPanel::setDefaultRouteRequested,
+            this, &MainWindow::onSetDefaultRoute);
     connect(submapPanel_, &SubmapPanel::removeSubmapRequested,
             this, &MainWindow::onRemoveSubmap);
     connect(submapPanel_, &SubmapPanel::addSemanticPointRequested,
@@ -656,6 +658,14 @@ void MainWindow::onRenameRoute(const QString& oldName, const QString& newName) {
     submapPanel_->expandRoute(newName);
     refreshRouteLines();
     statusLabel_->setText(QString("已将路线 '%1' 重命名为 '%2'").arg(oldName, newName));
+}
+
+void MainWindow::onSetDefaultRoute(const QString& routeName) {
+    if (routeName.isEmpty() || !project_.route(routeName)) return;
+    project_.setDefaultRouteId(routeName);
+    project_.setDirty();
+    submapPanel_->rebuild(&project_);
+    statusLabel_->setText("已将 " + routeName + " 设置为 default_route");
 }
 
 void MainWindow::onSetDefaultSubmap(const QString& id) {
