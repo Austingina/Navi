@@ -107,10 +107,12 @@ class SimplePatrolClient:
         ws_url: str = "ws://localhost:9999/ws",
         route_name: Optional[str] = None,
         patrol_sequence: Optional[List[str]] = None,
+        continue_from_nearest: bool = False,
     ):
         self.ws_url = ws_url
         self.pose_list: list = []
         self.is_paused = False
+        self.continue_from_nearest = continue_from_nearest
 
         self.patrol_sequence: list = list(patrol_sequence) if patrol_sequence else []
 
@@ -210,6 +212,33 @@ class SimplePatrolClient:
                 logger.info(
                     f"📍 最接近的预设点: {nearest_data['nearest_point']} "
                     f"(距离: {nearest_data['distance']}m)"
+                )
+
+            if self.continue_from_nearest and len(self.patrol_sequence) > 1:
+                cur_x = current_pos['x']
+                cur_y = current_pos['y']
+                best_idx = 0
+                best_dist = float('inf')
+                for idx, wp in enumerate(self.patrol_sequence):
+                    wp_name = (wp.get('semantic_point') or wp.get('name')) if isinstance(wp, dict) else wp
+                    if not wp_name:
+                        continue
+                    pi = await client.call("get_pose_in_submap", {"pose_name": wp_name})
+                    if not pi.get('success'):
+                        continue
+                    pose = pi.get('point_info', {}).get('pose')
+                    if not pose:
+                        continue
+                    dx = cur_x - pose['position']['x']
+                    dy = cur_y - pose['position']['y']
+                    d = (dx * dx + dy * dy) ** 0.5
+                    if d < best_dist:
+                        best_dist = d
+                        best_idx = idx
+                self.patrol_sequence = self.patrol_sequence[best_idx:]
+                logger.info(
+                    f"📌 --continue 模式：从第 {best_idx + 1} 个途经点开始"
+                    f"（距离 {best_dist:.2f}m），剩余 {len(self.patrol_sequence)} 个点"
                 )
 
             success_count = 0
@@ -514,6 +543,14 @@ async def main() -> int:
         help="直接指定巡检目的地序列（优先级最高，会忽略 -r 路线）",
     )
     parser.add_argument(
+        "-c",
+        "--continue",
+        dest="continue_patrol",
+        action="store_true",
+        default=False,
+        help="从路线中距当前位置最近的途经点开始巡检，而非从头开始",
+    )
+    parser.add_argument(
         "--set-xy",
         nargs=2,
         type=float,
@@ -550,6 +587,7 @@ async def main() -> int:
             ws_url=args.ws,
             route_name=args.route,
             patrol_sequence=args.patrol,
+            continue_from_nearest=args.continue_patrol,
         )
         success = await client.start_patrol_test()
 
