@@ -27,6 +27,7 @@ class MapManager:
         self.submaps = {}  # submap配置 {submap_id: submap_config}
         self.current_submap = None  # 当前 submap ID
         self.default_submap = None  # 默认 submap ID
+        self.default_route = None   # 默认路线名称
         
         if map_config_path:
             self.load_config(map_config_path)
@@ -46,6 +47,7 @@ class MapManager:
         # 解析全局配置
         global_config = self.config.get('global', {})
         self.default_submap = global_config.get('default_submap', None)
+        self.default_route = global_config.get('default_route', None)
         
         # 解析 submap 配置
         self.submaps = self.config.get('submaps', {})
@@ -361,6 +363,10 @@ class MapManager:
             'waypoints': route_config.get('waypoints', [])
         }
     
+    def get_default_route(self) -> Optional[str]:
+        """获取默认路线名称"""
+        return self.default_route
+
     def get_route_names(self) -> List[str]:
         """
         获取所有路线名称

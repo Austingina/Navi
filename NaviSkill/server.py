@@ -855,6 +855,21 @@ class NavigationToolManager:
             except Exception as e:
                 return {"success": False, "msg": f"获取路线列表失败: {str(e)}"}
 
+        def get_default_route() -> Dict[str, Any]:
+            """
+            获取默认路线名称（地图配置中的 global.default_route）。
+
+            返回:
+            Dict: {"success": True, "default_route": "..."} 或 success=false
+            """
+            try:
+                name = self.map_manager.get_default_route()
+                if name:
+                    return {"success": True, "default_route": name}
+                return {"success": False, "msg": "未配置 default_route"}
+            except Exception as e:
+                return {"success": False, "msg": f"获取默认路线失败: {str(e)}"}
+
         def get_route(route_name: str) -> Dict[str, Any]:
             """
             根据路线名称获取巡逻点位列表。
@@ -1148,6 +1163,7 @@ class NavigationToolManager:
             "change_map": change_map,
             "get_portal_to_submap": get_portal_to_submap,
             "get_route_names": get_route_names,
+            "get_default_route": get_default_route,
             "get_route": get_route,
             "get_status": get_status,
             "wait_goal_reached": wait_goal_reached,

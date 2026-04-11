@@ -165,8 +165,14 @@ class SimplePatrolClient:
                     self.route_name = self.route_cli
                     logger.info("📌 使用 -r 指定路线: %r", self.route_name)
                 else:
-                    self.route_name = names[0]
-                    logger.info("📌 未指定 -r，使用第一条路线: %r", self.route_name)
+                    default_route_data = await client.call("get_default_route")
+                    dr = default_route_data.get("default_route") if default_route_data.get("success") else None
+                    if dr and dr in names:
+                        self.route_name = dr
+                        logger.info("📌 使用 default_route: %r", self.route_name)
+                    else:
+                        self.route_name = names[0]
+                        logger.info("📌 未指定 -r 且无 default_route，使用第一条路线: %r", self.route_name)
 
                 logger.info(f"📌 拉取路线详情: {self.route_name!r}")
                 try:
