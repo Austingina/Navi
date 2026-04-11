@@ -9,7 +9,7 @@ fi
 # Navi CI archive script
 # Packages the following directories from Navi workspace:
 #   - Navi/maps
-#   - Navi/NaviAgent
+#   - Navi/NaviSkill
 #   - Navi/ros2_ws/install
 #   - Navi/scripts
 # The archive contains the Navi/ directory, so it can be extracted directly
@@ -89,7 +89,7 @@ fi
 # Check if required directories exist
 REQUIRED_DIRS=(
   "${NAVI_WORKSPACE_DIR}/maps"
-  "${NAVI_WORKSPACE_DIR}/NaviAgent"
+  "${NAVI_WORKSPACE_DIR}/NaviSkill"
   "${NAVI_WORKSPACE_DIR}/ros2_ws/install"
   "${NAVI_WORKSPACE_DIR}/scripts"
 )
@@ -154,7 +154,7 @@ tar -czf "${OUTPUT_DIR}/${NAVI_ARCHIVE_NAME}" \
   --exclude='__pycache__' \
   --exclude='*.log' \
   "${NAVI_DIR_NAME}/maps/" \
-  "${NAVI_DIR_NAME}/NaviAgent/" \
+  "${NAVI_DIR_NAME}/NaviSkill/" \
   "${NAVI_DIR_NAME}/ros2_ws/install/" \
   "${NAVI_DIR_NAME}/scripts/" \
   "${NAVI_DIR_NAME}/version.txt"

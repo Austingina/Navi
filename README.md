@@ -68,7 +68,7 @@ cd ~/Navi/scripts/
 ```bash
 ./start_rviz.sh
 ```
-### 启动NaviAgent
+### 启动NaviSkill
 
 ```bash
 ./start_mcp.sh

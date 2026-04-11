@@ -9,8 +9,8 @@ SESSION="navi"
 if [[ "$1" == "-c" ]]; then
     # 使用 tmuxp 加载配置
     tmuxp load -d "$NAVI_SCRIPT_DIR/navi.caihong.yaml"
-    echo "caihong" > $NAVI_ROOT_DIR/NaviAgent/config/mapuse.txt
+    echo "caihong" > $NAVI_ROOT_DIR/NaviSkill/config/mapuse.txt
 else
     tmuxp load -d "$NAVI_SCRIPT_DIR/navi.yaml"
-    echo "caihong" >$NAVI_ROOT_DIR/NaviAgent/config/mapuse.txt
+    echo "caihong" >$NAVI_ROOT_DIR/NaviSkill/config/mapuse.txt
 fi

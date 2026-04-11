@@ -1,7 +1,7 @@
 #! /bin/bash
 source "$(dirname "$0")/common.sh"
 
-cd "$NAVI_ROOT_DIR/NaviAgent/test" || exit 1
+cd "$NAVI_ROOT_DIR/NaviSkill/test" || exit 1
 # 用法示例:
 #   ./start_mcpclient.sh
 #   ./start_mcpclient.sh -r 线路A

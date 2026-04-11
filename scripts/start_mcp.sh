@@ -1,7 +1,7 @@
 #! /bin/bash
 source "$(dirname "$0")/common.sh"
 
-cd $NAVI_ROOT_DIR/NaviAgent
+cd $NAVI_ROOT_DIR/NaviSkill
 
 # Parse arguments: support -t (test) and -m <map_path>
 TEST=0

@@ -146,7 +146,7 @@ if [[ "${HAS_NAVI_DIR}" == "true" ]]; then
   mkdir -p "${EXTRACT_DIR}"
   cd "${EXTRACT_DIR}"
 else
-  # Archive contains maps/, NaviAgent/, etc. directly, extract to target directory
+  # Archive contains maps/, NaviSkill/, etc. directly, extract to target directory
   echo "[navi_deploy] Archive contains directories directly, extracting to: ${NAVI_DEPLOY_DIR}"
   mkdir -p "${NAVI_DEPLOY_DIR}"
   cd "${NAVI_DEPLOY_DIR}"
@@ -159,14 +159,14 @@ tar -xzf "${ARCHIVE_FILE}"
 # Verify extraction (final location is always NAVI_DEPLOY_DIR)
 echo "[navi_deploy] Verifying deployment..."
 if [[ -d "${NAVI_DEPLOY_DIR}/maps" ]] || \
-   [[ -d "${NAVI_DEPLOY_DIR}/NaviAgent" ]] || \
+   [[ -d "${NAVI_DEPLOY_DIR}/NaviSkill" ]] || \
    [[ -d "${NAVI_DEPLOY_DIR}/ros2_ws/install" ]] || \
    [[ -d "${NAVI_DEPLOY_DIR}/scripts" ]]; then
   echo "[navi_deploy] Deployment successful!"
   echo "[navi_deploy] Deployed to: ${NAVI_DEPLOY_DIR}"
   echo "[navi_deploy] Deployed directories:"
   [[ -d "${NAVI_DEPLOY_DIR}/maps" ]] && echo "  - maps/"
-  [[ -d "${NAVI_DEPLOY_DIR}/NaviAgent" ]] && echo "  - NaviAgent/"
+  [[ -d "${NAVI_DEPLOY_DIR}/NaviSkill" ]] && echo "  - NaviSkill/"
   [[ -d "${NAVI_DEPLOY_DIR}/ros2_ws/install" ]] && echo "  - ros2_ws/install/"
   [[ -d "${NAVI_DEPLOY_DIR}/scripts" ]] && echo "  - scripts/"
 else
