@@ -195,6 +195,8 @@ void MainWindow::connectSignals() {
             this, &MainWindow::onAddSubmap);
         connect(submapPanel_, &SubmapPanel::addRouteRequested,
             this, &MainWindow::onAddRoute);
+    connect(submapPanel_, &SubmapPanel::renameRouteRequested,
+            this, &MainWindow::onRenameRoute);
     connect(submapPanel_, &SubmapPanel::removeSubmapRequested,
             this, &MainWindow::onRemoveSubmap);
     connect(submapPanel_, &SubmapPanel::addSemanticPointRequested,
@@ -641,6 +643,19 @@ void MainWindow::onAddRoute() {
     submapPanel_->rebuild(&project_);
     refreshRouteLines();
     statusLabel_->setText("已添加路线: " + name);
+}
+
+void MainWindow::onRenameRoute(const QString& oldName, const QString& newName) {
+    if (!project_.renameRoute(oldName, newName)) {
+        QMessageBox::warning(this, "错误",
+            QString("重命名失败：路线 '%1' 不存在或 '%2' 已被占用").arg(oldName, newName));
+        return;
+    }
+    project_.setDirty();
+    submapPanel_->rebuild(&project_);
+    submapPanel_->expandRoute(newName);
+    refreshRouteLines();
+    statusLabel_->setText(QString("已将路线 '%1' 重命名为 '%2'").arg(oldName, newName));
 }
 
 void MainWindow::onSetDefaultSubmap(const QString& id) {

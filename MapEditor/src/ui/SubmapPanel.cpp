@@ -4,6 +4,7 @@
 #include <QHeaderView>
 #include <QMenu>
 #include <QMessageBox>
+#include <QInputDialog>
 #include <QDataStream>
 #include <QCheckBox>
 
@@ -437,6 +438,15 @@ void SubmapPanel::onContextMenu(const QPoint& pos) {
         break;
     case TypeRoute: {
         QString rName = item->data(0, RoleRouteName).toString();
+        menu.addAction("✏️ 重命名路线", [this, rName]() {
+            bool ok;
+            QString newName = QInputDialog::getText(
+                this, "重命名路线",
+                QString("将路线「%1」重命名为:").arg(rName),
+                QLineEdit::Normal, rName, &ok);
+            if (ok && !newName.isEmpty() && newName != rName)
+                emit renameRouteRequested(rName, newName);
+        });
         menu.addAction("🗑️ 删除此路线", [this, rName]() {
             emit removeRouteRequested(rName);
         });

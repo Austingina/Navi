@@ -38,6 +38,8 @@ public:
     Route* route(const QString& name);
     void addRoute(const Route& r) { routes_[r.name] = r; }
     void removeRoute(const QString& name) { routes_.remove(name); }
+    bool renameRoute(const QString& oldName, const QString& newName);
+
 
     // ── 项目路径 ─────────────────────────────────────────────────────
     QString projectDir() const { return projectDir_; }

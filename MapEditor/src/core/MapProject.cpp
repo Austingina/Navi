@@ -443,4 +443,15 @@ Route* MapProject::route(const QString& name) {
     return (it != routes_.end()) ? &it.value() : nullptr;
 }
 
+bool MapProject::renameRoute(const QString& oldName, const QString& newName) {
+    auto it = routes_.find(oldName);
+    if (it == routes_.end()) return false;
+    if (routes_.contains(newName)) return false;
+    Route r = it.value();
+    r.name = newName;
+    routes_.remove(oldName);
+    routes_[newName] = r;
+    return true;
+}
+
 } // namespace me

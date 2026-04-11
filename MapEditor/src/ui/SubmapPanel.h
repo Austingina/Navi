@@ -76,6 +76,7 @@ signals:
     void alignSubmapRequested(const QString& submapId);
     void addRouteRequested();
     void removeRouteRequested(const QString& routeName);
+    void renameRouteRequested(const QString& oldName, const QString& newName);
     void setDefaultSubmapRequested(const QString& submapId);
 
     // ── 路线编辑 ─────────────────────────────────────────────────────
