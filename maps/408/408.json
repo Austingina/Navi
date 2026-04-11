@@ -154,6 +154,10 @@
                     "submap": "2f"
                 },
                 {
+                    "semantic_point": "elevator_hall",
+                    "submap": "2f"
+                },
+                {
                     "semantic_point": "elevator_in_press",
                     "submap": "2f"
                 },
@@ -253,7 +257,7 @@
                 "control point2": {
                     "pose": {
                         "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": 0.7071067811865476},
-                        "position": { "x": 11.2, "y": -4.6, "z": 0.0}
+                        "position": { "x": 10.8, "y": -4.6, "z": 0.0}
                     },
                     "type": "single_pose"
                 },
@@ -284,6 +288,13 @@
                         "position": { "x": 43.3, "y": -4.6, "z": 0.0}
                     },
                     "type": "elevator_wait"
+                },
+                "elevator_hall": {
+                    "pose": {
+                        "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": 0.7071067811865476},
+                        "position": { "x": 0.2, "y": -2.3, "z": 0.0}
+                    },
+                    "type": "single_pose"
                 },
                 "elevator_in": {
                     "pose": {
