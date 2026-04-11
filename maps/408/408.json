@@ -158,7 +158,11 @@
                     "submap": "2f"
                 },
                 {
-                    "semantic_point": "elevator_in_press",
+                    "semantic_point": "elevator_press",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "corridor",
                     "submap": "2f"
                 },
                 {
@@ -258,6 +262,13 @@
                     "pose": {
                         "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": 0.7071067811865476},
                         "position": { "x": 10.8, "y": -4.6, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "corridor": {
+                    "pose": {
+                        "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
+                        "position": { "x": 1.8107, "y": -2.6509, "z": 0.0}
                     },
                     "type": "single_pose"
                 },
