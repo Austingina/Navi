@@ -1,147 +1,10 @@
 {
     "_comment": "多楼层地图配置文件 / Multi-floor map configuration",
     "global": {
+        "default_route": "route262",
         "default_submap": "2f"
     },
     "routes": {
-        "route01": {
-            "description": "",
-            "waypoints": [
-                {
-                    "semantic_point": "start",
-                    "submap": "2f"
-                },
-                {
-                    "semantic_point": "elevator_press",
-                    "submap": "2f"
-                },
-                {
-                    "semantic_point": "elevator_wait",
-                    "submap": "2f"
-                },
-                {
-                    "semantic_point": "elevator_in",
-                    "submap": "2f"
-                },
-                {
-                    "semantic_point": "elevator_out",
-                    "submap": "2f"
-                },
-                {
-                    "semantic_point": "control point 1",
-                    "submap": "6f"
-                },
-                {
-                    "semantic_point": "charge point",
-                    "submap": "6f"
-                },
-                {
-                    "semantic_point": "elevator_press",
-                    "submap": "6f"
-                },
-                {
-                    "semantic_point": "elevator_wait",
-                    "submap": "6f"
-                },
-                {
-                    "semantic_point": "elevator_in",
-                    "submap": "6f"
-                },
-                {
-                    "semantic_point": "elevator_out",
-                    "submap": "6f"
-                },
-                {
-                    "semantic_point": "control point 1",
-                    "submap": "2f"
-                },
-                {
-                    "semantic_point": "meetingroom_door",
-                    "submap": "2f"
-                },
-                {
-                    "semantic_point": "control point2",
-                    "submap": "2f"
-                },
-                {
-                    "semantic_point": "start",
-                    "submap": "2f"
-                }
-            ]
-        },
-        "route1": {
-            "description": "",
-            "waypoints": [
-                {
-                    "semantic_point": "start",
-                    "submap": "2f"
-                },
-                {
-                    "semantic_point": "elevator_press",
-                    "submap": "2f"
-                },
-                {
-                    "semantic_point": "elevator_wait",
-                    "submap": "2f"
-                },
-                {
-                    "semantic_point": "elevator_in",
-                    "submap": "2f"
-                },
-                {
-                    "semantic_point": "elevator_in_press",
-                    "submap": "2f"
-                },
-                {
-                    "semantic_point": "elevator_out",
-                    "submap": "2f"
-                },
-                {
-                    "semantic_point": "control point 1",
-                    "submap": "2f"
-                },
-                {
-                    "semantic_point": "charge point",
-                    "submap": "5f"
-                },
-                {
-                    "semantic_point": "elevator_press",
-                    "submap": "5f"
-                },
-                {
-                    "semantic_point": "elevator_wait",
-                    "submap": "5f"
-                },
-                {
-                    "semantic_point": "elevator_in",
-                    "submap": "5f"
-                },
-                {
-                    "semantic_point": "elevator_in_press",
-                    "submap": "5f"
-                },
-                {
-                    "semantic_point": "elevator_out",
-                    "submap": "5f"
-                },
-                {
-                    "semantic_point": "control point 1",
-                    "submap": "2f"
-                },
-                {
-                    "semantic_point": "meetingroom_door",
-                    "submap": "2f"
-                },
-                {
-                    "semantic_point": "control point2",
-                    "submap": "2f"
-                },
-                {
-                    "semantic_point": "start",
-                    "submap": "2f"
-                }
-            ]
-        },
         "route2": {
             "description": "",
             "waypoints": [
@@ -179,7 +42,145 @@
                 }
             ]
         },
-        "routeA": {
+        "route252": {
+            "description": "",
+            "waypoints": [
+                {
+                    "semantic_point": "start",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "elevator_press",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "elevator_wait",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "elevator_in",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "elevator_in_press",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "elevator_out",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "control point 1",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "charge point",
+                    "submap": "5f"
+                },
+                {
+                    "semantic_point": "elevator_press",
+                    "submap": "5f"
+                },
+                {
+                    "semantic_point": "elevator_wait",
+                    "submap": "5f"
+                },
+                {
+                    "semantic_point": "elevator_in",
+                    "submap": "5f"
+                },
+                {
+                    "semantic_point": "elevator_in_press",
+                    "submap": "5f"
+                },
+                {
+                    "semantic_point": "elevator_out",
+                    "submap": "5f"
+                },
+                {
+                    "semantic_point": "control point 1",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "meetingroom_door",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "control point2",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "start",
+                    "submap": "2f"
+                }
+            ]
+        },
+        "route262": {
+            "description": "",
+            "waypoints": [
+                {
+                    "semantic_point": "start",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "elevator_press",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "elevator_wait",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "elevator_in",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "elevator_out",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "control point 1",
+                    "submap": "6f"
+                },
+                {
+                    "semantic_point": "charge point",
+                    "submap": "6f"
+                },
+                {
+                    "semantic_point": "elevator_press",
+                    "submap": "6f"
+                },
+                {
+                    "semantic_point": "elevator_wait",
+                    "submap": "6f"
+                },
+                {
+                    "semantic_point": "elevator_in",
+                    "submap": "6f"
+                },
+                {
+                    "semantic_point": "elevator_out",
+                    "submap": "6f"
+                },
+                {
+                    "semantic_point": "control point 1",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "meetingroom_door",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "control point2",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "start",
+                    "submap": "2f"
+                }
+            ]
+        },
+        "route262d": {
             "description": "",
             "waypoints": [
                 {
