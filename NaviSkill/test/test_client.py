@@ -107,12 +107,12 @@ class SimplePatrolClient:
         ws_url: str = "ws://localhost:9999/ws",
         route_name: Optional[str] = None,
         patrol_sequence: Optional[List[str]] = None,
-        continue_from_nearest: bool = False,
+        continue_tolerance: float = -1.0,
     ):
         self.ws_url = ws_url
         self.pose_list: list = []
         self.is_paused = False
-        self.continue_from_nearest = continue_from_nearest
+        self.continue_tolerance = continue_tolerance
 
         self.patrol_sequence: list = list(patrol_sequence) if patrol_sequence else []
 
@@ -214,7 +214,8 @@ class SimplePatrolClient:
                     f"(距离: {nearest_data['distance']}m)"
                 )
 
-            if self.continue_from_nearest and len(self.patrol_sequence) > 1:
+            if self.continue_tolerance >= 0 and len(self.patrol_sequence) > 1:
+                tol = self.continue_tolerance
                 cur_x = current_pos['x']
                 cur_y = current_pos['y']
                 best_idx = 0
@@ -232,12 +233,15 @@ class SimplePatrolClient:
                     dx = cur_x - pose['position']['x']
                     dy = cur_y - pose['position']['y']
                     d = (dx * dx + dy * dy) ** 0.5
-                    if d < best_dist:
+                    if d <= tol:
+                        best_idx = idx
+                        best_dist = d
+                    elif d < best_dist:
                         best_dist = d
                         best_idx = idx
                 self.patrol_sequence = self.patrol_sequence[best_idx:]
                 logger.info(
-                    f"📌 --continue 模式：从第 {best_idx + 1} 个途经点开始"
+                    f"📌 --continue 模式 (tolerance={tol:.1f}m)：从第 {best_idx + 1} 个途经点开始"
                     f"（距离 {best_dist:.2f}m），剩余 {len(self.patrol_sequence)} 个点"
                 )
 
@@ -545,10 +549,12 @@ async def main() -> int:
     parser.add_argument(
         "-c",
         "--continue",
-        dest="continue_patrol",
-        action="store_true",
-        default=False,
-        help="从路线中距当前位置最近的途经点开始巡检，而非从头开始",
+        dest="continue_tolerance",
+        type=float,
+        default=-1.0,
+        metavar="TOL",
+        help="从路线中距当前位置最近的途经点继续巡检；TOL 为容差（米），"
+             "容差范围内有多个点时优先选靠后的（尽快走完路线）",
     )
     parser.add_argument(
         "--set-xy",
@@ -587,7 +593,7 @@ async def main() -> int:
             ws_url=args.ws,
             route_name=args.route,
             patrol_sequence=args.patrol,
-            continue_from_nearest=args.continue_patrol,
+            continue_tolerance=args.continue_tolerance,
         )
         success = await client.start_patrol_test()
 
