@@ -17,6 +17,10 @@
                     "submap": "2f"
                 },
                 {
+                    "semantic_point": "office_out",
+                    "submap": "2f"
+                },
+                {
                     "semantic_point": "elevator_hall",
                     "submap": "2f"
                 },
@@ -30,6 +34,10 @@
                 },
                 {
                     "semantic_point": "control point 1",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "office_in",
                     "submap": "2f"
                 },
                 {
@@ -262,7 +270,7 @@
                 "control point2": {
                     "pose": {
                         "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": 0.7071067811865476},
-                        "position": { "x": 10.8, "y": -4.6, "z": 0.0}
+                        "position": { "x": 10.800000190734863, "y": -4.599999904632568, "z": 0.0}
                     },
                     "type": "single_pose"
                 },
@@ -361,6 +369,20 @@
                     "pose": {
                         "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": -0.7071067811865476},
                         "position": { "x": 5.2952, "y": -15.0077, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "office_in": {
+                    "pose": {
+                        "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": -0.7071067811865476},
+                        "position": { "x": 10.8314, "y": -4.838, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "office_out": {
+                    "pose": {
+                        "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": 0.7071067811865476},
+                        "position": { "x": 10.8422, "y": -2.3181, "z": 0.0}
                     },
                     "type": "single_pose"
                 },
