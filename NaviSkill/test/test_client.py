@@ -101,6 +101,62 @@ class KeyboardHandler:
         return ""
 
 
+class SubmapClient:
+    """封装子地图（submap）查询与切换操作。"""
+
+    def __init__(self, ws_client: WsNavClient):
+        self._client = ws_client
+
+    async def get_current_submap(self) -> Optional[str]:
+        """获取当前加载的子地图 ID，失败返回 None。"""
+        data = await self._client.call("get_current_map_id")
+        if data.get("success"):
+            return data.get("map_id")
+        logger.warning("获取当前子地图失败: %s", data.get("msg"))
+        return None
+
+    async def get_submap_list(self) -> List[str]:
+        """获取服务器已配置的所有子地图 ID 列表。"""
+        data = await self._client.call("get_submap_list")
+        if data.get("success"):
+            return list(data.get("submaps") or [])
+        logger.warning("获取子地图列表失败: %s", data.get("msg"))
+        return []
+
+    async def ensure_submap(self, target_submap: str, timeout: float = 30.0) -> bool:
+        """
+        确保当前子地图为 *target_submap*。
+
+        如果已在目标子地图则立即返回 True；
+        否则调用 change_map 切换，成功返回 True，失败返回 False。
+        """
+        current = await self.get_current_submap()
+        if current == target_submap:
+            logger.info("🗺️  当前已在目标子地图: %s", target_submap)
+            return True
+
+        available = await self.get_submap_list()
+        if target_submap not in available:
+            logger.error(
+                "❌ 目标子地图 %r 不存在，可用: %s", target_submap, available
+            )
+            return False
+
+        logger.info("🔁 切换子地图: %s → %s", current, target_submap)
+        data = await self._client.call(
+            "change_map", {"map_id": target_submap, "timeout": timeout}
+        )
+        if data.get("success"):
+            logger.info("✅ 子地图切换成功: %s", target_submap)
+            init_pose = data.get("init_pose")
+            if init_pose:
+                logger.info("📍 切换后初始位姿: %s", init_pose)
+            return True
+
+        logger.error("❌ 子地图切换失败: %s", data.get("msg"))
+        return False
+
+
 class SimplePatrolClient:
     def __init__(
         self,
@@ -541,10 +597,10 @@ async def main() -> int:
     parser.add_argument(
         "-p",
         "--patrol",
-        nargs="+",
+        nargs="*",
         default=None,
         metavar="DEST",
-        help="直接指定巡检目的地序列（优先级最高，会忽略 -r 路线）",
+        help="启动巡检模式；可选指定目的地序列（不指定则使用 -r 路线或默认路线）",
     )
     parser.add_argument(
         "-c",
@@ -557,6 +613,13 @@ async def main() -> int:
              "容差范围内有多个点时优先选靠后的（尽快走完路线）",
     )
     parser.add_argument(
+        "-s",
+        "--submap",
+        default=None,
+        metavar="ID",
+        help="目标子地图 ID；若当前不在该子地图则先切换",
+    )
+    parser.add_argument(
         "--set-xy",
         nargs=2,
         type=float,
@@ -566,6 +629,13 @@ async def main() -> int:
     args = parser.parse_args()
 
     try:
+        # --submap: 先切换到目标子地图（适用于所有后续操作）
+        if args.submap:
+            async with WsNavClient(args.ws) as client:
+                sc = SubmapClient(client)
+                if not await sc.ensure_submap(args.submap):
+                    return 1
+
         # If --set-xy provided, run a minimal test for set_goal_by_xy + get_navigation_plan
         if args.set_xy:
             x, y = args.set_xy
@@ -588,20 +658,25 @@ async def main() -> int:
                     )
                 return 0 if plan_res.get("success") else 1
 
-        # otherwise run full patrol test
-        client = SimplePatrolClient(
-            ws_url=args.ws,
-            route_name=args.route,
-            patrol_sequence=args.patrol,
-            continue_tolerance=args.continue_tolerance,
-        )
-        success = await client.start_patrol_test()
+        # -p/--patrol 存在时才执行巡检（args.patrol 为 None 表示未传 -p）
+        if args.patrol is not None:
+            patrol_seq = args.patrol if args.patrol else None
+            client = SimplePatrolClient(
+                ws_url=args.ws,
+                route_name=args.route,
+                patrol_sequence=patrol_seq,
+                continue_tolerance=args.continue_tolerance,
+            )
+            success = await client.start_patrol_test()
 
-        if success:
-            logger.info("\n🎉 所有巡检点位测试通过！")
-            return 0
-        logger.error("\n⚠️  部分巡检点位测试失败")
-        return 1
+            if success:
+                logger.info("\n🎉 所有巡检点位测试通过！")
+                return 0
+            logger.error("\n⚠️  部分巡检点位测试失败")
+            return 1
+
+        logger.info("未指定操作（-p 巡检 / --set-xy 坐标导航），退出。")
+        return 0
 
     except KeyboardInterrupt:
         logger.info("\n⏹️  用户中断测试")
