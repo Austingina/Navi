@@ -284,8 +284,12 @@ bool MapProject::load(const QString& dirPath) {
                 for (const auto& wv : wpArr) {
                     auto wObj = wv.toObject();
                     RouteWaypoint wp;
-                    wp.submapId      = wObj["submap"].toString();
-                    wp.semanticPoint = wObj["semantic_point"].toString();
+                    if (wObj.contains("route")) {
+                        wp.routeRef = wObj["route"].toString();
+                    } else {
+                        wp.submapId      = wObj["submap"].toString();
+                        wp.semanticPoint = wObj["semantic_point"].toString();
+                    }
                     route.waypoints.append(wp);
                 }
             }
@@ -379,10 +383,14 @@ bool MapProject::save(const QString& dirPath) const {
         rObj["description"] = r.description;
         QJsonArray wpArr;
         for (const auto& wp : r.waypoints) {
-            wpArr.append(QJsonObject{
-                {"submap", wp.submapId},
-                {"semantic_point", wp.semanticPoint}
-            });
+            if (wp.isRouteRef()) {
+                wpArr.append(QJsonObject{{"route", wp.routeRef}});
+            } else {
+                wpArr.append(QJsonObject{
+                    {"submap", wp.submapId},
+                    {"semantic_point", wp.semanticPoint}
+                });
+            }
         }
         rObj["waypoints"] = wpArr;
         routesObj[it.key()] = rObj;

@@ -83,6 +83,9 @@ struct Portal {
 struct RouteWaypoint {
     QString submapId;
     QString semanticPoint;
+    QString routeRef;          // 非空时表示嵌套引用另一条路线（此时 submapId/semanticPoint 无意义）
+
+    bool isRouteRef() const { return !routeRef.isEmpty(); }
 };
 
 struct Route {

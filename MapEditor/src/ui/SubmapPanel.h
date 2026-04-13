@@ -24,6 +24,9 @@ signals:
                          const QString& submapId,
                          const QString& pointName,
                          int insertIndex);
+    void routeRefDropped(const QString& routeName,
+                         const QString& nestedRouteName,
+                         int insertIndex);
 
 protected:
     QStringList mimeTypes() const override;
@@ -85,6 +88,9 @@ signals:
                                const QString& submapId,
                                const QString& pointName,
                                int insertIndex);
+    void routeRefInserted(const QString& routeName,
+                          const QString& nestedRouteName,
+                          int insertIndex);
     void routeWaypointRemoveRequested(const QString& routeName, int waypointIndex);
 
 private slots:

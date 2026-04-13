@@ -15,6 +15,8 @@
 #include <QPushButton>
 
 #include <Eigen/Geometry>
+#include <QSet>
+#include <functional>
 
 namespace me {
 
@@ -188,6 +190,8 @@ void MainWindow::connectSignals() {
             this, &MainWindow::onRouteVisibilityChanged);
     connect(submapPanel_, &SubmapPanel::routeWaypointInserted,
             this, &MainWindow::onRouteWaypointInserted);
+    connect(submapPanel_, &SubmapPanel::routeRefInserted,
+            this, &MainWindow::onRouteRefInserted);
     connect(submapPanel_, &SubmapPanel::routeWaypointRemoveRequested,
             this, &MainWindow::onRouteWaypointRemoveRequested);
 
@@ -518,6 +522,29 @@ void MainWindow::onRouteWaypointInserted(const QString& routeName, const QString
                              .arg(insertIndex + 1));
 }
 
+void MainWindow::onRouteRefInserted(const QString& routeName, const QString& nestedRouteName,
+                                     int insertIndex) {
+    auto* r = project_.route(routeName);
+    if (!r) return;
+    if (!project_.route(nestedRouteName)) return;
+
+    RouteWaypoint wp;
+    wp.routeRef = nestedRouteName;
+
+    if (insertIndex < 0 || insertIndex >= r->waypoints.size())
+        r->waypoints.append(wp);
+    else
+        r->waypoints.insert(insertIndex, wp);
+
+    project_.setDirty();
+    submapPanel_->rebuild(&project_);
+    submapPanel_->expandRoute(routeName);
+    refreshRouteLines();
+    statusLabel_->setText(QString("已插入嵌套路线: [%1] → %2 (位置 %3)")
+                             .arg(nestedRouteName, routeName)
+                             .arg(insertIndex + 1));
+}
+
 void MainWindow::onRouteWaypointRemoveRequested(const QString& routeName, int waypointIndex) {
     auto* r = project_.route(routeName);
     if (!r) return;
@@ -553,11 +580,32 @@ void MainWindow::refreshRouteLines() {
 
     viewer_->clearAllRouteLines();
 
+    // 递归展开嵌套路线引用为扁平 waypoint 列表
+    std::function<QVector<RouteWaypoint>(const Route&, QSet<QString>&)> flattenRoute =
+        [&](const Route& route, QSet<QString>& visited) -> QVector<RouteWaypoint> {
+        QVector<RouteWaypoint> flat;
+        for (const auto& wp : route.waypoints) {
+            if (wp.isRouteRef()) {
+                if (visited.contains(wp.routeRef)) continue;  // 防止循环引用
+                auto* nested = project_.route(wp.routeRef);
+                if (!nested) continue;
+                visited.insert(wp.routeRef);
+                flat += flattenRoute(*nested, visited);
+                visited.remove(wp.routeRef);
+            } else {
+                flat.append(wp);
+            }
+        }
+        return flat;
+    };
+
     for (auto it = project_.routes().begin(); it != project_.routes().end(); ++it) {
-        const auto& route = it.value();
+        QSet<QString> visited;
+        visited.insert(it.key());
+        auto flatWaypoints = flattenRoute(it.value(), visited);
         QVector<MarkerVertex> lineVerts;
 
-        for (const auto& wp : route.waypoints) {
+        for (const auto& wp : flatWaypoints) {
             auto* sm = project_.submap(wp.submapId);
             if (!sm) continue;
             auto* sp = sm->semanticPoint(wp.semanticPoint);
