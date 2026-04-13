@@ -5,7 +5,7 @@
         "default_submap": "2f"
     },
     "routes": {
-        "route2": {
+        "2f_from_mr": {
             "description": "",
             "waypoints": [
                 {
@@ -23,11 +23,12 @@
                 {
                     "semantic_point": "elevator_hall",
                     "submap": "2f"
-                },
-                {
-                    "semantic_point": "elevator_press",
-                    "submap": "2f"
-                },
+                }
+            ]
+        },
+        "2f_to_mr": {
+            "description": "",
+            "waypoints": [
                 {
                     "semantic_point": "corridor",
                     "submap": "2f"
@@ -50,6 +51,96 @@
                 }
             ]
         },
+        "elevatorF_f2": {
+            "description": "",
+            "waypoints": [
+                {
+                    "semantic_point": "elevator_press",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "elevator_wait",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "elevator_in",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "elevator_in_press",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "elevator_out",
+                    "submap": "2f"
+                }
+            ]
+        },
+        "elevatorF_f5": {
+            "description": "",
+            "waypoints": [
+                {
+                    "semantic_point": "elevator_press",
+                    "submap": "5f"
+                },
+                {
+                    "semantic_point": "elevator_wait",
+                    "submap": "5f"
+                },
+                {
+                    "semantic_point": "elevator_in",
+                    "submap": "5f"
+                },
+                {
+                    "semantic_point": "elevator_in_press",
+                    "submap": "5f"
+                },
+                {
+                    "semantic_point": "elevator_out",
+                    "submap": "5f"
+                }
+            ]
+        },
+        "elevatorF_f6": {
+            "description": "",
+            "waypoints": [
+                {
+                    "semantic_point": "elevator_press",
+                    "submap": "6f"
+                },
+                {
+                    "semantic_point": "elevator_wait",
+                    "submap": "6f"
+                },
+                {
+                    "semantic_point": "elevator_in",
+                    "submap": "6f"
+                },
+                {
+                    "semantic_point": "elevator_in_press",
+                    "submap": "6f"
+                },
+                {
+                    "semantic_point": "elevator_out",
+                    "submap": "6f"
+                }
+            ]
+        },
+        "route2": {
+            "description": "",
+            "waypoints": [
+                {
+                    "route": "2f_from_mr"
+                },
+                {
+                    "semantic_point": "elevator_press",
+                    "submap": "2f"
+                },
+                {
+                    "route": "2f_to_mr"
+                }
+            ]
+        },
         "route252": {
             "description": "",
             "waypoints": [
@@ -58,52 +149,14 @@
                     "submap": "2f"
                 },
                 {
-                    "semantic_point": "elevator_press",
-                    "submap": "2f"
-                },
-                {
-                    "semantic_point": "elevator_wait",
-                    "submap": "2f"
-                },
-                {
-                    "semantic_point": "elevator_in",
-                    "submap": "2f"
-                },
-                {
-                    "semantic_point": "elevator_in_press",
-                    "submap": "2f"
-                },
-                {
-                    "semantic_point": "elevator_out",
-                    "submap": "2f"
-                },
-                {
-                    "semantic_point": "control point 1",
-                    "submap": "2f"
+                    "route": "elevatorF_f2"
                 },
                 {
                     "semantic_point": "charge point",
                     "submap": "5f"
                 },
                 {
-                    "semantic_point": "elevator_press",
-                    "submap": "5f"
-                },
-                {
-                    "semantic_point": "elevator_wait",
-                    "submap": "5f"
-                },
-                {
-                    "semantic_point": "elevator_in",
-                    "submap": "5f"
-                },
-                {
-                    "semantic_point": "elevator_in_press",
-                    "submap": "5f"
-                },
-                {
-                    "semantic_point": "elevator_out",
-                    "submap": "5f"
+                    "route": "elevatorF_f5"
                 },
                 {
                     "semantic_point": "control point 1",
