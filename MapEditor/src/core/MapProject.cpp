@@ -11,6 +11,7 @@
 #include <QTextStream>
 
 #include <pcl/io/pcd_io.h>
+#include <algorithm>
 
 namespace me {
 
@@ -460,6 +461,16 @@ Route* MapProject::route(const QString& name) {
     return (it != routes_.end()) ? &it.value() : nullptr;
 }
 
+void MapProject::removeRoute(const QString& name) {
+    routes_.remove(name);
+    for (auto& route : routes_) {
+        route.waypoints.erase(
+            std::remove_if(route.waypoints.begin(), route.waypoints.end(),
+                           [&](const RouteWaypoint& wp) { return wp.routeRef == name; }),
+            route.waypoints.end());
+    }
+}
+
 bool MapProject::renameRoute(const QString& oldName, const QString& newName) {
     auto it = routes_.find(oldName);
     if (it == routes_.end()) return false;
@@ -470,6 +481,12 @@ bool MapProject::renameRoute(const QString& oldName, const QString& newName) {
     routes_[newName] = r;
     if (defaultRouteId_ == oldName)
         defaultRouteId_ = newName;
+    for (auto& route : routes_) {
+        for (auto& wp : route.waypoints) {
+            if (wp.routeRef == oldName)
+                wp.routeRef = newName;
+        }
+    }
     return true;
 }
 

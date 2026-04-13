@@ -40,7 +40,7 @@ public:
     const QMap<QString, Route>& routes() const { return routes_; }
     Route* route(const QString& name);
     void addRoute(const Route& r) { routes_[r.name] = r; }
-    void removeRoute(const QString& name) { routes_.remove(name); }
+    void removeRoute(const QString& name);
     bool renameRoute(const QString& oldName, const QString& newName);
 
 
