@@ -344,23 +344,57 @@ class MapManager:
             })
         return result
     
+    def _flatten_waypoints(self, waypoints: List[Dict], visited: set) -> List[Dict]:
+        """
+        递归展开嵌套路线引用，返回扁平的 waypoint 列表。
+
+        waypoint 格式：
+        - 普通点: {"submap": "...", "semantic_point": "..."}
+        - 嵌套路线引用: {"route": "其他路线名"}
+
+        :param waypoints: 原始 waypoint 列表（可能包含嵌套引用）
+        :param visited: 已访问的路线名集合（用于防止循环引用）
+        :return: 展开后的 [{submap, semantic_point}, ...] 列表
+        """
+        routes = self.config.get('routes', {})
+        flat = []
+        for wp in waypoints:
+            if 'route' in wp:
+                ref_name = wp['route']
+                if ref_name in visited:
+                    print(f"MapManager: 检测到路线循环引用，跳过: {ref_name}")
+                    continue
+                ref_config = routes.get(ref_name)
+                if not ref_config:
+                    print(f"MapManager: 嵌套路线不存在，跳过: {ref_name}")
+                    continue
+                visited.add(ref_name)
+                flat.extend(self._flatten_waypoints(ref_config.get('waypoints', []), visited))
+                visited.discard(ref_name)
+            else:
+                flat.append(wp)
+        return flat
+
     def get_route_by_name(self, route_name: str) -> Optional[Dict]:
         """
-        根据路线名称获取路线详细信息
+        根据路线名称获取路线详细信息（自动展开嵌套路线引用）
         
         :param route_name: 路线名称
         :return: 路线配置，包含 description 和 waypoints
                  waypoints 格式: [{submap, semantic_point}, ...]
+                 嵌套路线引用会被递归展开为扁平列表
                  如果路线不存在返回 None
         """
         routes = self.config.get('routes', {})
         route_config = routes.get(route_name)
         if not route_config:
             return None
+        raw_waypoints = route_config.get('waypoints', [])
+        flat_waypoints = self._flatten_waypoints(raw_waypoints, {route_name})
         return {
             'name': route_name,
             'description': route_config.get('description', ''),
-            'waypoints': route_config.get('waypoints', [])
+            'waypoints': flat_waypoints
         }
     
     def get_default_route(self) -> Optional[str]:
