@@ -116,8 +116,6 @@ class NavNode(Node):
             # PID控制状态
             self.pid_control_active = False
             self.pid_rotation_phase = True  # True为旋转阶段，False为移动阶段
-            self._pid_rotation_start_time: Optional[float] = None
-            self._pid_yaw_stall_timeout = 10.0  # 旋转阶段收敛超时（秒）
             
             # TF状态跟踪
             self.tf_ready = False  # TF是否可用（定位是否成功）
@@ -501,7 +499,6 @@ class NavNode(Node):
                 self.nav_goal_active = False
                 self.pid_control_active = True
                 self.pid_rotation_phase = True
-                self._pid_rotation_start_time = None
             elif status == GoalStatus.STATUS_ABORTED:
                 self.get_logger().error('✗ Navigation2导航被中止')
                 self.nav_goal_reached = False
@@ -688,32 +685,20 @@ class NavNode(Node):
         cmd_vel = Twist()
 
         if self.pid_rotation_phase:
-            # 记录旋转阶段开始时间
-            now_sec = timestamp.sec + timestamp.nanosec * 1e-9
-            if self._pid_rotation_start_time is None:
-                self._pid_rotation_start_time = now_sec
-
             # 旋转阶段：调整yaw角度
             if abs(yaw_error) < yaw_tolerance:
                 print(f"current quaternion: {self.current_pose.pose.orientation}")
                 print(f"yaw角度调整完成: {current_yaw} -> {target_yaw}, error={yaw_error}, tolerance={yaw_tolerance}")
                 self.pid_rotation_phase = False
-                self._pid_rotation_start_time = None
                 self.get_logger().info("yaw角度调整完成，切换到移动阶段")
-                cmd_vel.angular.z = 0.0
-            elif (now_sec - self._pid_rotation_start_time >= self._pid_yaw_stall_timeout
-                  and abs(yaw_error) < 2.0 * yaw_tolerance):
-                self.get_logger().warn(
-                    f"yaw收敛超时({self._pid_yaw_stall_timeout}s)，误差{abs(yaw_error):.3f}rad < 2×tolerance({2.0*yaw_tolerance:.3f}rad)，"
-                    "地面松软无法精确收敛，放宽约束继续")
-                self.pid_rotation_phase = False
-                self._pid_rotation_start_time = None
                 cmd_vel.angular.z = 0.0
             else:
                 if( abs(yaw_error) > 0.1):
                     kp_yaw = 0.9
+                elif( abs(yaw_error) > 0.08):
+                    kp_yaw = 1.5
                 else:
-                    kp_yaw = 1.2
+                    kp_yaw = 2.0
                 cmd_vel.angular.z = kp_yaw * yaw_error
                 if cmd_vel.angular.z > 0.5:
                     cmd_vel.angular.z = 0.5
@@ -845,7 +830,6 @@ class NavNode(Node):
             self.get_logger().info("Navigation2已到达目标但精度不够，进入PID调整状态")
             self.pid_control_active = True
             self.pid_rotation_phase = True
-            self._pid_rotation_start_time = None
             return (NavNode.GOAL_CHECK_PENDING, None)
 
         # 目标已结束且未进入/未完成成功路径：导航失败（兜底，防止回调未写入 _nav_terminal_message）
