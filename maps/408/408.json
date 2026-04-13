@@ -5,28 +5,7 @@
         "default_submap": "2f"
     },
     "routes": {
-        "2f_from_mr": {
-            "description": "",
-            "waypoints": [
-                {
-                    "semantic_point": "meetingroom_out",
-                    "submap": "2f"
-                },
-                {
-                    "semantic_point": "control point2",
-                    "submap": "2f"
-                },
-                {
-                    "semantic_point": "office_out",
-                    "submap": "2f"
-                },
-                {
-                    "semantic_point": "elevator_hall",
-                    "submap": "2f"
-                }
-            ]
-        },
-        "2f_to_mr": {
+        "2f_c_mrp": {
             "description": "",
             "waypoints": [
                 {
@@ -47,6 +26,27 @@
                 },
                 {
                     "semantic_point": "meetingroom_patrol",
+                    "submap": "2f"
+                }
+            ]
+        },
+        "2f_mro_eh": {
+            "description": "",
+            "waypoints": [
+                {
+                    "semantic_point": "meetingroom_out",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "control point2",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "office_out",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "elevator_hall",
                     "submap": "2f"
                 }
             ]
@@ -130,14 +130,14 @@
             "description": "",
             "waypoints": [
                 {
-                    "route": "2f_from_mr"
+                    "route": "2f_mro_eh"
                 },
                 {
                     "semantic_point": "elevator_press",
                     "submap": "2f"
                 },
                 {
-                    "route": "2f_to_mr"
+                    "route": "2f_c_mrp"
                 }
             ]
         },
@@ -159,16 +159,10 @@
                     "route": "elevatorF_f5"
                 },
                 {
-                    "semantic_point": "control point 1",
-                    "submap": "2f"
+                    "route": "2f_c_mrp"
                 },
                 {
-                    "semantic_point": "meetingroom_door",
-                    "submap": "2f"
-                },
-                {
-                    "semantic_point": "control point2",
-                    "submap": "2f"
+                    "route": "2f_mro_eh"
                 },
                 {
                     "semantic_point": "start",
@@ -184,20 +178,7 @@
                     "submap": "2f"
                 },
                 {
-                    "semantic_point": "elevator_press",
-                    "submap": "2f"
-                },
-                {
-                    "semantic_point": "elevator_wait",
-                    "submap": "2f"
-                },
-                {
-                    "semantic_point": "elevator_in",
-                    "submap": "2f"
-                },
-                {
-                    "semantic_point": "elevator_out",
-                    "submap": "2f"
+                    "route": "elevatorF_f2"
                 },
                 {
                     "semantic_point": "control point 1",
@@ -208,32 +189,13 @@
                     "submap": "6f"
                 },
                 {
-                    "semantic_point": "elevator_press",
-                    "submap": "6f"
+                    "route": "elevatorF_f6"
                 },
                 {
-                    "semantic_point": "elevator_wait",
-                    "submap": "6f"
+                    "route": "2f_c_mrp"
                 },
                 {
-                    "semantic_point": "elevator_in",
-                    "submap": "6f"
-                },
-                {
-                    "semantic_point": "elevator_out",
-                    "submap": "6f"
-                },
-                {
-                    "semantic_point": "control point 1",
-                    "submap": "2f"
-                },
-                {
-                    "semantic_point": "meetingroom_door",
-                    "submap": "2f"
-                },
-                {
-                    "semantic_point": "control point2",
-                    "submap": "2f"
+                    "route": "2f_mro_eh"
                 },
                 {
                     "semantic_point": "start",
