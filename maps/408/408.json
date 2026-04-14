@@ -5,6 +5,128 @@
         "default_submap": "2f"
     },
     "routes": {
+        "1f_cp_uo": {
+            "description": "",
+            "waypoints": [
+                {
+                    "semantic_point": "charge point",
+                    "submap": "1f"
+                },
+                {
+                    "semantic_point": "hall_out",
+                    "submap": "1f"
+                },
+                {
+                    "semantic_point": "unload point out",
+                    "submap": "1f"
+                },
+                {
+                    "semantic_point": "unload out",
+                    "submap": "1f"
+                }
+            ]
+        },
+        "1f_eh": {
+            "description": "",
+            "waypoints": [
+                {
+                    "semantic_point": "elevator_hall_2",
+                    "submap": "1f"
+                },
+                {
+                    "semantic_point": "elevator_hall_in",
+                    "submap": "1f"
+                },
+                {
+                    "semantic_point": "elevator hall in 3",
+                    "submap": "1f"
+                }
+            ]
+        },
+        "1f_mmo_sw": {
+            "description": "",
+            "waypoints": [
+                {
+                    "semantic_point": "middle_middle_out",
+                    "submap": "1f"
+                },
+                {
+                    "semantic_point": "west_middle",
+                    "submap": "1f"
+                },
+                {
+                    "semantic_point": "underground park",
+                    "submap": "1f"
+                },
+                {
+                    "semantic_point": "park out",
+                    "submap": "1f"
+                },
+                {
+                    "semantic_point": "south_west",
+                    "submap": "1f"
+                }
+            ]
+        },
+        "1f_outdoor": {
+            "description": "",
+            "waypoints": [
+                {
+                    "semantic_point": "outdoor",
+                    "submap": "1f"
+                },
+                {
+                    "semantic_point": "outdoor 2",
+                    "submap": "1f"
+                },
+                {
+                    "semantic_point": "outdoor 3",
+                    "submap": "1f"
+                }
+            ]
+        },
+        "1f_sm_ne": {
+            "description": "",
+            "waypoints": [
+                {
+                    "semantic_point": "south_middle",
+                    "submap": "1f"
+                },
+                {
+                    "semantic_point": "south_east",
+                    "submap": "1f"
+                },
+                {
+                    "semantic_point": "middle_east",
+                    "submap": "1f"
+                },
+                {
+                    "semantic_point": "north_east",
+                    "submap": "1f"
+                }
+            ]
+        },
+        "1f_upi_cp": {
+            "description": "",
+            "waypoints": [
+                {
+                    "semantic_point": "unload point in",
+                    "submap": "1f"
+                },
+                {
+                    "semantic_point": "unload in",
+                    "submap": "1f"
+                },
+                {
+                    "semantic_point": "hall_in",
+                    "submap": "1f"
+                },
+                {
+                    "semantic_point": "charge point",
+                    "submap": "1f"
+                }
+            ]
+        },
         "2f_c_mrp": {
             "description": "",
             "waypoints": [
@@ -48,6 +170,31 @@
                 {
                     "semantic_point": "elevator_hall",
                     "submap": "2f"
+                }
+            ]
+        },
+        "elevatorF_f1": {
+            "description": "",
+            "waypoints": [
+                {
+                    "semantic_point": "elevator_press",
+                    "submap": "1f"
+                },
+                {
+                    "semantic_point": "elevator_wait",
+                    "submap": "1f"
+                },
+                {
+                    "semantic_point": "elevator_in",
+                    "submap": "1f"
+                },
+                {
+                    "semantic_point": "elevator_in_press",
+                    "submap": "1f"
+                },
+                {
+                    "semantic_point": "elevator_out",
+                    "submap": "1f"
                 }
             ]
         },
@@ -138,6 +285,66 @@
                 },
                 {
                     "route": "2f_c_mrp"
+                }
+            ]
+        },
+        "route212": {
+            "description": "",
+            "waypoints": [
+                {
+                    "semantic_point": "start",
+                    "submap": "2f"
+                },
+                {
+                    "route": "elevatorF_f2"
+                },
+                {
+                    "route": "1f_outdoor"
+                },
+                {
+                    "route": "1f_eh"
+                },
+                {
+                    "route": "elevatorF_f1"
+                },
+                {
+                    "semantic_point": "start",
+                    "submap": "2f"
+                }
+            ]
+        },
+        "route212_outdoor": {
+            "description": "",
+            "waypoints": [
+                {
+                    "semantic_point": "start",
+                    "submap": "2f"
+                },
+                {
+                    "route": "elevatorF_f2"
+                },
+                {
+                    "route": "1f_outdoor"
+                },
+                {
+                    "semantic_point": "north_middle",
+                    "submap": "1f"
+                },
+                {
+                    "route": "1f_mmo_sw"
+                },
+                {
+                    "route": "1f_sm_ne"
+                },
+                {
+                    "route": "1f_eh"
+                },
+                {
+                    "route": "elevatorF_f1"
+                },
+                {
+                    "semantic_point": "start",
+                    "submap": "2f"
                 }
             ]
         },
@@ -270,6 +477,223 @@
         }
     },
     "submaps": {
+        "1f": {
+            "description": "",
+            "map_file": "1f.pcd",
+            "name": "",
+            "parent_submap": "2f",
+            "semantic_points": {
+                "charge point": {
+                    "pose": {
+                        "orientation": { "w": 0.0, "x": 0.0, "y": 0.0, "z": 1.0},
+                        "position": { "x": 48.0, "y": -31.4564, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "elevator hall in 3": {
+                    "pose": {
+                        "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
+                        "position": { "x": 0.5, "y": 0.0, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "elevator_hall_2": {
+                    "pose": {
+                        "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
+                        "position": { "x": -11.3, "y": -0.2722, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "elevator_hall_in": {
+                    "pose": {
+                        "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
+                        "position": { "x": -4.0, "y": -0.2205, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "elevator_in": {
+                    "pose": {
+                        "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
+                        "position": { "x": -1.4, "y": 2.1, "z": 0.0}
+                    },
+                    "type": "elevator_in"
+                },
+                "elevator_in_press": {
+                    "pose": {
+                        "orientation": { "w": 0.9978130514800705, "x": 0.0020000261605132704, "y": -0.0030000392407699052, "z": -0.06600086329693793},
+                        "position": { "x": -1.0126, "y": 1.8353, "z": 0.0}
+                    },
+                    "type": "elevator_call"
+                },
+                "elevator_out": {
+                    "pose": {
+                        "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
+                        "position": { "x": 0.6, "y": 2.1, "z": 0.0}
+                    },
+                    "type": "elevator_out"
+                },
+                "elevator_press": {
+                    "pose": {
+                        "orientation": { "w": 0.0, "x": 0.0, "y": 0.0, "z": 1.0},
+                        "position": { "x": 0.6, "y": 2.65, "z": 0.0}
+                    },
+                    "type": "elevator_call"
+                },
+                "elevator_wait": {
+                    "pose": {
+                        "orientation": { "w": 0.0, "x": 0.0, "y": 0.0, "z": 1.0},
+                        "position": { "x": 0.6, "y": 2.1, "z": 0.0}
+                    },
+                    "type": "elevator_wait"
+                },
+                "hall_in": {
+                    "pose": {
+                        "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
+                        "position": { "x": 45.5243, "y": -0.6, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "hall_out": {
+                    "pose": {
+                        "orientation": { "w": 0.0, "x": 0.0, "y": 0.0, "z": 1.0},
+                        "position": { "x": 45.0, "y": -0.6, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "middle_east": {
+                    "pose": {
+                        "orientation": { "w": 0.0, "x": 0.0, "y": 0.0, "z": 1.0},
+                        "position": { "x": 26.049, "y": 23.2724, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "middle_middle_in": {
+                    "pose": {
+                        "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
+                        "position": { "x": 20.4795, "y": -27.9918, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "middle_middle_out": {
+                    "pose": {
+                        "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": -0.7071067811865476},
+                        "position": { "x": 20.5686, "y": -29.4844, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "north_east": {
+                    "pose": {
+                        "orientation": { "w": 0.0, "x": 0.0, "y": 0.0, "z": 1.0},
+                        "position": { "x": -10.1128, "y": 21.497, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "north_middle": {
+                    "pose": {
+                        "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
+                        "position": { "x": -10.167, "y": -25.5624, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "outdoor": {
+                    "pose": {
+                        "orientation": { "w": 0.0, "x": 0.0, "y": 0.0, "z": 1.0},
+                        "position": { "x": 0.4195, "y": 0.0183, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "outdoor 2": {
+                    "pose": {
+                        "orientation": { "w": 0.0, "x": 0.0, "y": 0.0, "z": 1.0},
+                        "position": { "x": -4.0, "y": -0.246, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "outdoor 3": {
+                    "pose": {
+                        "orientation": { "w": 0.0, "x": 0.0, "y": 0.0, "z": 1.0},
+                        "position": { "x": -11.3, "y": -0.3746, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "park out": {
+                    "pose": {
+                        "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": -0.7071067811865476},
+                        "position": { "x": 29.9045, "y": -77.0374, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "south_east": {
+                    "pose": {
+                        "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": 0.7071067811865476},
+                        "position": { "x": 67.6393, "y": 23.2024, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "south_middle": {
+                    "pose": {
+                        "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": 0.7071067811865476},
+                        "position": { "x": 69.84, "y": -19.6192, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "south_west": {
+                    "pose": {
+                        "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
+                        "position": { "x": 65.8723, "y": -79.9058, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "underground park": {
+                    "pose": {
+                        "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": 0.7071067811865476},
+                        "position": { "x": 60.9022, "y": -69.9393, "z": -3.9}
+                    },
+                    "type": "single_pose"
+                },
+                "unload in": {
+                    "pose": {
+                        "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
+                        "position": { "x": 27.8, "y": -0.6, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "unload out": {
+                    "pose": {
+                        "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": -0.7071067811865476},
+                        "position": { "x": 26.0596, "y": -17.4319, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "unload point in": {
+                    "pose": {
+                        "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": 0.7071067811865476},
+                        "position": { "x": 26.3683, "y": -16.5758, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "unload point out": {
+                    "pose": {
+                        "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": -0.7071067811865476},
+                        "position": { "x": 27.8, "y": -0.6, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "west_middle": {
+                    "pose": {
+                        "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
+                        "position": { "x": 23.2129, "y": -75.6682, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                }
+            },
+            "submap_portals": [
+            ],
+            "transform": {
+                "rotation": { "w": 0.9999543905354273, "x": 0.007583240102408765, "y": 0.0014832708299914463, "z": -0.005613486092981385},
+                "translation": { "x": -1.068766474723816, "y": -1.4839887619018555, "z": -3.983336925506592}
+            }
+        },
         "2f": {
             "description": "",
             "map_file": "2f.pcd",
@@ -428,6 +852,7 @@
             "description": "",
             "map_file": "5f.pcd",
             "name": "",
+            "parent_submap": "2f",
             "semantic_points": {
                 "charge point": {
                     "pose": {
@@ -483,6 +908,7 @@
             "description": "",
             "map_file": "6f.pcd",
             "name": "",
+            "parent_submap": "2f",
             "semantic_points": {
                 "charge point": {
                     "pose": {
