@@ -430,10 +430,10 @@ class MapManager:
                 return submap_id
         return None
 
-    def get_submap_transform(self, submap_id: str) -> Optional[Dict]:
+    def get_submap_local_transform(self, submap_id: str) -> Optional[Dict]:
         """
-        获取指定 submap 相对于 default submap 的坐标变换
-        
+        获取指定 submap 相对于其父 submap 的局部坐标变换
+
         :param submap_id: submap ID
         :return: transform 字典 {translation: {x, y, z}, rotation: {x, y, z, w}}
         """
@@ -441,6 +441,49 @@ class MapManager:
         if submap:
             return submap.get('transform')
         return None
+
+    def get_submap_transform(self, submap_id: str) -> Optional[Dict]:
+        """
+        获取指定 submap 到根节点 (default_submap) 的级联坐标变换。
+
+        沿 parent_submap 链逐级左乘变换：T_root = T_parent_chain * ... * T_local
+        
+        :param submap_id: submap ID
+        :return: transform 字典 {translation: {x, y, z}, rotation: {x, y, z, w}}
+        """
+        identity_t = {'x': 0.0, 'y': 0.0, 'z': 0.0}
+        identity_r = {'x': 0.0, 'y': 0.0, 'z': 0.0, 'w': 1.0}
+
+        result_t = dict(identity_t)
+        result_r = dict(identity_r)
+
+        visited = set()
+        cur = submap_id
+        while cur:
+            if cur in visited:
+                break  # cycle guard
+            visited.add(cur)
+            submap_cfg = self.submaps.get(cur)
+            if not submap_cfg:
+                break
+            local_tf = submap_cfg.get('transform')
+            if local_tf:
+                local_t = local_tf.get('translation', identity_t)
+                local_r = local_tf.get('rotation', identity_r)
+                # result = local * result  (先应用 result，再应用 local)
+                rotated = self._rotate_point_by_quaternion(
+                    {'x': result_t['x'], 'y': result_t['y'], 'z': result_t['z']}, local_r)
+                result_t = {
+                    'x': rotated['x'] + local_t.get('x', 0.0),
+                    'y': rotated['y'] + local_t.get('y', 0.0),
+                    'z': rotated['z'] + local_t.get('z', 0.0),
+                }
+                result_r = self._quaternion_multiply(local_r, result_r)
+            cur = submap_cfg.get('parent_submap', '')
+            if not cur:
+                break
+
+        return {'translation': result_t, 'rotation': result_r}
 
     @staticmethod
     def _quaternion_multiply(q1: Dict, q2: Dict) -> Dict:

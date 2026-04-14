@@ -100,7 +100,8 @@ void PropertiesPanel::setupSubmapPage() {
     layout->addWidget(infoGroup);
 
     // Transform
-    auto* tfGroup = new QGroupBox("变换 (Transform → default_submap)");
+    auto* tfGroup = new QGroupBox("变换 (Transform → 父地图)");
+    tfGroup_ = tfGroup;
     auto* tfForm = new QFormLayout(tfGroup);
     tfForm->setContentsMargins(10, 20, 10, 10);
     smTx_ = makeSpinBox(); smTy_ = makeSpinBox(); smTz_ = makeSpinBox();
@@ -183,6 +184,14 @@ void PropertiesPanel::showSubmapProperties(SubMap* sm) {
                                   .arg(sm->displayCloud() ? sm->displayCloud()->size() : 0));
     } else {
         smCloudInfo_->setText("未加载");
+    }
+
+    if (tfGroup_) {
+        QString parent = sm->parentSubmapId();
+        if (parent.isEmpty())
+            tfGroup_->setTitle("变换 (Transform — 根节点)");
+        else
+            tfGroup_->setTitle(QString("变换 (Transform → %1)").arg(parent));
     }
 
     const auto& tf = sm->transform();

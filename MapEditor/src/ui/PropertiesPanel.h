@@ -60,6 +60,7 @@ private:
     QLineEdit*      smDesc_ = nullptr;
     QLineEdit*      smMapFile_ = nullptr;
     // Transform
+    QGroupBox*      tfGroup_ = nullptr;
     QDoubleSpinBox* smTx_ = nullptr;
     QDoubleSpinBox* smTy_ = nullptr;
     QDoubleSpinBox* smTz_ = nullptr;

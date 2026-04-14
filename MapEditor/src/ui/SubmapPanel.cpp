@@ -433,15 +433,15 @@ void SubmapPanel::onContextMenu(const QPoint& pos) {
     case TypeSubmap: {
         bool isDefault = (project_ && project_->defaultSubmapId() == smId);
         if (!isDefault) {
-            menu.addAction("⭐ 设为默认子地图", [this, smId]() {
+            menu.addAction("⭐ 设为默认地图", [this, smId]() {
                 emit setDefaultSubmapRequested(smId);
             });
             menu.addSeparator();
         }
 
-        // 设置父子地图
+        // 设置父地图
         {
-            auto* parentMenu = menu.addMenu("🔗 设置父子地图");
+            auto* parentMenu = menu.addMenu("🔗 设置父地图");
             auto* sm = project_ ? project_->submap(smId) : nullptr;
             QString currentParent = sm ? sm->parentSubmapId() : QString();
 
