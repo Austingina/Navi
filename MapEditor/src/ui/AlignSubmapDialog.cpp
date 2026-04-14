@@ -247,19 +247,22 @@ void AlignSubmapDialog::onStartAlign() {
         return;
     }
 
-    QString targetId = project_->defaultSubmapId();
-    if (targetId.isEmpty() || !project_->submap(targetId)) {
+    // 对齐目标 = 父 submap（若未设父节点则用 default_submap，再兜底第一个其他 submap）
+    QString targetId = sm->parentSubmapId();
+    if (targetId.isEmpty())
+        targetId = project_->defaultSubmapId();
+    if (targetId.isEmpty() || targetId == submapId_ || !project_->submap(targetId)) {
         for (const auto& id : project_->submapIds()) {
             if (id != submapId_) { targetId = id; break; }
         }
     }
-    auto* defSm = project_->submap(targetId);
-    if (!defSm) {
+    auto* targetSm = project_->submap(targetId);
+    if (!targetSm) {
         QMessageBox::warning(this, "错误", "需要至少两个子地图才能进行对齐");
         return;
     }
 
-    if (!sm->cloud() || !defSm->cloud()) {
+    if (!sm->cloud() || !targetSm->cloud()) {
         QMessageBox::warning(this, "错误", "子地图缺少点云数据");
         return;
     }
@@ -279,7 +282,7 @@ void AlignSubmapDialog::onStartAlign() {
     params.maxFitness      = spinMaxFitness_->value();
 
     CloudMatcher matcher;
-    matcher.setTarget(defSm->cloud());
+    matcher.setTarget(targetSm->cloud());
     matcher.setSource(sm->cloud());
 
     result_ = matcher.match(guessPos_, params,

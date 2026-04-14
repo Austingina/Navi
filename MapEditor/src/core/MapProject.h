@@ -33,6 +33,18 @@ public:
     void removeSubmap(const QString& id);
     int  submapCount() const { return static_cast<int>(submaps_.size()); }
 
+    /// 计算 submap 到根 (default_submap) 的级联变换矩阵
+    Eigen::Matrix4d submapToRootMatrix(const QString& id) const;
+
+    /// 检查将 childId 的 parent 设为 parentId 是否会形成环
+    bool wouldFormCycle(const QString& childId, const QString& parentId) const;
+
+    /// 获取某个 submap 的直接子节点列表
+    QStringList submapChildren(const QString& parentId) const;
+
+    /// 验证 id 是否为 TF 树的根节点（无父节点且等于 defaultSubmapId）
+    bool isTreeRoot(const QString& id) const;
+
     // ── Route 管理 ───────────────────────────────────────────────────
     QString defaultRouteId() const { return defaultRouteId_; }
     void setDefaultRouteId(const QString& name) { defaultRouteId_ = name; }

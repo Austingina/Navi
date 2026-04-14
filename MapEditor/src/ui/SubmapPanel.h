@@ -82,6 +82,8 @@ signals:
     void renameRouteRequested(const QString& oldName, const QString& newName);
     void setDefaultRouteRequested(const QString& routeName);
     void setDefaultSubmapRequested(const QString& submapId);
+    void setParentSubmapRequested(const QString& submapId, const QString& parentId);
+    void showTfTreeRequested();
 
     // ── 路线编辑 ─────────────────────────────────────────────────────
     void routeWaypointInserted(const QString& routeName,

@@ -12,6 +12,7 @@
 
 #include <pcl/io/pcd_io.h>
 #include <algorithm>
+#include <QSet>
 
 namespace me {
 
@@ -220,7 +221,11 @@ bool MapProject::load(const QString& dirPath) {
             sm->setDescription(smObj["description"].toString());
             sm->setMapFile(smObj["map_file"].toString());
 
-            // transform
+            // parent_submap (TF tree edge)
+            if (smObj.contains("parent_submap"))
+                sm->setParentSubmapId(smObj["parent_submap"].toString());
+
+            // transform (relative to parent_submap)
             if (smObj.contains("transform")) {
                 sm->setTransform(parseTransform(smObj["transform"].toObject()));
             }
@@ -340,6 +345,8 @@ bool MapProject::save(const QString& dirPath) const {
         smObj["name"]        = sm->name();
         smObj["description"] = sm->description();
         smObj["map_file"]    = sm->mapFile();
+        if (!sm->parentSubmapId().isEmpty())
+            smObj["parent_submap"] = sm->parentSubmapId();
         smObj["transform"]   = transformToJson(sm->transform());
 
         // submap_portals
@@ -454,6 +461,51 @@ void MapProject::addSubmap(std::shared_ptr<SubMap> sm) {
 void MapProject::removeSubmap(const QString& id) {
     submaps_.remove(id);
     dirty_ = true;
+}
+
+Eigen::Matrix4d MapProject::submapToRootMatrix(const QString& id) const {
+    Eigen::Matrix4d result = Eigen::Matrix4d::Identity();
+    QSet<QString> visited;
+    QString cur = id;
+    while (!cur.isEmpty()) {
+        if (visited.contains(cur)) break;  // cycle guard
+        visited.insert(cur);
+        auto it = submaps_.find(cur);
+        if (it == submaps_.end()) break;
+        result = it.value()->transformMatrix() * result;
+        cur = it.value()->parentSubmapId();
+    }
+    return result;
+}
+
+bool MapProject::wouldFormCycle(const QString& childId, const QString& parentId) const {
+    if (childId == parentId) return true;
+    QSet<QString> visited;
+    visited.insert(childId);
+    QString cur = parentId;
+    while (!cur.isEmpty()) {
+        if (visited.contains(cur)) return true;
+        visited.insert(cur);
+        auto it = submaps_.find(cur);
+        if (it == submaps_.end()) break;
+        cur = it.value()->parentSubmapId();
+    }
+    return false;
+}
+
+QStringList MapProject::submapChildren(const QString& parentId) const {
+    QStringList children;
+    for (auto it = submaps_.begin(); it != submaps_.end(); ++it) {
+        if (it.value()->parentSubmapId() == parentId && it.key() != parentId)
+            children.append(it.key());
+    }
+    return children;
+}
+
+bool MapProject::isTreeRoot(const QString& id) const {
+    auto it = submaps_.find(id);
+    if (it == submaps_.end()) return false;
+    return it.value()->parentSubmapId().isEmpty();
 }
 
 Route* MapProject::route(const QString& name) {

@@ -25,10 +25,14 @@ public:
     void setDescription(const QString& v) { description_ = v; }
     void setMapFile(const QString& v)     { mapFile_ = v; }
 
-    // ── 变换 (本 submap → default_submap) ────────────────────────────
+    // ── 变换 (本 submap → 父 submap，根节点无父) ──────────────────────
     const RigidTransform& transform() const          { return transform_; }
     void setTransform(const RigidTransform& t)        { transform_ = t; }
     Eigen::Matrix4d transformMatrix() const           { return transform_.toMatrix(); }
+
+    /// 父 submap ID（空字符串表示根节点 / default_submap）
+    QString parentSubmapId() const                    { return parentSubmapId_; }
+    void setParentSubmapId(const QString& id)         { parentSubmapId_ = id; }
 
     // ── 点云 ─────────────────────────────────────────────────────────
     CloudPtr cloud()        const { return cloud_; }
@@ -59,6 +63,7 @@ private:
     QString            description_;
     QString            mapFile_;
     RigidTransform     transform_;
+    QString            parentSubmapId_;  // 空 = root (default_submap)
 
     CloudPtr           cloud_;           // 原始点云
     CloudPtr           displayCloud_;    // 降采样后的显示点云

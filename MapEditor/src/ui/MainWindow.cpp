@@ -213,6 +213,10 @@ void MainWindow::connectSignals() {
             this, &MainWindow::onAlignSubmap);
         connect(submapPanel_, &SubmapPanel::setDefaultSubmapRequested,
             this, &MainWindow::onSetDefaultSubmap);
+    connect(submapPanel_, &SubmapPanel::setParentSubmapRequested,
+            this, &MainWindow::onSetParentSubmap);
+    connect(submapPanel_, &SubmapPanel::showTfTreeRequested,
+            this, &MainWindow::onShowTfTree);
 
     // ── Properties Panel ─────────────────────────────────────────────
     connect(propsPanel_, &PropertiesPanel::submapPropertiesChanged,
@@ -327,7 +331,7 @@ void MainWindow::refreshSubmap(const QString& id) {
 
     viewer_->updateSubmap(
         id, sm->displayCloud(),
-        sm->transformMatrix(),
+        project_.submapToRootMatrix(id),
         sm->displayOptions().color,
         sm->displayOptions().pointSize);
 }
@@ -345,7 +349,7 @@ void MainWindow::refreshMarkers() {
     for (const auto& id : project_.submapIds()) {
         auto* sm = project_.submap(id);
         if (!sm) continue;
-        Eigen::Matrix4d T = sm->transformMatrix();
+        Eigen::Matrix4d T = project_.submapToRootMatrix(id);
         Eigen::Vector3d smPlaneOrig = T.block<3,1>(0,3);
         Eigen::Vector3d smPlaneNorm = (T.block<3,3>(0,0) * Eigen::Vector3d::UnitZ()).normalized();
         QVector3D qPlaneOrig((float)smPlaneOrig.x(), (float)smPlaneOrig.y(), (float)smPlaneOrig.z());
@@ -433,7 +437,7 @@ void MainWindow::setViewerOrbitCenterAtSemantic(const QString& smId, const QStri
     auto* sp = sm->semanticPoint(ptName);
     if (!sp || sp->poses.isEmpty()) return;
 
-    const Eigen::Matrix4d T = sm->transformMatrix();
+    const Eigen::Matrix4d T = project_.submapToRootMatrix(smId);
     Eigen::Vector3d sum(0, 0, 0);
     for (const auto& pose : sp->poses) {
         Eigen::Vector4d pw = T * Eigen::Vector4d(
@@ -611,7 +615,7 @@ void MainWindow::refreshRouteLines() {
             auto* sp = sm->semanticPoint(wp.semanticPoint);
             if (!sp || sp->poses.isEmpty()) continue;
 
-            Eigen::Matrix4d T = sm->transformMatrix();
+            Eigen::Matrix4d T = project_.submapToRootMatrix(wp.submapId);
             const auto& pos = sp->poses.first().position;
             Eigen::Vector4d pw = T * Eigen::Vector4d(pos.x(), pos.y(), pos.z(), 1.0);
 
@@ -722,10 +726,107 @@ void MainWindow::onSetDefaultSubmap(const QString& id) {
         QMessageBox::warning(this, "错误", "指定的子地图不存在");
         return;
     }
+    if (!project_.isTreeRoot(id)) {
+        QMessageBox::warning(this, "无法设为默认子地图",
+            QString("子地图 「%1」 的父节点为 「%2」，不是 TF 树的根节点。\n"
+                    "只有根节点（无父节点）才能设为 default_submap。\n"
+                    "请先在右键菜单中清除其父节点关系。")
+                .arg(id, project_.submap(id)->parentSubmapId()));
+        return;
+    }
     project_.setDefaultSubmapId(id);
     project_.setDirty();
     submapPanel_->rebuild(&project_);
     statusLabel_->setText("已将 " + id + " 设置为 default_submap");
+}
+
+void MainWindow::onSetParentSubmap(const QString& submapId, const QString& parentId) {
+    auto* sm = project_.submap(submapId);
+    if (!sm) return;
+
+    if (parentId.isEmpty()) {
+        sm->setParentSubmapId(QString());
+        project_.setDirty();
+        submapPanel_->rebuild(&project_);
+        refreshSubmap(submapId);
+        refreshMarkers();
+        refreshRouteLines();
+        statusLabel_->setText(QString("已清除 %1 的父节点").arg(submapId));
+        return;
+    }
+
+    if (project_.wouldFormCycle(submapId, parentId)) {
+        QMessageBox::warning(this, "无法设置父节点",
+            QString("将 「%1」 的父节点设为 「%2」 会形成环路，操作已取消。")
+                .arg(submapId, parentId));
+        return;
+    }
+
+    sm->setParentSubmapId(parentId);
+    project_.setDirty();
+    submapPanel_->rebuild(&project_);
+    refreshAllSubmaps();
+    refreshMarkers();
+    refreshRouteLines();
+    statusLabel_->setText(QString("已将 %1 的父节点设为 %2").arg(submapId, parentId));
+}
+
+void MainWindow::onShowTfTree() {
+    if (project_.submapCount() == 0) {
+        QMessageBox::information(this, "TF 树", "当前没有子地图");
+        return;
+    }
+
+    // 递归构建树形文本
+    std::function<QString(const QString&, const QString&)> buildTree =
+        [&](const QString& nodeId, const QString& indent) -> QString {
+        QString line = indent + nodeId;
+        auto* sm = project_.submap(nodeId);
+        if (sm && !sm->name().isEmpty() && sm->name() != nodeId)
+            line += " (" + sm->name() + ")";
+        if (nodeId == project_.defaultSubmapId())
+            line += " ⭐ root";
+        line += "\n";
+
+        for (const auto& childId : project_.submapChildren(nodeId)) {
+            line += buildTree(childId, indent + "    ");
+        }
+        return line;
+    };
+
+    // 从根节点（无父或 parent 为空的节点）开始
+    QString treeText;
+    QStringList roots;
+    for (const auto& id : project_.submapIds()) {
+        auto* sm = project_.submap(id);
+        if (sm && sm->parentSubmapId().isEmpty())
+            roots.append(id);
+    }
+    for (const auto& rootId : roots)
+        treeText += buildTree(rootId, "");
+
+    // 检查是否有孤立节点（parent 指向不存在的 submap）
+    for (const auto& id : project_.submapIds()) {
+        auto* sm = project_.submap(id);
+        if (!sm) continue;
+        QString pid = sm->parentSubmapId();
+        if (!pid.isEmpty() && !project_.submap(pid))
+            treeText += QString("[孤立] %1 (父 %2 不存在)\n").arg(id, pid);
+    }
+
+    QMessageBox dlg(this);
+    dlg.setWindowTitle("TF 树结构");
+    dlg.setIcon(QMessageBox::Information);
+    dlg.setText("子地图 TF 树结构：");
+    dlg.setDetailedText(treeText);
+    // 自动展开详情
+    for (auto* btn : dlg.buttons()) {
+        if (dlg.buttonRole(btn) == QMessageBox::ActionRole) {
+            btn->click();
+            break;
+        }
+    }
+    dlg.exec();
 }
 
 void MainWindow::onRemoveSubmap(const QString& id) {
@@ -762,7 +863,7 @@ void MainWindow::onSemanticPickPositionRequested(const QString& smId) {
     pendingAction_   = PendingSemanticPanelPick;
     pendingSubmapId_ = smId;
 
-    Eigen::Matrix4d T = sm->transformMatrix();
+    Eigen::Matrix4d T = project_.submapToRootMatrix(smId);
     Eigen::Vector3d planeOrigin = T.block<3,1>(0,3);
     Eigen::Vector3d planeNormal = T.block<3,3>(0,0) * Eigen::Vector3d::UnitZ();
     viewer_->setPickPlane(planeOrigin, planeNormal);
@@ -831,10 +932,9 @@ void MainWindow::onAlignSubmap(const QString& smId) {
 
         *srcPickConn = connect(viewer_, &PointCloudViewer::pointPicked,
                         [this, smId, dlg, srcPickConn](const Eigen::Vector3d& worldPos) {
-                            auto* s = project_.submap(smId);
                             Eigen::Vector3d localPos = worldPos;
-                            if (s) {
-                                Eigen::Matrix4d invT = s->transformMatrix().inverse();
+                            {
+                                Eigen::Matrix4d invT = project_.submapToRootMatrix(smId).inverse();
                                 Eigen::Vector4d lp = invT * Eigen::Vector4d(worldPos.x(), worldPos.y(), worldPos.z(), 1.0);
                                 localPos = lp.head<3>();
                             }
@@ -864,7 +964,7 @@ void MainWindow::onAlignSubmap(const QString& smId) {
         Eigen::Vector3d srcHalf(halfCrop, halfCrop, halfCrop);
 
         auto srcVerts = buildWireframeBox(srcCenter, srcHalf,
-                                          QColor(255, 200, 0), s->transformMatrix());
+                                          QColor(255, 200, 0), project_.submapToRootMatrix(smId));
         viewer_->updateCropBox("source_crop", srcVerts);
     };
 
@@ -982,7 +1082,7 @@ void MainWindow::onPointPicked(const Eigen::Vector3d& pos) {
     switch (pendingAction_) {
     case PendingSemanticPanelPick: {
         if (!sm) break;
-        Eigen::Matrix4d invT = sm->transformMatrix().inverse();
+        Eigen::Matrix4d invT = project_.submapToRootMatrix(pendingSubmapId_).inverse();
         Eigen::Vector4d local = invT * Eigen::Vector4d(pos.x(), pos.y(), pos.z(), 1.0);
         propsPanel_->setSemanticPositionLocal(local.x(), local.y(), 0.0);
         statusLabel_->setText(QString("已填入 position（局部坐标）: (%1, %2, 0.00)，可在右侧面板继续编辑后点「应用修改」")
@@ -1015,7 +1115,7 @@ void MainWindow::onMarkerDragFinished(const QString& submapId, const QString& na
     auto* sp = sm->semanticPoint(name);
     if (!sp) return;
 
-    Eigen::Matrix4d invT = sm->transformMatrix().inverse();
+    Eigen::Matrix4d invT = project_.submapToRootMatrix(submapId).inverse();
     Eigen::Vector4d lp = invT * Eigen::Vector4d(newWorldPos.x(), newWorldPos.y(), newWorldPos.z(), 1.0);
     Eigen::Vector3d localPos(lp.x(), lp.y(), 0.0);
 

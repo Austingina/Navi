@@ -251,6 +251,8 @@ QTreeWidgetItem* SubmapPanel::makeSubmapItem(const QString& id, SubMap* sm) {
     QString label = sm->name().isEmpty() ? id : QString("%1 (%2)").arg(sm->name(), id);
     bool isDefault = (project_ && project_->defaultSubmapId() == id);
     if (isDefault) label += " ⭐";
+    if (!sm->parentSubmapId().isEmpty())
+        label += QString(" → %1").arg(sm->parentSubmapId());
 
     auto* item = new QTreeWidgetItem({label});
     item->setData(0, RoleType, TypeSubmap);
@@ -429,7 +431,6 @@ void SubmapPanel::onContextMenu(const QPoint& pos) {
 
     switch (type) {
     case TypeSubmap: {
-        // 设置为 default_submap
         bool isDefault = (project_ && project_->defaultSubmapId() == smId);
         if (!isDefault) {
             menu.addAction("⭐ 设为默认子地图", [this, smId]() {
@@ -437,6 +438,27 @@ void SubmapPanel::onContextMenu(const QPoint& pos) {
             });
             menu.addSeparator();
         }
+
+        // 设置父子地图
+        {
+            auto* parentMenu = menu.addMenu("🔗 设置父子地图");
+            auto* sm = project_ ? project_->submap(smId) : nullptr;
+            QString currentParent = sm ? sm->parentSubmapId() : QString();
+
+            if (!currentParent.isEmpty()) {
+                parentMenu->addAction(QString("✖ 清除父节点 (当前: %1)").arg(currentParent),
+                    [this, smId]() { emit setParentSubmapRequested(smId, QString()); });
+                parentMenu->addSeparator();
+            }
+            if (project_) {
+                for (const auto& otherId : project_->submapIds()) {
+                    if (otherId == smId || otherId == currentParent) continue;
+                    parentMenu->addAction(QString("→ %1").arg(otherId),
+                        [this, smId, otherId]() { emit setParentSubmapRequested(smId, otherId); });
+                }
+            }
+        }
+
         menu.addAction("🔧 对齐 Transform (3D-BBS)", [this, smId]() {
             emit alignSubmapRequested(smId);
         });
@@ -447,7 +469,11 @@ void SubmapPanel::onContextMenu(const QPoint& pos) {
             emit addPortalRequested(smId);
         });
         menu.addSeparator();
+        menu.addAction("🌳 显示 TF 树", [this]() {
+            emit showTfTreeRequested();
+        });
         if (!isDefault) {
+            menu.addSeparator();
             menu.addAction("🗑️ 删除此 Submap", [this, smId]() {
                 emit removeSubmapRequested(smId);
             });

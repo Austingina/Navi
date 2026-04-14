@@ -53,6 +53,8 @@ private slots:
     void onAddPortal(const QString& smId);
     void onAlignSubmap(const QString& smId);
     void onSetDefaultSubmap(const QString& id);
+    void onSetParentSubmap(const QString& submapId, const QString& parentId);
+    void onShowTfTree();
 
     // ── 属性面板事件 ────────────────────────────────────────────────
     void onSubmapPropertiesChanged(const QString& id);
