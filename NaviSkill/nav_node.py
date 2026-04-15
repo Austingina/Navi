@@ -470,18 +470,19 @@ class NavNode(Node):
             self.current_goal_handle = goal_handle
             self.get_logger().info('导航目标已被接受，开始执行...')
 
-            # 监听结果
-            goal_handle.get_result_async().add_done_callback(self._nav_result_callback)
+            epoch = self._plan_epoch
+            goal_handle.get_result_async().add_done_callback(
+                lambda f, ep=epoch: self._nav_result_callback(f, ep)
+            )
         except Exception as e:
             self.get_logger().error(f"状态回调出错: {e}")
             import traceback
             self.get_logger().error(f"详细错误: {traceback.format_exc()}")
 
-    def _nav_result_callback(self, future):
+    def _nav_result_callback(self, future, epoch):
         try:
             result = future.result().result
             status = future.result().status
-            # 状态名称映射
             status_names = {
                 GoalStatus.STATUS_UNKNOWN: "UNKNOWN",
                 GoalStatus.STATUS_ACCEPTED: "ACCEPTED",
@@ -492,6 +493,11 @@ class NavNode(Node):
                 GoalStatus.STATUS_ABORTED: "ABORTED"
             }
             status_name = status_names.get(status, f"UNKNOWN({status})")
+
+            if epoch != self._plan_epoch:
+                self.get_logger().info(f"忽略旧目标的结果回调: {status_name} (epoch {epoch} != {self._plan_epoch})")
+                return
+
             self.get_logger().info(f"导航状态: {status_name}")
             if status == GoalStatus.STATUS_SUCCEEDED:
                 self.get_logger().info('✓ Navigation2导航成功完成！进入PID控制状态')
