@@ -688,6 +688,18 @@
                 }
             },
             "submap_portals": [
+                {
+                    "portal": "elevator_out",
+                    "submap": "2f"
+                },
+                {
+                    "portal": "elevator_out",
+                    "submap": "5f"
+                },
+                {
+                    "portal": "elevator_out",
+                    "submap": "6f"
+                }
             ],
             "transform": {
                 "rotation": { "w": 0.9999543905354273, "x": 0.007583240102408765, "y": 0.0014832708299914463, "z": -0.005613486092981385},
@@ -841,6 +853,14 @@
                 {
                     "portal": "d_elevator_out",
                     "submap": "6f"
+                },
+                {
+                    "portal": "elevator_out",
+                    "submap": "1f"
+                },
+                {
+                    "portal": "elevator_out",
+                    "submap": "5f"
                 }
             ],
             "transform": {
@@ -898,6 +918,18 @@
                 }
             },
             "submap_portals": [
+                {
+                    "portal": "elevator_out",
+                    "submap": "2f"
+                },
+                {
+                    "portal": "elevator_out",
+                    "submap": "1f"
+                },
+                {
+                    "portal": "elevator_out",
+                    "submap": "6f"
+                }
             ],
             "transform": {
                 "rotation": { "w": 0.999990334285422, "x": 0.0033902601830236045, "y": -0.00210326887742961, "z": 0.0018476286560474573},
@@ -920,7 +952,7 @@
                 "control point 1": {
                     "pose": {
                         "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
-                        "position": { "x": 5.0, "y": 0.0, "z": 0.0}
+                        "position": { "x": 5.5, "y": 0.6, "z": 0.0}
                     },
                     "type": "single_pose"
                 },
@@ -1010,6 +1042,14 @@
                 {
                     "portal": "d_elevator_out",
                     "submap": "2f"
+                },
+                {
+                    "portal": "elevator_out",
+                    "submap": "1f"
+                },
+                {
+                    "portal": "elevator_out",
+                    "submap": "5f"
                 }
             ],
             "transform": {
