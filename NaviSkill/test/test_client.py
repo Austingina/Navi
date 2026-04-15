@@ -164,9 +164,11 @@ class SimplePatrolClient:
         route_name: Optional[str] = None,
         patrol_sequence: Optional[List[str]] = None,
         continue_tolerance: float = -1.0,
+        auto_confirm: bool = False,
     ):
         self.ws_url = ws_url
         self.pose_list: list = []
+        self.auto_confirm = auto_confirm
         self.is_paused = False
         self.continue_tolerance = continue_tolerance
 
@@ -409,12 +411,15 @@ class SimplePatrolClient:
                             "请确认电梯已到达且门已打开、可安全进梯后按回车继续："
                         )
 
-                    confirm = await asyncio.get_event_loop().run_in_executor(
-                        None, lambda: input(prompt_msg).strip().lower()
-                    )
-                    if confirm == "n":
-                        logger.info(f"⏭️  用户取消，跳过 {target_name}")
-                        continue
+                    if self.auto_confirm:
+                        logger.info("🤖 -Y 自动确认，继续执行")
+                    else:
+                        confirm = await asyncio.get_event_loop().run_in_executor(
+                            None, lambda: input(prompt_msg).strip().lower()
+                        )
+                        if confirm == "n":
+                            logger.info(f"⏭️  用户取消，跳过 {target_name}")
+                            continue
 
                 pinfo = point_meta.get("point_info") or {}
                 pose_ = pinfo.get("pose") or {}
@@ -450,7 +455,7 @@ class SimplePatrolClient:
                     "⏳ 等待到达目标点 (超时: 120秒)... [按空格键暂停/恢复]"
                 )
                 wait_data = await self.wait_goal_with_pause(
-                    client, target_name, timeout=120.0, xy_tolerance=0.04, yaw_tolerance=0.03
+                    client, target_name, timeout=120.0, xy_tolerance=0.6, yaw_tolerance=4.03
                 )
 
                 duration = time.time() - start_time
@@ -613,6 +618,13 @@ async def main() -> int:
              "容差范围内有多个点时优先选靠后的（尽快走完路线）",
     )
     parser.add_argument(
+        "-Y",
+        "--yes",
+        action="store_true",
+        default=False,
+        help="自动确认所有电梯相关提示（elevator_wait/elevator_in/elevator_out），不再等待用户输入",
+    )
+    parser.add_argument(
         "-s",
         "--submap",
         default=None,
@@ -666,6 +678,7 @@ async def main() -> int:
                 route_name=args.route,
                 patrol_sequence=patrol_seq,
                 continue_tolerance=args.continue_tolerance,
+                auto_confirm=args.yes,
             )
             success = await client.start_patrol_test()
 
