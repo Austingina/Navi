@@ -96,9 +96,9 @@ void PortalEditorDialog::onApply() {
     }
 
     for (const auto& ep : sm_->portals()) {
-        if (ep.portalName == portalName) {
+        if (ep.portalName == portalName && ep.targetSubmap == targetSm) {
             QMessageBox::warning(this, "新增传送门",
-                QString("已存在使用该语义点的传送门 \"%1\"。").arg(portalName));
+                QString("已存在传送门 \"%1\" → %2，请勿重复添加。").arg(portalName, targetSm));
             return;
         }
     }
