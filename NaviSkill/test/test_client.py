@@ -379,9 +379,12 @@ class SimplePatrolClient:
                                 logger.error(f"❌ 切换地图失败: {change_data.get('msg')}")
                                 continue
                             logger.info(f"✅ 切换地图成功: {target_submap}")
+                            
                             init_pose = change_data.get("init_pose")
                             if init_pose:
                                 logger.info(f"📍 切换后初始位姿: {init_pose}")
+                            logger.info("⏳ 切换地图后等待 3s...")
+                            await asyncio.sleep(3.0)
                         else:
                             logger.error(
                                 f"❌ 未找到从 {current_map_id} 到 {target_submap} 的传送门: "
