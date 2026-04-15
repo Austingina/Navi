@@ -31,7 +31,7 @@ pcl_grid_map_extraction:
     height_type: 0
     # For height_type 1
     height_thresh: 1.0
-    robot_height: 1.0  # 设置机器人高度阈值，超过此高度的点将被过滤，z值，不是实际身高
+    robot_height: 0.8  # 设置机器人高度阈值，超过此高度的点将被过滤，z值，不是实际身高
     traversable_num: 500  # 设置可通行点数阈值，超过此数量的障碍点将被视为不可通行
     slope_threshold: 0.30  # 设置坡度阈值，超过此坡度的区域将被视为不可通行，15度约为0.26弧度,0.3(17.19)
     ground_z: -0.7  # 设置地面高度阈值，低于此高度的点将被忽略
