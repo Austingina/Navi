@@ -1185,7 +1185,7 @@ class NavigationToolManager:
         try:
             if inspect.iscoroutinefunction(handler):
                 return await handler(**params)
-            return handler(**params)
+            return await asyncio.to_thread(handler, **params)
         except TypeError as e:
             return {"success": False, "msg": f"参数不匹配: {e}"}
         except Exception as e:
