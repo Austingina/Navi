@@ -507,7 +507,7 @@
                 "elevator_hall_in": {
                     "pose": {
                         "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
-                        "position": { "x": -4.0, "y": -0.2205, "z": 0.0}
+                        "position": { "x": -2.02, "y": -0.1, "z": 0.0}
                     },
                     "type": "single_pose"
                 },
@@ -605,14 +605,14 @@
                 "outdoor 2": {
                     "pose": {
                         "orientation": { "w": 0.0, "x": 0.0, "y": 0.0, "z": 1.0},
-                        "position": { "x": -4.0, "y": -0.246, "z": 0.0}
+                        "position": { "x": -2.02, "y": -0.1, "z": 0.0}
                     },
                     "type": "single_pose"
                 },
                 "outdoor 3": {
                     "pose": {
                         "orientation": { "w": 0.0, "x": 0.0, "y": 0.0, "z": 1.0},
-                        "position": { "x": -11.3, "y": -0.3746, "z": 0.0}
+                        "position": { "x": -10.3, "y": -0.3746, "z": 0.0}
                     },
                     "type": "single_pose"
                 },
