@@ -138,7 +138,8 @@ def generate_launch_description():
         executable='grid_map_pcl_loader_node',
         name='grid_map_pcl_loader_node',
         parameters=[{'map_file_path': map_file_path}],
-        output='screen'
+        output='screen',
+        arguments=['--ros-args', '--log-level', 'error']
     )
 
         
