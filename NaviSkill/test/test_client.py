@@ -165,12 +165,14 @@ class SimplePatrolClient:
         patrol_sequence: Optional[List[str]] = None,
         continue_tolerance: float = -1.0,
         auto_confirm: bool = False,
+        route_start_index: int = 0,
     ):
         self.ws_url = ws_url
         self.pose_list: list = []
         self.auto_confirm = auto_confirm
         self.is_paused = False
         self.continue_tolerance = continue_tolerance
+        self.route_start_index = route_start_index
 
         self.patrol_sequence: list = list(patrol_sequence) if patrol_sequence else []
 
@@ -250,6 +252,19 @@ class SimplePatrolClient:
                         "❌ 未得到任何路线途经点（请检查地图 multifloor 是否配置 routes）"
                     )
                     return False
+
+            if self.route_start_index > 0:
+                total = len(self.patrol_sequence)
+                if self.route_start_index >= total:
+                    logger.error(
+                        f"❌ 起始序号 {self.route_start_index + 1} 超出路线点位总数 {total}"
+                    )
+                    return False
+                self.patrol_sequence = self.patrol_sequence[self.route_start_index:]
+                logger.info(
+                    f"📌 从第 {self.route_start_index + 1}/{total} 个点位开始，"
+                    f"剩余 {len(self.patrol_sequence)} 个点"
+                )
 
             logger.info(
                 f"📋 本次测试点位序列 ({len(self.patrol_sequence)}): "
@@ -598,9 +613,10 @@ async def main() -> int:
     parser.add_argument(
         "-r",
         "--route",
+        nargs="+",
         default=None,
-        metavar="NAME",
-        help="路线名称；省略则使用服务器返回的第一条路线（当 -p 未指定时生效）",
+        metavar=("NAME", "START_INDEX"),
+        help="路线名称 [起始点位序号]；省略序号则从第 1 个开始；序号从 1 起",
     )
     parser.add_argument(
         "-p",
@@ -676,12 +692,25 @@ async def main() -> int:
         # -p/--patrol 存在时才执行巡检（args.patrol 为 None 表示未传 -p）
         if args.patrol is not None:
             patrol_seq = args.patrol if args.patrol else None
+            route_name = None
+            route_start_index = 0
+            if args.route:
+                route_name = args.route[0]
+                if len(args.route) >= 2:
+                    try:
+                        route_start_index = int(args.route[1]) - 1
+                        if route_start_index < 0:
+                            route_start_index = 0
+                    except ValueError:
+                        logger.error("❌ -r 的第二个参数（起始序号）必须为正整数")
+                        return 1
             client = SimplePatrolClient(
                 ws_url=args.ws,
-                route_name=args.route,
+                route_name=route_name,
                 patrol_sequence=patrol_seq,
                 continue_tolerance=args.continue_tolerance,
                 auto_confirm=args.yes,
+                route_start_index=route_start_index,
             )
             success = await client.start_patrol_test()
 
