@@ -591,20 +591,25 @@ class NavigationToolManager:
             Dict: {"success": True, "map_id": "...", "map_path": "..."}
             """
             try:
-                # 通过 ROS 参数服务获取当前地图路径
                 map_path = self.ros_node.get_current_map_path()
-                if not map_path:
-                    return {"success": False, "msg": "无法获取当前地图路径"}
-                
-                # 通过 MapManager 获取 submap ID
-                map_id = self.map_manager.get_submap_id_by_map_file(map_path)
-                
-                return {
-                    "success": True,
-                    "map_id": map_id,
-                    "map_path": map_path,
-                    "msg": f"当前地图: {map_id or '未知'} ({map_path})"
-                }
+                if map_path:
+                    map_id = self.map_manager.get_submap_id_by_map_file(map_path)
+                    return {
+                        "success": True,
+                        "map_id": map_id,
+                        "map_path": map_path,
+                        "msg": f"当前地图: {map_id or '未知'} ({map_path})"
+                    }
+                # ROS 参数服务超时，回退到 MapManager 缓存
+                cached_id = self.map_manager.get_current_submap()
+                if cached_id:
+                    return {
+                        "success": True,
+                        "map_id": cached_id,
+                        "map_path": "",
+                        "msg": f"当前地图(缓存): {cached_id}（ROS参数服务暂不可用）"
+                    }
+                return {"success": False, "msg": "无法获取当前地图路径，且无缓存"}
             except Exception as e:
                 return {"success": False, "msg": f"获取当前地图失败: {str(e)}"}
 
@@ -628,18 +633,20 @@ class NavigationToolManager:
                         "msg": f"地图 {map_id} 不存在，可用地图: {submap_list}"
                     }
                 
-                # 获取当前地图 ID
+                # 获取当前地图 ID（ROS 参数服务优先，超时则回退到 MapManager 缓存）
                 current_map_path = self.ros_node.get_current_map_path()
                 current_map_id = None
                 if current_map_path:
                     current_map_id = self.map_manager.get_submap_id_by_map_file(current_map_path)
-                    if current_map_id == map_id:
-                        return {
-                            "success": True,
-                            "map_id": map_id,
-                            "map_path": current_map_path,
-                            "msg": f"当前已经是地图 {map_id}，无需切换"
-                        }
+                if not current_map_id:
+                    current_map_id = self.map_manager.get_current_submap()
+                if current_map_id == map_id:
+                    return {
+                        "success": True,
+                        "map_id": map_id,
+                        "map_path": current_map_path or "",
+                        "msg": f"当前已经是地图 {map_id}，无需切换"
+                    }
                 
                 # 获取当前位姿（在切换地图之前）
                 current_pose = None
