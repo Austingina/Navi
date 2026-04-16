@@ -35,7 +35,7 @@ class WsNavClient:
         self._req_id = 0
 
     async def connect(self) -> None:
-        self._ws = await websockets.connect(self.url, ping_interval=20, ping_timeout=20)
+        self._ws = await websockets.connect(self.url, ping_interval=20, ping_timeout=60)
 
     async def close(self) -> None:
         if self._ws is not None:
