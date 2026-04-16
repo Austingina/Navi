@@ -608,7 +608,7 @@ class NavigationToolManager:
             except Exception as e:
                 return {"success": False, "msg": f"获取当前地图失败: {str(e)}"}
 
-        def change_map(map_id: str, timeout: float = 30.0) -> Dict[str, Any]:
+        def change_map(map_id: str, timeout: float = 60.0) -> Dict[str, Any]:
             """
             切换到指定地图
 

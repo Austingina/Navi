@@ -123,7 +123,7 @@ class SubmapClient:
         logger.warning("获取子地图列表失败: %s", data.get("msg"))
         return []
 
-    async def ensure_submap(self, target_submap: str, timeout: float = 30.0) -> bool:
+    async def ensure_submap(self, target_submap: str, timeout: float = 60.0) -> bool:
         """
         确保当前子地图为 *target_submap*。
 
@@ -458,7 +458,7 @@ class SimplePatrolClient:
                     "⏳ 等待到达目标点 (超时: 120秒)... [按空格键暂停/恢复]"
                 )
                 wait_data = await self.wait_goal_with_pause(
-                    client, target_name, timeout=120.0, xy_tolerance=0.6, yaw_tolerance=4.03
+                    client, target_name, timeout=120.0, xy_tolerance=0.04, yaw_tolerance=0.03
                 )
 
                 duration = time.time() - start_time
