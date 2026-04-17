@@ -530,6 +530,7 @@ class NavigationToolManager:
             point_info 中 `type` 字段说明：
             - "single_pose": 单一位姿点；使用普通导航接口 `set_goal_by_name` 下发目标。
             - "multi_pose": 多位姿点；需使用 `set_goal_by_multipose` 来依次导航到各个位姿。
+            - "LowPrecision_pose": 低精度点位；到达后不要求位置和朝向精确，使用较大容差即可。
             - "elevator_call": 电梯呼叫点；机器人到达该点后应等待外部 agent 执行呼叫电梯的动作。
             - "elevator_wait": 电梯等待点；机器人到达该点后应等待外部 agent 确认电梯已到达且车门已打开。
             - "elevator_in": 进梯点；`set_goal_by_name` 下发目标时自动调用 `enter_elevator`（锁 Z）。
@@ -948,14 +949,15 @@ class NavigationToolManager:
             返回:
             Dict: 包含到达结果的字典
             """
-            """阻塞直到到达目标点或超时"""
-            # print(f"wait_goal_reached: target={target}, timeout={timeout}, xy_tolerance={xy_tolerance}, yaw_tolerance={yaw_tolerance}")
+            # elevator_in / LowPrecision_pose 强制宽松容差
+            if self.map_manager:
+                pt = self.map_manager.get_pose_in_submap(target)
+                if pt and pt.get("type") in ("elevator_in", "LowPrecision_pose"):
+                    xy_tolerance = max(xy_tolerance, 0.6)
+                    yaw_tolerance = max(yaw_tolerance, 3.14)
             try:
-                # 记录开始时间
                 start_time = time.time()
-                # 循环检查是否到达目标或超时
                 while time.time() - start_time < timeout:
-                    # 异步等待0.2秒再次检查
                     await asyncio.sleep(0.2)
                     status, fail_msg = self.ros_node.check_goal_reached(xy_tolerance, yaw_tolerance)
                     if status == self.ros_node.GOAL_CHECK_REACHED:
