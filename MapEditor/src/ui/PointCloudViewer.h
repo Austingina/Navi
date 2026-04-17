@@ -93,6 +93,20 @@ public:
     void removeCropBox(const QString& name);
     void clearCropBoxes();
 
+    // ── TF 树 overlay ─────────────────────────────────────────────────
+    struct TfTreeNode {
+        QString label;
+        float   x, y;      // 屏幕像素坐标
+        bool    isRoot;
+    };
+    struct TfTreeEdge {
+        float x1, y1, x2, y2;  // 屏幕像素坐标
+    };
+    void setTfTreeVisible(bool v) { showTfTree_ = v; update(); }
+    bool isTfTreeVisible() const  { return showTfTree_; }
+    void updateTfTree(const QVector<TfTreeNode>& nodes,
+                      const QVector<TfTreeEdge>& edges);
+
     // ── 拾取模式 ─────────────────────────────────────────────────────
     enum PickMode { NoPickMode, PickPointOnCloud, PickGuessPosition, PickOnPlane };
     void setPickMode(PickMode mode) { pickMode_ = mode; }
@@ -181,6 +195,14 @@ private:
 
     // ── 裁剪框预览 ─────────────────────────────────────────────────
     QMap<QString, RouteGLData*> cropBoxGL_;
+
+    // ── TF 树 overlay ────────────────────────────────────────────
+    QVector<TfTreeNode> tfTreeNodes_;
+    QVector<TfTreeEdge> tfTreeEdges_;
+    QOpenGLVertexArrayObject tfTreeVAO_;
+    QOpenGLBuffer            tfTreeVBO_{QOpenGLBuffer::VertexBuffer};
+    int                      tfTreeLineVertCount_ = 0;
+    bool                     showTfTree_ = false;
 
     // ── 网格地面 ─────────────────────────────────────────────────────
     QOpenGLVertexArrayObject gridVAO_;

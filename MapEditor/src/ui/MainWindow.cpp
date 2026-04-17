@@ -773,60 +773,98 @@ void MainWindow::onSetParentSubmap(const QString& submapId, const QString& paren
 
 void MainWindow::onShowTfTree() {
     if (project_.submapCount() == 0) {
+        viewer_->setTfTreeVisible(false);
         QMessageBox::information(this, "TF 树", "当前没有子地图");
         return;
     }
 
-    // 递归构建树形文本
-    std::function<QString(const QString&, const QString&)> buildTree =
-        [&](const QString& nodeId, const QString& indent) -> QString {
-        QString line = indent + nodeId;
-        auto* sm = project_.submap(nodeId);
-        if (sm && !sm->name().isEmpty() && sm->name() != nodeId)
-            line += " (" + sm->name() + ")";
-        if (nodeId == project_.defaultSubmapId())
-            line += " ⭐ root";
-        line += "\n";
-
-        for (const auto& childId : project_.submapChildren(nodeId)) {
-            line += buildTree(childId, indent + "    ");
-        }
-        return line;
-    };
-
-    // 从根节点（无父或 parent 为空的节点）开始
-    QString treeText;
-    QStringList roots;
-    for (const auto& id : project_.submapIds()) {
-        auto* sm = project_.submap(id);
-        if (sm && sm->parentSubmapId().isEmpty())
-            roots.append(id);
+    // 切换显示
+    if (viewer_->isTfTreeVisible()) {
+        viewer_->setTfTreeVisible(false);
+        statusLabel_->setText("TF 树已隐藏");
+        return;
     }
-    for (const auto& rootId : roots)
-        treeText += buildTree(rootId, "");
 
-    // 检查是否有孤立节点（parent 指向不存在的 submap）
+    // ── 收集根节点（parentSubmapId 为空或指向不存在的节点）──
+    QStringList roots;
     for (const auto& id : project_.submapIds()) {
         auto* sm = project_.submap(id);
         if (!sm) continue;
         QString pid = sm->parentSubmapId();
-        if (!pid.isEmpty() && !project_.submap(pid))
-            treeText += QString("[孤立] %1 (父 %2 不存在)\n").arg(id, pid);
+        if (pid.isEmpty() || !project_.submap(pid))
+            roots.append(id);
+    }
+    if (roots.isEmpty()) {
+        roots = project_.submapIds();
     }
 
-    QMessageBox dlg(this);
-    dlg.setWindowTitle("TF 树结构");
-    dlg.setIcon(QMessageBox::Information);
-    dlg.setText("子地图 TF 树结构：");
-    dlg.setDetailedText(treeText);
-    // 自动展开详情
-    for (auto* btn : dlg.buttons()) {
-        if (dlg.buttonRole(btn) == QMessageBox::ActionRole) {
-            btn->click();
-            break;
+    // ── 计算每棵子树的叶宽度 ──
+    std::function<int(const QString&)> subtreeWidth =
+        [&](const QString& nodeId) -> int {
+        QStringList children = project_.submapChildren(nodeId);
+        if (children.isEmpty()) return 1;
+        int w = 0;
+        for (const auto& c : children)
+            w += subtreeWidth(c);
+        return w;
+    };
+
+    // ── 布局参数 ──
+    const float nodeW   = 90.0f;   // 每个叶节点占用的水平宽度
+    const float levelH  = 60.0f;   // 层间垂直间距
+    const float padTop  = 40.0f;   // 顶部边距
+    const float padLeft = 30.0f;   // 左侧边距
+
+    // 总宽度
+    int totalLeaves = 0;
+    for (const auto& r : roots)
+        totalLeaves += subtreeWidth(r);
+
+    QVector<PointCloudViewer::TfTreeNode> nodes;
+    QVector<PointCloudViewer::TfTreeEdge> edges;
+
+    // ── 递归布局 ──
+    std::function<void(const QString&, int, float, float)> layoutNode =
+        [&](const QString& nodeId, int depth, float xStart, float xEnd) {
+        float cx = (xStart + xEnd) * 0.5f;
+        float cy = padTop + depth * levelH;
+
+        bool isRoot = (project_.submap(nodeId) &&
+                       project_.submap(nodeId)->parentSubmapId().isEmpty());
+        nodes.append({nodeId, cx, cy, isRoot});
+
+        QStringList children = project_.submapChildren(nodeId);
+        if (children.isEmpty()) return;
+
+        int totalW = 0;
+        for (const auto& c : children)
+            totalW += subtreeWidth(c);
+
+        float childX = xStart;
+        for (const auto& c : children) {
+            int cw = subtreeWidth(c);
+            float childXEnd = childX + (xEnd - xStart) * float(cw) / float(totalW);
+            float childCx = (childX + childXEnd) * 0.5f;
+            float childCy = padTop + (depth + 1) * levelH;
+
+            edges.append({cx, cy, childCx, childCy});
+
+            layoutNode(c, depth + 1, childX, childXEnd);
+            childX = childXEnd;
         }
+    };
+
+    float xCursor = padLeft;
+    for (const auto& rootId : roots) {
+        int w = subtreeWidth(rootId);
+        float xEnd = xCursor + w * nodeW;
+        layoutNode(rootId, 0, xCursor, xEnd);
+        xCursor = xEnd;
     }
-    dlg.exec();
+
+    viewer_->updateTfTree(nodes, edges);
+    viewer_->setTfTreeVisible(true);
+    statusLabel_->setText(QString("TF 树已显示（%1 个节点）").arg(nodes.size()));
 }
 
 void MainWindow::onRemoveSubmap(const QString& id) {

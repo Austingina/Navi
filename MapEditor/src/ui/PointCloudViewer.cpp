@@ -250,6 +250,21 @@ void PointCloudViewer::paintGL() {
         glLineWidth(1.0f);
     }
 
+    // TF 树 overlay — GL_LINES 部分（屏幕像素坐标 + 正交投影）
+    if (showTfTree_ && tfTreeLineVertCount_ > 0) {
+        glDisable(GL_DEPTH_TEST);
+        QMatrix4x4 ortho;
+        ortho.ortho(0.f, float(width()), float(height()), 0.f, -1.f, 1.f);
+        cloudShader_->setUniformValue("uMVP", ortho);
+        cloudShader_->setUniformValue("uDrawMode", 0);
+        glLineWidth(2.0f);
+        tfTreeVAO_.bind();
+        glDrawArrays(GL_LINES, 0, tfTreeLineVertCount_);
+        tfTreeVAO_.release();
+        glLineWidth(1.0f);
+        glEnable(GL_DEPTH_TEST);
+    }
+
     cloudShader_->release();
 
     // Overlay: draw submap IDs using QPainter (2D overlay)
@@ -272,6 +287,51 @@ void PointCloudViewer::paintGL() {
         painter.setPen(Qt::white);
         painter.drawText(x+6, y-6, it.key());
     }
+
+    // TF 树 overlay — QPainter 节点标签
+    if (showTfTree_ && !tfTreeNodes_.isEmpty()) {
+        QFont tfFont;
+        tfFont.setPointSize(11);
+        tfFont.setBold(true);
+        painter.setFont(tfFont);
+        QFontMetrics fm(tfFont);
+
+        // 半透明背景面板
+        if (!tfTreeNodes_.isEmpty()) {
+            float minX = 1e9f, minY = 1e9f, maxX = -1e9f, maxY = -1e9f;
+            for (const auto& n : tfTreeNodes_) {
+                QRect tr = fm.boundingRect(n.label);
+                float left  = n.x - tr.width() / 2.f - 6;
+                float right = n.x + tr.width() / 2.f + 6;
+                float top   = n.y - tr.height() / 2.f - 6;
+                float bot   = n.y + tr.height() / 2.f + 6;
+                if (left  < minX) minX = left;
+                if (right > maxX) maxX = right;
+                if (top   < minY) minY = top;
+                if (bot   > maxY) maxY = bot;
+            }
+            painter.fillRect(QRectF(minX - 10, minY - 10,
+                                    maxX - minX + 20, maxY - minY + 20),
+                             QColor(0, 0, 0, 160));
+        }
+
+        for (const auto& n : tfTreeNodes_) {
+            QRect tr = fm.boundingRect(n.label);
+            int bw = tr.width() + 12;
+            int bh = tr.height() + 8;
+            int bx = int(n.x) - bw / 2;
+            int by = int(n.y) - bh / 2;
+
+            QColor bg = n.isRoot ? QColor(60, 130, 200) : QColor(70, 70, 70);
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(bg);
+            painter.drawRoundedRect(bx, by, bw, bh, 4, 4);
+
+            painter.setPen(Qt::white);
+            painter.drawText(QRect(bx, by, bw, bh), Qt::AlignCenter, n.label);
+        }
+    }
+
     painter.end();
 }
 
@@ -604,6 +664,57 @@ void PointCloudViewer::clearCropBoxes() {
         delete cb;
     }
     cropBoxGL_.clear();
+    doneCurrent();
+    update();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  TF 树 overlay
+// ═══════════════════════════════════════════════════════════════════════
+
+void PointCloudViewer::updateTfTree(
+        const QVector<TfTreeNode>& nodes,
+        const QVector<TfTreeEdge>& edges) {
+    makeCurrent();
+
+    tfTreeNodes_ = nodes;
+    tfTreeEdges_ = edges;
+
+    // 构建 GL_LINES 顶点: 每条边 2 个顶点 × 6 float (x,y,z, r,g,b)
+    // 使用直角折线: parent → 垂直到子节点 y → 水平到子节点 x
+    QVector<float> verts;
+    const float cr = 0.7f, cg = 0.85f, cb = 1.0f;
+    for (const auto& e : edges) {
+        float midY = (e.y1 + e.y2) * 0.5f;
+        // segment 1: (x1,y1) → (x1,midY)
+        verts << e.x1 << e.y1 << 0.f << cr << cg << cb;
+        verts << e.x1 << midY << 0.f << cr << cg << cb;
+        // segment 2: (x1,midY) → (x2,midY)
+        verts << e.x1 << midY << 0.f << cr << cg << cb;
+        verts << e.x2 << midY << 0.f << cr << cg << cb;
+        // segment 3: (x2,midY) → (x2,y2)
+        verts << e.x2 << midY << 0.f << cr << cg << cb;
+        verts << e.x2 << e.y2 << 0.f << cr << cg << cb;
+    }
+
+    tfTreeLineVertCount_ = verts.size() / 6;
+
+    if (!tfTreeVAO_.isCreated()) tfTreeVAO_.create();
+    if (!tfTreeVBO_.isCreated()) tfTreeVBO_.create();
+
+    if (tfTreeLineVertCount_ > 0) {
+        tfTreeVAO_.bind();
+        tfTreeVBO_.bind();
+        tfTreeVBO_.allocate(verts.constData(), verts.size() * sizeof(float));
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), nullptr);
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float),
+                              reinterpret_cast<void*>(3 * sizeof(float)));
+        tfTreeVBO_.release();
+        tfTreeVAO_.release();
+    }
+
     doneCurrent();
     update();
 }
