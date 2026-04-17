@@ -136,6 +136,7 @@ class SubmapClient:
             return True
 
         available = await self.get_submap_list()
+        
         if target_submap not in available:
             logger.error(
                 "❌ 目标子地图 %r 不存在，可用: %s", target_submap, available
@@ -186,6 +187,24 @@ class SimplePatrolClient:
         logger.info(f"📡 {self.ws_url}")
 
         async with WsNavClient(self.ws_url) as client:
+            # 打印所有 submap 信息
+            submap_list_data = await client.call("get_submap_list")
+            if submap_list_data.get("success"):
+                submap_ids = submap_list_data.get("submaps", [])
+                logger.info(f"🗺️  子地图列表 ({len(submap_ids)} 个): {submap_ids}")
+                for sid in submap_ids:
+                    info_data = await client.call("get_submap_info", {"submap_id": sid})
+                    if info_data.get("success"):
+                        info = info_data.get("info", {})
+                        sp_count = len(info.get("semantic_points", {}))
+                        portal_count = len(info.get("submap_portals", []))
+                        logger.info(
+                            f"   [{sid}] name={info.get('name', '')}, "
+                            f"desc={info.get('description', '')}, "
+                            f"map_file={info.get('map_file', '')}, "
+                            f"points={sp_count}, portals={portal_count}"
+                        )
+
             if self.patrol_sequence:
                 logger.info(
                     "📌 使用 -p 指定的巡检序列 (%d 个目的地): %s",
