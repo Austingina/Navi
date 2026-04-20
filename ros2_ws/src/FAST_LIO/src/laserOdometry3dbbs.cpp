@@ -164,19 +164,21 @@ std::vector<Eigen::Vector3f> bbs_map_tar_points_full;  // Full map target for BB
 // 电梯模式
 bool   elevator_mode      = false;   // 总开关（进入电梯后由服务打开）
 bool   elevator_z_moving  = false;   // 检测到 Z 加速度异常 → 电梯正在升降
+bool   elevator_z_moving_enable = false; // 是否启用基于 IMU Z 加速度的电梯升降检测（YAML 可配）
 double locked_z_pos       = 0.0;     // 进入电梯时的 Z 位置（始终锁）
 double locked_z_vel       = 0.0;
 Eigen::Vector3d locked_xy_pos(0.0, 0.0, 0.0);  // 检测到升降时冻结的 XY+Z
 Eigen::Vector3d locked_xy_vel(0.0, 0.0, 0.0);
 
 // Z 加速度基线 & 检测参数 (单位: g, 1.0 = 1g ≈ 9.8 m/s²)
+// 默认值，运行时可由 YAML 参数覆盖
 double imu_az_baseline    = 0.0;     // 进入电梯时 IMU Z 加速度滑动均值
 double imu_az_ema         = 0.0;     // 指数移动平均
-constexpr double AZ_EMA_ALPHA      = 0.05;   // EMA 平滑系数（慢响应，滤掉单帧尖峰）
-constexpr double AZ_TRIGGER_THRESH = 0.04;   // |ema - baseline| > 此值视为电梯升降 (g)
-constexpr double AZ_RELEASE_THRESH = 0.015;  // 恢复到此值以下视为电梯停止 (g)
-constexpr int    AZ_DEBOUNCE_COUNT = 50;     // 连续超阈值帧数才触发/释放 (~250ms @200Hz)
-constexpr int    AZ_MOVING_TIMEOUT = 12000;  // moving 状态最长帧数 (~60s @200Hz, 兜底)
+double AZ_EMA_ALPHA      = 0.05;   // EMA 平滑系数（慢响应，滤掉单帧尖峰）
+double AZ_TRIGGER_THRESH = 0.04;   // |ema - baseline| > 此值视为电梯升降 (g)
+double AZ_RELEASE_THRESH = 0.015;  // 恢复到此值以下视为电梯停止 (g)
+int    AZ_DEBOUNCE_COUNT = 50;     // 连续超阈值帧数才触发/释放 (~250ms @200Hz)
+int    AZ_MOVING_TIMEOUT = 12000;  // moving 状态最长帧数 (~60s @200Hz, 兜底)
 int az_trigger_cnt   = 0;
 int az_release_cnt   = 0;
 int az_moving_frames = 0;                    // 进入 moving 后累计帧数
@@ -417,7 +419,7 @@ void imu_cbk(const sensor_msgs::msg::Imu::UniquePtr msg_in)
     mtx_buffer.unlock();
     sig_buffer.notify_all();
 
-    if (elevator_mode) {
+    if (elevator_mode && elevator_z_moving_enable) {
         double az = msg->linear_acceleration.z;
         imu_az_ema = AZ_EMA_ALPHA * az + (1.0 - AZ_EMA_ALPHA) * imu_az_ema;
 
@@ -1206,6 +1208,12 @@ public:
         this->declare_parameter<int>("bbs3d.max_level", 6);
         this->declare_parameter<float>("bbs3d.xy_range", 5.0);
         this->declare_parameter<float>("bbs3d.z_range", 1.0);
+        this->declare_parameter<bool>("elevator_z_moving.enable", false);
+        this->declare_parameter<double>("elevator_z_moving.AZ_EMA_ALPHA", 0.05);
+        this->declare_parameter<double>("elevator_z_moving.AZ_TRIGGER_THRESH", 0.04);
+        this->declare_parameter<double>("elevator_z_moving.AZ_RELEASE_THRESH", 0.015);
+        this->declare_parameter<int>("elevator_z_moving.AZ_DEBOUNCE_COUNT", 50);
+        this->declare_parameter<int>("elevator_z_moving.AZ_MOVING_TIMEOUT", 12000);
 
         this->get_parameter_or<bool>("publish.path_en", path_en, true);
         this->get_parameter_or<bool>("publish.effect_map_en", effect_pub_en, false);
@@ -1249,6 +1257,17 @@ public:
         this->get_parameter_or<int>("bbs3d.max_level", bbs3d_max_level, 6);
         this->get_parameter_or<float>("bbs3d.xy_range", relocalize_xy_range, 5.0f);
         this->get_parameter_or<float>("bbs3d.z_range", relocalize_z_range, 1.0f);
+        this->get_parameter_or<bool>("elevator_z_moving.enable", elevator_z_moving_enable, false);
+        this->get_parameter_or<double>("elevator_z_moving.AZ_EMA_ALPHA", AZ_EMA_ALPHA, 0.05);
+        this->get_parameter_or<double>("elevator_z_moving.AZ_TRIGGER_THRESH", AZ_TRIGGER_THRESH, 0.04);
+        this->get_parameter_or<double>("elevator_z_moving.AZ_RELEASE_THRESH", AZ_RELEASE_THRESH, 0.015);
+        this->get_parameter_or<int>("elevator_z_moving.AZ_DEBOUNCE_COUNT", AZ_DEBOUNCE_COUNT, 50);
+        this->get_parameter_or<int>("elevator_z_moving.AZ_MOVING_TIMEOUT", AZ_MOVING_TIMEOUT, 12000);
+        RCLCPP_INFO(this->get_logger(),
+            "elevator_z_moving config: enable=%d, AZ_EMA_ALPHA=%.4f, AZ_TRIGGER_THRESH=%.4f, "
+            "AZ_RELEASE_THRESH=%.4f, AZ_DEBOUNCE_COUNT=%d, AZ_MOVING_TIMEOUT=%d",
+            (int)elevator_z_moving_enable, AZ_EMA_ALPHA, AZ_TRIGGER_THRESH,
+            AZ_RELEASE_THRESH, AZ_DEBOUNCE_COUNT, AZ_MOVING_TIMEOUT);
 
 	pcd_save_en = false;
 

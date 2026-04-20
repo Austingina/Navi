@@ -50,6 +50,13 @@
             max_level: 6  # 减少层数可缩小实际搜索范围
             xy_range: 25.0
             z_range: 5.0
+        elevator_z_moving:
+            enable: false
+            AZ_TRIGGER_THRESH: 0.04
+            AZ_RELEASE_THRESH: 0.015
+            AZ_DEBOUNCE_COUNT: 50
+            AZ_MOVING_TIMEOUT: 12000
+            AZ_EMA_ALPHA: 0.05
         pcd_save:
             pcd_save_en: true
             interval: -1                 # how many LiDAR frames saved in each pcd file; 
