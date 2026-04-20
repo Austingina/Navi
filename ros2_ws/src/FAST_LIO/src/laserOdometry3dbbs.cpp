@@ -169,12 +169,19 @@ double locked_z_vel       = 0.0;
 Eigen::Vector3d locked_xy_pos(0.0, 0.0, 0.0);  // 检测到升降时冻结的 XY+Z
 Eigen::Vector3d locked_xy_vel(0.0, 0.0, 0.0);
 
-// Z 加速度基线 & 检测参数
-double imu_az_baseline    = 0.0;     // 进入电梯时 IMU Z 加速度滑动均值（含重力）
+// Z 加速度基线 & 检测参数 (单位: g, 1.0 = 1g ≈ 9.8 m/s²)
+double imu_az_baseline    = 0.0;     // 进入电梯时 IMU Z 加速度滑动均值
 double imu_az_ema         = 0.0;     // 指数移动平均
-constexpr double AZ_EMA_ALPHA      = 0.05;   // EMA 平滑系数
-constexpr double AZ_TRIGGER_THRESH = 0.3;    // |ema - baseline| > 此值视为电梯升降 (m/s²)
-constexpr double AZ_RELEASE_THRESH = 0.1;    // 恢复到此值以下视为电梯停止
+constexpr double AZ_EMA_ALPHA      = 0.05;   // EMA 平滑系数（慢响应，滤掉单帧尖峰）
+constexpr double AZ_TRIGGER_THRESH = 0.04;   // |ema - baseline| > 此值视为电梯升降 (g)
+constexpr double AZ_RELEASE_THRESH = 0.015;  // 恢复到此值以下视为电梯停止 (g)
+constexpr int    AZ_DEBOUNCE_COUNT = 50;     // 连续超阈值帧数才触发/释放 (~250ms @200Hz)
+constexpr int    AZ_MOVING_TIMEOUT = 12000;  // moving 状态最长帧数 (~60s @200Hz, 兜底)
+int az_trigger_cnt   = 0;
+int az_release_cnt   = 0;
+int az_moving_frames = 0;                    // 进入 moving 后累计帧数
+int elevator_move_sign  = 0;                 // +1 = 上行启动, -1 = 下行启动
+bool elevator_decel_seen = false;            // 是否已观测到反向减速
 rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr g_pub_elevator_moving;
 
 shared_ptr<Preprocess> p_pre(new Preprocess());
@@ -414,28 +421,83 @@ void imu_cbk(const sensor_msgs::msg::Imu::UniquePtr msg_in)
         double az = msg->linear_acceleration.z;
         imu_az_ema = AZ_EMA_ALPHA * az + (1.0 - AZ_EMA_ALPHA) * imu_az_ema;
 
-        if (!elevator_z_moving && std::fabs(imu_az_ema - imu_az_baseline) > AZ_TRIGGER_THRESH) {
-            elevator_z_moving = true;
-            state_ikfom cur = kf.get_x();
-            locked_xy_pos = cur.pos;
-            locked_xy_vel = cur.vel;
-            locked_xy_pos(2) = locked_z_pos;
-            locked_xy_vel(2) = locked_z_vel;
-            RCLCPP_WARN(rclcpp::get_logger("laser_mapping"),
-                "Elevator moving detected (az_ema=%.3f, baseline=%.3f, delta=%.3f) → XY locked",
-                imu_az_ema, imu_az_baseline, imu_az_ema - imu_az_baseline);
-            if (g_pub_elevator_moving) {
-                std_msgs::msg::Bool m; m.data = true;
-                g_pub_elevator_moving->publish(m);
-            }
-        } else if (elevator_z_moving && std::fabs(imu_az_ema - imu_az_baseline) < AZ_RELEASE_THRESH) {
-            elevator_z_moving = false;
+        // 每 100 帧打印一次，便于观察实际加速度变化
+        static int az_dbg_cnt = 0;
+        if (++az_dbg_cnt % 100 == 0) {
             RCLCPP_INFO(rclcpp::get_logger("laser_mapping"),
-                "Elevator stopped (az_ema=%.3f ≈ baseline=%.3f) → XY unlocked",
-                imu_az_ema, imu_az_baseline);
-            if (g_pub_elevator_moving) {
-                std_msgs::msg::Bool m; m.data = false;
-                g_pub_elevator_moving->publish(m);
+                "ElevDbg: az_raw=%.4f ema=%.4f baseline=%.4f delta=%.4f moving=%d decel=%d",
+                az, imu_az_ema, imu_az_baseline, imu_az_ema - imu_az_baseline,
+                (int)elevator_z_moving, (int)elevator_decel_seen);
+        }
+
+        double az_signed = imu_az_ema - imu_az_baseline;
+        double az_delta  = std::fabs(az_signed);
+
+        if (!elevator_z_moving) {
+            // ── 等待启动加速 ──
+            if (az_delta > AZ_TRIGGER_THRESH) {
+                az_trigger_cnt++;
+            } else {
+                az_trigger_cnt = 0;
+            }
+            if (az_trigger_cnt >= AZ_DEBOUNCE_COUNT) {
+                elevator_z_moving = true;
+                elevator_move_sign = (az_signed > 0) ? 1 : -1;
+                elevator_decel_seen = false;
+                az_trigger_cnt = 0;
+                az_release_cnt = 0;
+                az_moving_frames = 0;
+                state_ikfom cur = kf.get_x();
+                locked_xy_pos = cur.pos;
+                locked_xy_vel = cur.vel;
+                locked_xy_pos(2) = locked_z_pos;
+                locked_xy_vel(2) = locked_z_vel;
+                RCLCPP_WARN(rclcpp::get_logger("laser_mapping"),
+                    "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n"
+                    "Elevator moving detected (az_ema=%.4f, baseline=%.4f, delta=%.4f, dir=%s) → XY locked",
+                    imu_az_ema, imu_az_baseline, az_signed,
+                    elevator_move_sign > 0 ? "UP" : "DOWN");
+                if (g_pub_elevator_moving) {
+                    std_msgs::msg::Bool m; m.data = true;
+                    g_pub_elevator_moving->publish(m);
+                }
+            }
+        } else {
+            az_moving_frames++;
+
+            // ── 检测反向减速阶段 ──
+            // 上行 move_sign=+1, 减速时 az_signed < -0.04 → move_sign * az_signed < -0.04
+            // 下行 move_sign=-1, 减速时 az_signed > +0.04 → move_sign * az_signed < -0.04
+            if (!elevator_decel_seen &&
+                elevator_move_sign * az_signed < -AZ_TRIGGER_THRESH) {
+                elevator_decel_seen = true;
+                RCLCPP_INFO(rclcpp::get_logger("laser_mapping"),
+                    "Elevator deceleration detected (delta=%.4f, move_dir=%s)",
+                    az_signed, elevator_move_sign > 0 ? "UP" : "DOWN");
+            }
+
+            // ── 释放条件：减速已发生 且 delta 回归零点 ──
+            bool can_release = elevator_decel_seen;
+            // 兜底：超过 60s 强制释放
+            if (az_moving_frames >= AZ_MOVING_TIMEOUT) can_release = true;
+
+            if (can_release && az_delta < AZ_RELEASE_THRESH) {
+                az_release_cnt++;
+            } else {
+                az_release_cnt = 0;
+            }
+            if (az_release_cnt >= AZ_DEBOUNCE_COUNT) {
+                elevator_z_moving = false;
+                az_release_cnt = 0;
+                az_trigger_cnt = 0;
+                RCLCPP_INFO(rclcpp::get_logger("laser_mapping"),
+                    "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n"
+                    "Elevator stopped (az_ema=%.4f ≈ baseline=%.4f, decel_seen=%d) → XY unlocked",
+                    imu_az_ema, imu_az_baseline, (int)elevator_decel_seen);
+                if (g_pub_elevator_moving) {
+                    std_msgs::msg::Bool m; m.data = false;
+                    g_pub_elevator_moving->publish(m);
+                }
             }
         }
     }
@@ -1325,6 +1387,12 @@ private:
                 state_ikfom s_tmp = kf.get_x();
                 s_tmp.pos(2) = locked_z_pos;
                 s_tmp.vel(2) = locked_z_vel;
+                if (elevator_z_moving) {
+                    s_tmp.pos(0) = locked_xy_pos(0);
+                    s_tmp.pos(1) = locked_xy_pos(1);
+                    s_tmp.vel(0) = locked_xy_vel(0);
+                    s_tmp.vel(1) = locked_xy_vel(1);
+                }
                 kf.change_x(s_tmp);
             }
 
@@ -1405,6 +1473,12 @@ private:
                 state_ikfom s_tmp = kf.get_x();
                 s_tmp.pos(2) = locked_z_pos;
                 s_tmp.vel(2) = locked_z_vel;
+                if (elevator_z_moving) {
+                    s_tmp.pos(0) = locked_xy_pos(0);
+                    s_tmp.pos(1) = locked_xy_pos(1);
+                    s_tmp.vel(0) = locked_xy_vel(0);
+                    s_tmp.vel(1) = locked_xy_vel(1);
+                }
                 kf.change_x(s_tmp);
             }
 
@@ -1474,6 +1548,23 @@ private:
             state_ikfom cur = kf.get_x();
             locked_z_pos = cur.pos(2);
             locked_z_vel = cur.vel(2);
+            // 从 IMU buffer 取最新 Z 加速度初始化基线和 EMA
+            {
+                double az_init = 0.0;
+                mtx_buffer.lock();
+                if (!imu_buffer.empty()) {
+                    az_init = imu_buffer.back()->linear_acceleration.z;
+                }
+                mtx_buffer.unlock();
+                imu_az_ema = az_init;
+                imu_az_baseline = az_init;
+            }
+            elevator_z_moving = false;
+            elevator_decel_seen = false;
+            elevator_move_sign = 0;
+            az_trigger_cnt = 0;
+            az_release_cnt = 0;
+            az_moving_frames = 0;
             elevator_mode = true;
 
             PointVector empty_cloud;
