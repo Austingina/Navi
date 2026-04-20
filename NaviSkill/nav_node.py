@@ -6,7 +6,7 @@ from rcl_interfaces.msg import Parameter as ParameterMsg, ParameterValue, Parame
 from rclpy.executors import SingleThreadedExecutor  # 单线程执行器
 from geometry_msgs.msg import PoseStamped, Twist, TwistStamped  # 位姿消息类型和速度控制消息类型
 from nav_msgs.msg import OccupancyGrid, Path  # 占据网格、全局路径
-from std_msgs.msg import String  # 字符串消息类型
+from std_msgs.msg import String, Bool  # 字符串消息类型 / 布尔消息类型
 from std_srvs.srv import SetBool  # 用于 elevator_mode 服务
 from action_msgs.msg import GoalStatus, GoalStatusArray  # Action状态消息
 import logging  # 日志记录库
@@ -138,6 +138,23 @@ class NavNode(Node):
             self.cmd_vel_sent = None  # 最近发送的速度命令
             self.stuck_count = 0  # 连续卡住计数
             self.stuck_count_threshold = 10  # 连续多少次认为卡住（约0.5秒@50ms周期）
+
+            # 电梯升降状态：FAST-LIO 通过 /elevator_moving 通告升降是否进行中。
+            # 升降期间需要暂停所有 cmd_vel 输出与 Nav2 目标，等到值变 false 再继续。
+            self.elevator_moving = False
+            # 是否因为电梯升降主动取消了当前 Nav2 目标，恢复后需要重发 last_goal
+            self._elevator_paused_nav = False
+            # 标记当前进行中的 cancel 是为电梯暂停而发起的，避免在 result 回调里设置 _nav_terminal_message
+            self._elevator_cancel_in_flight = False
+            # 电梯升降结束后给底盘一段唤醒宽限期，期间不做卡住检测，避免误把 chassis 重启过程判为卡死
+            self._elevator_resume_grace_sec = 3.0
+            self._elevator_resume_grace_until = 0.0  # time.monotonic() 截止时间，0 表示当前不在宽限期
+            self.elevator_moving_sub = self.create_subscription(
+                Bool,
+                '/elevator_moving',
+                self._elevator_moving_callback,
+                10
+            )
             
             # 音频文件路径
             self.audio_dir = os.path.join(os.path.dirname(__file__), 'audio')
@@ -395,6 +412,61 @@ class NavNode(Node):
         """
         self.chassis_speed = msg.twist
 
+    def _elevator_moving_callback(self, msg: Bool):
+        """
+        /elevator_moving 回调：true 表示电梯正在升降。
+
+        语义：
+          - 升降开始（False -> True）：暂停 Nav2 与 PID 精调，发零速并取消当前 goal；
+            记录"曾因电梯而暂停"的标记，恢复时自动重发 last_goal。
+          - 升降结束（True -> False）：清除标记，若曾暂停 Nav2 则重发 last_goal；
+            PID 精调由 pid_control_step 内的 elevator_moving 判断自动恢复。
+        """
+        try:
+            new_state = bool(msg.data)
+            if new_state == self.elevator_moving:
+                return  # 状态未变化
+
+            if new_state:
+                # 进入升降：先停车，再视情况取消 Nav2 当前目标
+                self.elevator_moving = True
+                self.get_logger().info("/elevator_moving=true：电梯升降开始，暂停导航与精调")
+                stop_cmd = Twist()
+                self.cmd_vel_pub.publish(stop_cmd)
+                self.cmd_vel_sent = None
+                self.stuck_count = 0
+
+                if self.nav_goal_active and self.current_goal_handle is not None:
+                    self._elevator_paused_nav = True
+                    self._elevator_cancel_in_flight = True
+                    try:
+                        self.current_goal_handle.cancel_goal_async()
+                        self.get_logger().info("已请求取消 Nav2 当前目标（电梯升降暂停）")
+                    except Exception as e:
+                        self.get_logger().error(f"电梯暂停取消 Nav2 目标失败: {e}")
+                        self._elevator_cancel_in_flight = False
+            else:
+                # 升降结束：恢复
+                self.elevator_moving = False
+                # 给底盘一段唤醒宽限期 + 清掉旧的速度反馈/命令缓存，避免被误判卡住
+                self._elevator_resume_grace_until = time.monotonic() + self._elevator_resume_grace_sec
+                self.chassis_speed = None
+                self.cmd_vel_sent = None
+                self.stuck_count = 0
+                self.get_logger().info(
+                    f"/elevator_moving=false：电梯升降结束，恢复导航与精调（卡住检测宽限 {self._elevator_resume_grace_sec:.1f}s）"
+                )
+                if self._elevator_paused_nav and self.last_goal is not None:
+                    self._elevator_paused_nav = False
+                    try:
+                        self.publish_goal(self.last_goal, target="elevator_resume")
+                    except Exception as e:
+                        self.get_logger().error(f"电梯恢复重发 Nav2 目标失败: {e}")
+                else:
+                    self._elevator_paused_nav = False
+        except Exception as e:
+            self.get_logger().error(f"处理 /elevator_moving 回调出错: {e}")
+
     def is_robot_stuck(self) -> bool:
         """
         检测机器人是否被卡住
@@ -402,6 +474,11 @@ class NavNode(Node):
         返回:
         bool: True表示机器人被卡住，False表示正常
         """
+        # 电梯升降刚结束的宽限期内不做卡住检测，避免把底盘唤醒延迟误判为卡死
+        if self._elevator_resume_grace_until and time.monotonic() < self._elevator_resume_grace_until:
+            self.stuck_count = 0
+            return False
+
         # 如果没有发送过速度命令或没有底盘反馈，不认为卡住
         if self.cmd_vel_sent is None or self.chassis_speed is None:
             return False
@@ -513,12 +590,21 @@ class NavNode(Node):
                 self.pid_control_active = False
                 self._nav_terminal_message = "Navigation2 导航被中止"
             elif status == GoalStatus.STATUS_CANCELED:
-                self.get_logger().info('Navigation2导航被取消')
-                self.nav_goal_reached = False
-                self.nav_goal_active = False
-                self.current_goal_handle = None
-                self.pid_control_active = False
-                self._nav_terminal_message = "Navigation2 导航已取消"
+                if self._elevator_cancel_in_flight:
+                    # 电梯升降触发的取消：不视为失败，恢复后由 _elevator_moving_callback 重发 goal
+                    self.get_logger().info('Navigation2导航被取消（电梯升降暂停）')
+                    self.nav_goal_reached = False
+                    self.nav_goal_active = False
+                    self.current_goal_handle = None
+                    self.pid_control_active = False
+                    self._elevator_cancel_in_flight = False
+                else:
+                    self.get_logger().info('Navigation2导航被取消')
+                    self.nav_goal_reached = False
+                    self.nav_goal_active = False
+                    self.current_goal_handle = None
+                    self.pid_control_active = False
+                    self._nav_terminal_message = "Navigation2 导航已取消"
             else:
                 self.nav_goal_reached = False
                 self.nav_goal_active = False
@@ -659,6 +745,15 @@ class NavNode(Node):
         """
         if not self.pid_control_active:
             return False
+
+        # 电梯升降中：暂停精调，发零速保证机器人不动，等 /elevator_moving=false 再继续
+        if self.elevator_moving:
+            stop_cmd = Twist()
+            self.cmd_vel_pub.publish(stop_cmd)
+            self.cmd_vel_sent = None
+            self.stuck_count = 0
+            return False
+
         timestamp = self.get_clock().now().to_msg()
 
         if not (self.current_pose and self.last_goal):
