@@ -456,7 +456,7 @@ void imu_cbk(const sensor_msgs::msg::Imu::UniquePtr msg_in)
                 locked_xy_vel(2) = locked_z_vel;
                 RCLCPP_WARN(rclcpp::get_logger("laser_mapping"),
                     "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n"
-                    "Elevator moving detected (az_ema=%.4f, baseline=%.4f, delta=%.4f, dir=%s) → XY locked",
+                    "Elevator moving detected (az_ema=%.4f, baseline=%.4f, delta=%.4f, dir=%s) → Z locked (XY free)",
                     imu_az_ema, imu_az_baseline, az_signed,
                     elevator_move_sign > 0 ? "UP" : "DOWN");
                 if (g_pub_elevator_moving) {
@@ -494,7 +494,7 @@ void imu_cbk(const sensor_msgs::msg::Imu::UniquePtr msg_in)
                 az_trigger_cnt = 0;
                 RCLCPP_INFO(rclcpp::get_logger("laser_mapping"),
                     "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n"
-                    "Elevator stopped (az_ema=%.4f ≈ baseline=%.4f, decel_seen=%d) → XY unlocked",
+                    "Elevator stopped (az_ema=%.4f ≈ baseline=%.4f, decel_seen=%d) → moving released",
                     imu_az_ema, imu_az_baseline, (int)elevator_decel_seen);
                 if (g_pub_elevator_moving) {
                     std_msgs::msg::Bool m; m.data = false;
@@ -1406,12 +1406,8 @@ private:
                 state_ikfom s_tmp = kf.get_x();
                 s_tmp.pos(2) = locked_z_pos;
                 s_tmp.vel(2) = locked_z_vel;
-                if (elevator_z_moving) {
-                    s_tmp.pos(0) = locked_xy_pos(0);
-                    s_tmp.pos(1) = locked_xy_pos(1);
-                    s_tmp.vel(0) = locked_xy_vel(0);
-                    s_tmp.vel(1) = locked_xy_vel(1);
-                }
+                // 注意：即使 elevator_z_moving 为真，也不要锁 XY。
+                // 机器人在电梯升降期间可能仍在水平方向移动，强行锁 XY 会导致位置错误。
                 kf.change_x(s_tmp);
             }
 
@@ -1492,12 +1488,8 @@ private:
                 state_ikfom s_tmp = kf.get_x();
                 s_tmp.pos(2) = locked_z_pos;
                 s_tmp.vel(2) = locked_z_vel;
-                if (elevator_z_moving) {
-                    s_tmp.pos(0) = locked_xy_pos(0);
-                    s_tmp.pos(1) = locked_xy_pos(1);
-                    s_tmp.vel(0) = locked_xy_vel(0);
-                    s_tmp.vel(1) = locked_xy_vel(1);
-                }
+                // 注意：即使 elevator_z_moving 为真，也不要锁 XY。
+                // 机器人在电梯升降期间可能仍在水平方向移动，强行锁 XY 会导致位置错误。
                 kf.change_x(s_tmp);
             }
 
