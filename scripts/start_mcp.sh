@@ -29,7 +29,7 @@ if [[ -z "$MAP_PATH" ]]; then
 fi
 
 # Build command
-CMD=(python server.py)
+CMD=(/usr/bin/python3 server.py)
 if [[ "$TEST" -eq 1 ]]; then
 	CMD+=("-t")
 fi
