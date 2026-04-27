@@ -423,14 +423,14 @@ void imu_cbk(const sensor_msgs::msg::Imu::UniquePtr msg_in)
         double az = msg->linear_acceleration.z;
         imu_az_ema = AZ_EMA_ALPHA * az + (1.0 - AZ_EMA_ALPHA) * imu_az_ema;
 
-        // 每 100 帧打印一次，便于观察实际加速度变化
-        static int az_dbg_cnt = 0;
-        if (++az_dbg_cnt % 100 == 0) {
-            RCLCPP_INFO(rclcpp::get_logger("laser_mapping"),
-                "ElevDbg: az_raw=%.4f ema=%.4f baseline=%.4f delta=%.4f moving=%d decel=%d",
-                az, imu_az_ema, imu_az_baseline, imu_az_ema - imu_az_baseline,
-                (int)elevator_z_moving, (int)elevator_decel_seen);
-        }
+        // // 每 100 帧打印一次，便于观察实际加速度变化
+        // static int az_dbg_cnt = 0;
+        // if (++az_dbg_cnt % 100 == 0) {
+        //     RCLCPP_INFO(rclcpp::get_logger("laser_mapping"),
+        //         "ElevDbg: az_raw=%.4f ema=%.4f baseline=%.4f delta=%.4f moving=%d decel=%d",
+        //         az, imu_az_ema, imu_az_baseline, imu_az_ema - imu_az_baseline,
+        //         (int)elevator_z_moving, (int)elevator_decel_seen);
+        // }
 
         double az_signed = imu_az_ema - imu_az_baseline;
         double az_delta  = std::fabs(az_signed);
