@@ -1213,7 +1213,9 @@ class NavigationToolManager:
 
         @app.get("/health")
         def health():
-            return {"ok": True, "methods": sorted(mgr._handlers.keys())}
+            tf_ready = mgr.ros_node.is_map_localized()
+            message = "已定位" if tf_ready else "未定位"
+            return {"status": "ok", "service": "NaviSkill", "message": message}
 
         @app.websocket("/ws")
         async def websocket_nav(websocket: WebSocket):
