@@ -4,7 +4,7 @@ source "$(dirname "$0")/common.sh"
 bash "$NAVI_SCRIPT_DIR/stop_navi.sh"
 
 
-tmux kill-server
+# tmux kill-server
 SESSION="navi"
 if [[ "$1" == "-c" ]]; then
     # 使用 tmuxp 加载配置
