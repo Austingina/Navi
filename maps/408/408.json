@@ -135,7 +135,7 @@
                     "submap": "2f"
                 },
                 {
-                    "semantic_point": "control point 1",
+                    "semantic_point": "office_in_0",
                     "submap": "2f"
                 },
                 {
@@ -160,7 +160,11 @@
                     "submap": "2f"
                 },
                 {
-                    "semantic_point": "control point2",
+                    "semantic_point": "meetingroom_out_2",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "office_out_0",
                     "submap": "2f"
                 },
                 {
@@ -418,7 +422,7 @@
                     "submap": "2f"
                 },
                 {
-                    "semantic_point": "control point 1",
+                    "semantic_point": "office_in_0",
                     "submap": "2f"
                 },
                 {
@@ -458,7 +462,7 @@
                     "submap": "6f"
                 },
                 {
-                    "semantic_point": "control point 1",
+                    "semantic_point": "office_in_0",
                     "submap": "2f"
                 },
                 {
@@ -466,7 +470,7 @@
                     "submap": "2f"
                 },
                 {
-                    "semantic_point": "control point2",
+                    "semantic_point": "office_out_0",
                     "submap": "2f"
                 },
                 {
@@ -711,20 +715,6 @@
             "map_file": "2f.pcd",
             "name": "2楼",
             "semantic_points": {
-                "control point 1": {
-                    "pose": {
-                        "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
-                        "position": { "x": 10.9, "y": -2.6, "z": 0.0}
-                    },
-                    "type": "single_pose"
-                },
-                "control point2": {
-                    "pose": {
-                        "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": 0.7071067811865476},
-                        "position": { "x": 10.800000190734863, "y": -4.599999904632568, "z": 0.0}
-                    },
-                    "type": "single_pose"
-                },
                 "corridor": {
                     "pose": {
                         "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
@@ -816,6 +806,13 @@
                     },
                     "type": "single_pose"
                 },
+                "meetingroom_out_2": {
+                    "pose": {
+                        "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": 0.7071067811865476},
+                        "position": { "x": 8.3, "y": -12.3, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
                 "meetingroom_patrol": {
                     "pose": {
                         "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": -0.7071067811865476},
@@ -830,10 +827,24 @@
                     },
                     "type": "single_pose"
                 },
+                "office_in_0": {
+                    "pose": {
+                        "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
+                        "position": { "x": 10.9, "y": -2.6, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
                 "office_out": {
                     "pose": {
-                        "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": 0.7071067811865476},
+                        "orientation": { "w": 0.0, "x": 0.0, "y": 0.0, "z": 1.0},
                         "position": { "x": 10.8422, "y": -2.3181, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "office_out_0": {
+                    "pose": {
+                        "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": 0.7071067811865476},
+                        "position": { "x": 10.800000190734863, "y": -4.599999904632568, "z": 0.0}
                     },
                     "type": "single_pose"
                 },
