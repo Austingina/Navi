@@ -134,7 +134,7 @@ class NavNode(Node):
                 10
             )
             # 卡住检测相关变量
-            self.stuck_check_threshold = 0.01  # 速度阈值，低于此值认为没有移动
+            self.stuck_check_threshold = 0.1  # 速度阈值，低于此值认为没有移动
             self.cmd_vel_sent = None  # 最近发送的速度命令
             self.stuck_count = 0  # 连续卡住计数
             self.stuck_count_threshold = 10  # 连续多少次认为卡住（约0.5秒@50ms周期）
