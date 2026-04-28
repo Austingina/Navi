@@ -49,6 +49,7 @@ public:
 
     // ── 传送门 ───────────────────────────────────────────────────────
     const QVector<Portal>& portals() const         { return portals_; }
+    QVector<Portal>&       portals()               { return portals_; }
     void addPortal(const Portal& p)                { portals_.append(p); }
     void removePortal(int index);
     void clearPortals()                            { portals_.clear(); }

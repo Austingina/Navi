@@ -533,6 +533,18 @@ void SubmapPanel::onContextMenu(const QPoint& pos) {
     }
     case TypeSemPoint: {
         QString ptName = item->data(0, RolePointName).toString();
+        menu.addAction("✏️ 重命名", [this, smId, ptName]() {
+            bool ok = false;
+            QString newName = QInputDialog::getText(
+                this, "重命名语义点位",
+                QString("将语义点位「%1」重命名为:").arg(ptName),
+                QLineEdit::Normal, ptName, &ok);
+            if (!ok) return;
+            newName = newName.trimmed();
+            if (newName.isEmpty() || newName == ptName) return;
+            emit renameSemanticPointRequested(smId, ptName, newName);
+        });
+        menu.addSeparator();
         menu.addAction("🎯 设为视角旋转/缩放中心", [this, smId, ptName]() {
             emit orbitCenterAtSemanticRequested(smId, ptName);
         });

@@ -523,6 +523,37 @@ void MapProject::removeRoute(const QString& name) {
     }
 }
 
+bool MapProject::renameSemanticPoint(const QString& submapId,
+                                     const QString& oldName,
+                                     const QString& newName) {
+    if (newName.isEmpty() || oldName == newName) return false;
+    auto* sm = submap(submapId);
+    if (!sm) return false;
+    if (!sm->hasSemanticPoint(oldName)) return false;
+    if (sm->hasSemanticPoint(newName)) return false;
+
+    SemanticPoint sp = sm->semanticPoints().value(oldName);
+    sp.name = newName;
+    sm->removeSemanticPoint(oldName);
+    sm->addSemanticPoint(sp);
+
+    // 同步更新所有引用该点的路线 waypoint
+    for (auto& route : routes_) {
+        for (auto& wp : route.waypoints) {
+            if (wp.isRouteRef()) continue;
+            if (wp.submapId == submapId && wp.semanticPoint == oldName) {
+                wp.semanticPoint = newName;
+            }
+        }
+    }
+
+    // 如果该点同时出现在 portals（portalName 即对应语义点）里，也一并更新
+    for (auto& p : sm->portals()) {
+        if (p.portalName == oldName) p.portalName = newName;
+    }
+    return true;
+}
+
 bool MapProject::renameRoute(const QString& oldName, const QString& newName) {
     auto it = routes_.find(oldName);
     if (it == routes_.end()) return false;

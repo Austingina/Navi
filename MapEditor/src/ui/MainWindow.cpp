@@ -207,6 +207,8 @@ void MainWindow::connectSignals() {
             this, &MainWindow::onRemoveSubmap);
     connect(submapPanel_, &SubmapPanel::addSemanticPointRequested,
             this, &MainWindow::onAddSemanticPoint);
+    connect(submapPanel_, &SubmapPanel::renameSemanticPointRequested,
+            this, &MainWindow::onRenameSemanticPoint);
     connect(submapPanel_, &SubmapPanel::addPortalRequested,
             this, &MainWindow::onAddPortal);
     connect(submapPanel_, &SubmapPanel::alignSubmapRequested,
@@ -710,6 +712,27 @@ void MainWindow::onRenameRoute(const QString& oldName, const QString& newName) {
     submapPanel_->expandRoute(newName);
     refreshRouteLines();
     statusLabel_->setText(QString("已将路线 '%1' 重命名为 '%2'").arg(oldName, newName));
+}
+
+void MainWindow::onRenameSemanticPoint(const QString& smId,
+                                       const QString& oldName,
+                                       const QString& newName) {
+    if (!project_.renameSemanticPoint(smId, oldName, newName)) {
+        QMessageBox::warning(this, "错误",
+            QString("重命名失败：点位 '%1' 不存在，或 '%2' 已存在")
+                .arg(oldName, newName));
+        return;
+    }
+    if (selectedSemanticSmId_ == smId && selectedSemanticPtName_ == oldName) {
+        selectedSemanticPtName_ = newName;
+    }
+    project_.setDirty();
+    submapPanel_->rebuild(&project_);
+    refreshSubmap(smId);
+    refreshMarkers();
+    refreshRouteLines();
+    statusLabel_->setText(
+        QString("已将语义点位 '%1' 重命名为 '%2'").arg(oldName, newName));
 }
 
 void MainWindow::onSetDefaultRoute(const QString& routeName) {

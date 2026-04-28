@@ -55,6 +55,12 @@ public:
     void removeRoute(const QString& name);
     bool renameRoute(const QString& oldName, const QString& newName);
 
+    /// 重命名某个 submap 内的语义点位，并同步更新所有路线中引用该点的 waypoint。
+    /// 失败条件：submap 不存在 / oldName 不存在 / newName 已存在 / newName 为空。
+    bool renameSemanticPoint(const QString& submapId,
+                             const QString& oldName,
+                             const QString& newName);
+
 
     // ── 项目路径 ─────────────────────────────────────────────────────
     QString projectDir() const { return projectDir_; }

@@ -80,6 +80,9 @@ signals:
     void addRouteRequested();
     void removeRouteRequested(const QString& routeName);
     void renameRouteRequested(const QString& oldName, const QString& newName);
+    void renameSemanticPointRequested(const QString& submapId,
+                                      const QString& oldName,
+                                      const QString& newName);
     void setDefaultRouteRequested(const QString& routeName);
     void setDefaultSubmapRequested(const QString& submapId);
     void setParentSubmapRequested(const QString& submapId, const QString& parentId);
