@@ -30,7 +30,7 @@ def generate_launch_description():
     slope_pkg_dir = get_package_share_directory('slope_behavior')
     fast_lio_pkg_dir = wheeltec_nav_dir
     bt_nav_through = os.path.join(fast_lio_pkg_dir, 'config', 'wheeltec_params', 'behavior_trees', 'navigate_through_poses_w_replanning_and_recovery.xml')
-    bt_nav_to = os.path.join(slope_pkg_dir, 'behavior_trees', 'navigate_to_pose_with_slope_detection.xml')
+    bt_nav_to = os.path.join(fast_lio_pkg_dir, 'config', 'wheeltec_params', 'behavior_trees', 'navigate_to_pose_w_replanning_and_recovery.xml')
 
     # The parameters in the YAML are under the node name -> ros__parameters -> <param>.
     # RewrittenYaml needs the full path including 'ros__parameters' to override them.
