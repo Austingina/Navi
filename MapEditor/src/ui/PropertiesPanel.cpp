@@ -275,9 +275,18 @@ void PropertiesPanel::setupSemanticPointPage() {
     };
     wireQuatYawSync();
 
-    // 用户手动改动 need_inspect 时记下；后续切换类型不再覆盖用户选择
-    connect(spNeedInspect_, &QCheckBox::clicked, this, [this]() {
+    // 用户手动改动 need_inspect：
+    // 1. 标记已编辑，后续切换类型不再覆盖用户选择
+    // 2. 立刻把新值写回当前选中的 SemanticPoint，避免必须点击「应用修改」才生效
+    //    （否则只切换复选框就直接保存项目，写出的仍是旧值）
+    connect(spNeedInspect_, &QCheckBox::clicked, this, [this](bool checked) {
         spNeedInspectUserEdited_ = true;
+        if (!spSm_ || spCurrentName_.isEmpty()) return;
+        auto* sp = spSm_->semanticPoint(spCurrentName_);
+        if (!sp) return;
+        if (sp->needInspect == checked) return;
+        sp->needInspect = checked;
+        emit semanticPointChanged(spSm_->id(), spCurrentName_);
     });
 
     // 切换类型时若用户尚未修改过 need_inspect，则按类型默认值更新
