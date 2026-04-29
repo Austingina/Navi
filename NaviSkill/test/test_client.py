@@ -161,7 +161,7 @@ class SubmapClient:
 class SimplePatrolClient:
     def __init__(
         self,
-        ws_url: str = "ws://localhost:9999/ws",
+        ws_url: str = "ws://localhost:9000/ws",
         route_name: Optional[str] = None,
         patrol_sequence: Optional[List[str]] = None,
         continue_tolerance: float = -1.0,
@@ -626,8 +626,8 @@ async def main() -> int:
     parser = argparse.ArgumentParser(description="WebSocket 巡检测试客户端 (server_fast.py)")
     parser.add_argument(
         "--ws",
-        default=os.environ.get("NAV_WS_URL", "ws://localhost:9999/ws"),
-        help="WebSocket URL，默认 ws://localhost:9999/ws（与 server -t 端口一致）",
+        default=os.environ.get("NAV_WS_URL", "ws://localhost:9000/ws"),
+        help="WebSocket URL，默认 ws://localhost:9000/ws（与 server -t 端口一致）",
     )
     parser.add_argument(
         "-r",
