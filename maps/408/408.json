@@ -135,15 +135,19 @@
                     "submap": "2f"
                 },
                 {
-                    "semantic_point": "office_in_0",
+                    "semantic_point": "office_entrance_1",
                     "submap": "2f"
                 },
                 {
-                    "semantic_point": "office_in",
+                    "semantic_point": "office_entrance_2",
                     "submap": "2f"
                 },
                 {
                     "semantic_point": "meetingroom_entrance_1",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "meetingroom_entrance_2",
                     "submap": "2f"
                 },
                 {
@@ -164,11 +168,11 @@
                     "submap": "2f"
                 },
                 {
-                    "semantic_point": "office_out_0",
+                    "semantic_point": "office_exit_1",
                     "submap": "2f"
                 },
                 {
-                    "semantic_point": "office_out",
+                    "semantic_point": "office_exit_2",
                     "submap": "2f"
                 },
                 {
@@ -430,7 +434,7 @@
                     "submap": "2f"
                 },
                 {
-                    "semantic_point": "office_in_0",
+                    "semantic_point": "office_entrance_1",
                     "submap": "2f"
                 },
                 {
@@ -470,7 +474,7 @@
                     "submap": "6f"
                 },
                 {
-                    "semantic_point": "office_in_0",
+                    "semantic_point": "office_entrance_1",
                     "submap": "2f"
                 },
                 {
@@ -478,7 +482,7 @@
                     "submap": "2f"
                 },
                 {
-                    "semantic_point": "office_out_0",
+                    "semantic_point": "office_exit_1",
                     "submap": "2f"
                 },
                 {
@@ -848,6 +852,14 @@
                     },
                     "type": "single_pose"
                 },
+                "meetingroom_entrance_2": {
+                    "need_inspect": false,
+                    "pose": {
+                        "orientation": { "w": 0.0, "x": 0.0, "y": 0.0, "z": 1.0},
+                        "position": { "x": 5.6593, "y": -12.3531, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
                 "meetingroom_exit_1": {
                     "need_inspect": false,
                     "pose": {
@@ -872,15 +884,7 @@
                     },
                     "type": "single_pose"
                 },
-                "office_in": {
-                    "need_inspect": false,
-                    "pose": {
-                        "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": -0.7071067811865476},
-                        "position": { "x": 10.8314, "y": -4.838, "z": 0.0}
-                    },
-                    "type": "single_pose"
-                },
-                "office_in_0": {
+                "office_entrance_1": {
                     "need_inspect": false,
                     "pose": {
                         "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
@@ -888,19 +892,27 @@
                     },
                     "type": "single_pose"
                 },
-                "office_out": {
+                "office_entrance_2": {
                     "need_inspect": false,
                     "pose": {
-                        "orientation": { "w": 0.0, "x": 0.0, "y": 0.0, "z": 1.0},
-                        "position": { "x": 10.8422, "y": -2.3181, "z": 0.0}
+                        "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": -0.7071067811865476},
+                        "position": { "x": 10.8314, "y": -4.838, "z": 0.0}
                     },
                     "type": "single_pose"
                 },
-                "office_out_0": {
+                "office_exit_1": {
                     "need_inspect": false,
                     "pose": {
                         "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": 0.7071067811865476},
                         "position": { "x": 10.800000190734863, "y": -4.599999904632568, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "office_exit_2": {
+                    "need_inspect": false,
+                    "pose": {
+                        "orientation": { "w": 0.0, "x": 0.0, "y": 0.0, "z": 1.0},
+                        "position": { "x": 10.8422, "y": -2.3181, "z": 0.0}
                     },
                     "type": "single_pose"
                 },
