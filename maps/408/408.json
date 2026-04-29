@@ -143,7 +143,7 @@
                     "submap": "2f"
                 },
                 {
-                    "semantic_point": "meetingroom_door",
+                    "semantic_point": "meetingroom_entrance_1",
                     "submap": "2f"
                 },
                 {
@@ -156,11 +156,11 @@
             "description": "",
             "waypoints": [
                 {
-                    "semantic_point": "meetingroom_out",
+                    "semantic_point": "meetingroom_exit_1",
                     "submap": "2f"
                 },
                 {
-                    "semantic_point": "meetingroom_out_2",
+                    "semantic_point": "meetingroom_exit_2",
                     "submap": "2f"
                 },
                 {
@@ -474,7 +474,7 @@
                     "submap": "2f"
                 },
                 {
-                    "semantic_point": "meetingroom_door",
+                    "semantic_point": "meetingroom_entrance_1",
                     "submap": "2f"
                 },
                 {
@@ -840,7 +840,7 @@
                     },
                     "type": "elevator_wait"
                 },
-                "meetingroom_door": {
+                "meetingroom_entrance_1": {
                     "need_inspect": true,
                     "pose": {
                         "orientation": { "w": -0.026987763823030538, "x": -0.002998640424781171, "y": -0.012994108507385072, "z": 0.9995468082603903},
@@ -848,7 +848,7 @@
                     },
                     "type": "single_pose"
                 },
-                "meetingroom_out": {
+                "meetingroom_exit_1": {
                     "need_inspect": false,
                     "pose": {
                         "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
@@ -856,7 +856,7 @@
                     },
                     "type": "single_pose"
                 },
-                "meetingroom_out_2": {
+                "meetingroom_exit_2": {
                     "need_inspect": false,
                     "pose": {
                         "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": 0.7071067811865476},
