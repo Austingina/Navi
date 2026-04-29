@@ -428,6 +428,10 @@ class SimplePatrolClient:
 
                 point_meta = await client.call("get_pose_in_submap", {"pose_name": target_name})
                 pt_type = point_meta.get("point_info", {}).get("type") if point_meta.get("success") else None
+                logger.info(
+                    f"📋 点位详细信息 [{target_name}]: "
+                    f"{json.dumps(point_meta.get('point_info'), ensure_ascii=False, indent=2)}"
+                )
                 if pt_type in {"elevator_wait", "elevator_out", "elevator_in"}:
                     if pt_type == "elevator_wait":
                         prompt_msg = "确认呼叫了电梯，等待电梯到达？(Y/n): "
