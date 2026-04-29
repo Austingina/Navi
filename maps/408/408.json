@@ -281,6 +281,13 @@
             "description": "",
             "waypoints": [
                 {
+                    "semantic_point": "start",
+                    "submap": "2f"
+                },
+                {
+                    "route": "2f_c_mrp"
+                },
+                {
                     "route": "2f_mro_eh"
                 },
                 {
@@ -288,7 +295,8 @@
                     "submap": "2f"
                 },
                 {
-                    "route": "2f_c_mrp"
+                    "semantic_point": "start",
+                    "submap": "2f"
                 }
             ]
         },
