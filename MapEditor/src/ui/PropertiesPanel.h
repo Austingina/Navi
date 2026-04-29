@@ -11,6 +11,7 @@
 #include <QDoubleSpinBox>
 #include <QComboBox>
 #include <QPushButton>
+#include <QCheckBox>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QColorDialog>
@@ -88,6 +89,8 @@ private:
     QDoubleSpinBox* spOy_ = nullptr;
     QDoubleSpinBox* spOz_ = nullptr;
     QDoubleSpinBox* spOw_ = nullptr;
+    QCheckBox*      spNeedInspect_ = nullptr; ///< 是否需要巡检
+    bool            spNeedInspectUserEdited_ = false; ///< 用户是否手动修改过该复选框
     QPushButton*    spPickPosBtn_ = nullptr;
 
     SubMap*  spSm_ = nullptr;

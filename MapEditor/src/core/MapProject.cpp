@@ -260,6 +260,12 @@ bool MapProject::load(const QString& dirPath) {
                         sp.poses.append(parsePose(spData["pose"].toObject()));
                     }
 
+                    if (spData.contains("need_inspect")) {
+                        sp.needInspect = spData["need_inspect"].toBool();
+                    } else {
+                        sp.needInspect = SemanticPoint::defaultNeedInspect(sp.type);
+                    }
+
                     sm->addSemanticPoint(sp);
                 }
             }
@@ -375,6 +381,7 @@ bool MapProject::save(const QString& dirPath) const {
             } else if (!sp.poses.isEmpty()) {
                 spData["pose"] = poseToJson(sp.poses.first());
             }
+            spData["need_inspect"] = sp.needInspect;
             spObj[sp.name] = spData;
         }
         smObj["semantic_points"] = spObj;

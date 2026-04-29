@@ -71,6 +71,12 @@ struct SemanticPoint {
     QString name;
     QString type;            // single_pose | multi_pose | elevator_call | elevator_wait | elevator_in | elevator_out
     QVector<Pose> poses;     // single_pose 时仅一个元素
+    bool    needInspect = false; ///< 是否需要巡检；single_pose 默认 true，其他类型默认 false
+
+    /// 根据 type 返回 need_inspect 的默认值
+    static bool defaultNeedInspect(const QString& type) {
+        return type == QStringLiteral("single_pose");
+    }
 };
 
 // ── 传送门 ───────────────────────────────────────────────────────────

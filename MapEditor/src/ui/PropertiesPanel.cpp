@@ -242,6 +242,11 @@ void PropertiesPanel::setupSemanticPointPage() {
     form->addRow("orient.y:", spOy_);
     form->addRow("orient.z:", spOz_);
     form->addRow("orient.w:", spOw_);
+    spNeedInspect_ = new QCheckBox("需要巡检");
+    spNeedInspect_->setToolTip(
+        "勾选后该点位会被纳入巡检流程。\n"
+        "默认值：single_pose 类型为 true，其它类型为 false。");
+    form->addRow("need_inspect:", spNeedInspect_);
     layout->addWidget(group);
 
     spPickPosBtn_ = new QPushButton("从点云选点（填写 position，子地图局部坐标）");
@@ -269,6 +274,20 @@ void PropertiesPanel::setupSemanticPointPage() {
                 this, &PropertiesPanel::syncSemanticQuaternionSpinsFromYaw);
     };
     wireQuatYawSync();
+
+    // 用户手动改动 need_inspect 时记下；后续切换类型不再覆盖用户选择
+    connect(spNeedInspect_, &QCheckBox::clicked, this, [this]() {
+        spNeedInspectUserEdited_ = true;
+    });
+
+    // 切换类型时若用户尚未修改过 need_inspect，则按类型默认值更新
+    connect(spType_, &QComboBox::currentTextChanged, this,
+            [this](const QString& text) {
+        if (!spNeedInspect_) return;
+        if (spNeedInspectUserEdited_) return;
+        QSignalBlocker blocker(spNeedInspect_);
+        spNeedInspect_->setChecked(SemanticPoint::defaultNeedInspect(text));
+    });
 
     connect(applyBtn, &QPushButton::clicked, [this]() {
         if (!spSm_) return;
@@ -298,6 +317,8 @@ void PropertiesPanel::setupSemanticPointPage() {
         SemanticPoint sp;
         sp.name = newName;
         sp.type = spType_->currentText();
+        sp.needInspect = spNeedInspect_ ? spNeedInspect_->isChecked()
+                                        : SemanticPoint::defaultNeedInspect(sp.type);
         Pose pose;
         pose.position = Eigen::Vector3d(spPx_->value(), spPy_->value(), spPz_->value());
         pose.orientation = Eigen::Quaterniond(spOw_->value(), spOx_->value(), spOy_->value(), spOz_->value()).normalized();
@@ -352,7 +373,12 @@ void PropertiesPanel::beginNewSemanticPoint(SubMap* sm) {
     spSm_ = sm;
     spCurrentName_.clear();
     spName_->clear();
+    spNeedInspectUserEdited_ = false;
     spType_->setCurrentText("single_pose");
+    if (spNeedInspect_) {
+        QSignalBlocker blocker(spNeedInspect_);
+        spNeedInspect_->setChecked(SemanticPoint::defaultNeedInspect("single_pose"));
+    }
     spPx_->setValue(0.0);
     spPy_->setValue(0.0);
     spPz_->setValue(0.0);
@@ -379,9 +405,14 @@ void PropertiesPanel::showSemanticPointProperties(SubMap* sm, const QString& poi
     spSm_ = sm;
     spCurrentName_ = pointName;
     spName_->setText(sp->name);
+    spNeedInspectUserEdited_ = true; // 已有点位的值即用户保存过的值，不应被自动覆盖
     if (spType_->findText(sp->type) < 0)
         spType_->addItem(sp->type);
     spType_->setCurrentText(sp->type);
+    if (spNeedInspect_) {
+        QSignalBlocker blocker(spNeedInspect_);
+        spNeedInspect_->setChecked(sp->needInspect);
+    }
 
     if (!sp->poses.isEmpty()) {
         const auto& pose = sp->poses.first();

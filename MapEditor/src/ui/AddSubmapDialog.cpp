@@ -173,6 +173,13 @@ void AddSubmapDialog::onAccept() {
                 } else if (spData.contains("pose")) {
                     sp.poses.append(parsePose(spData["pose"].toObject()));
                 }
+
+                if (spData.contains("need_inspect")) {
+                    sp.needInspect = spData["need_inspect"].toBool();
+                } else {
+                    sp.needInspect = SemanticPoint::defaultNeedInspect(sp.type);
+                }
+
                 sm->addSemanticPoint(sp);
             }
         }
