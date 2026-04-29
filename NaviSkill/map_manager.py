@@ -168,6 +168,29 @@ class MapManager:
         semantic_points = self.get_semantic_points_in_submap(submap_id)
         point_info = semantic_points.get(pose_name)
         return point_info is not None and point_info.get('type') == 'multi_pose'
+
+    @staticmethod
+    def default_need_inspect(point_type: Optional[str]) -> bool:
+        """根据点位 type 返回 need_inspect 的默认值。
+
+        约定：single_pose 默认 True，其它类型默认 False。
+        """
+        return point_type == 'single_pose'
+
+    def get_need_inspect(self, pose_name: str, submap_id: str = None) -> bool:
+        """获取指定语义点的 need_inspect 字段。
+
+        若 JSON 中显式指定则按其值返回；否则按 type 的默认值返回
+        （single_pose -> True，其它 -> False）。点位不存在时返回 False。
+        """
+        submap_id = submap_id or self.current_submap
+        semantic_points = self.get_semantic_points_in_submap(submap_id)
+        point_info = semantic_points.get(pose_name)
+        if not point_info:
+            return False
+        if 'need_inspect' in point_info:
+            return bool(point_info.get('need_inspect'))
+        return self.default_need_inspect(point_info.get('type'))
     
     def find_pose_in_all_submaps(self, pose_name: str) -> List[Tuple[str, Dict]]:
         """

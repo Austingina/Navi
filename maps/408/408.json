@@ -504,7 +504,7 @@
                     "type": "single_pose"
                 },
                 "elevator hall in 3": {
-                    "need_inspect": true,
+                    "need_inspect": false,
                     "pose": {
                         "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
                         "position": { "x": 0.5, "y": 0.0, "z": 0.0}
@@ -512,7 +512,7 @@
                     "type": "single_pose"
                 },
                 "elevator_hall_2": {
-                    "need_inspect": true,
+                    "need_inspect": false,
                     "pose": {
                         "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
                         "position": { "x": -11.3, "y": -0.2722, "z": 0.0}
@@ -520,7 +520,7 @@
                     "type": "single_pose"
                 },
                 "elevator_hall_in": {
-                    "need_inspect": true,
+                    "need_inspect": false,
                     "pose": {
                         "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
                         "position": { "x": -2.02, "y": -0.1, "z": 0.0}
@@ -568,7 +568,7 @@
                     "type": "elevator_wait"
                 },
                 "hall_in": {
-                    "need_inspect": true,
+                    "need_inspect": false,
                     "pose": {
                         "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
                         "position": { "x": 45.5243, "y": -0.6, "z": 0.0}
@@ -576,7 +576,7 @@
                     "type": "single_pose"
                 },
                 "hall_out": {
-                    "need_inspect": true,
+                    "need_inspect": false,
                     "pose": {
                         "orientation": { "w": 0.0, "x": 0.0, "y": 0.0, "z": 1.0},
                         "position": { "x": 45.0, "y": -0.6, "z": 0.0}
@@ -592,7 +592,7 @@
                     "type": "single_pose"
                 },
                 "middle_middle_in": {
-                    "need_inspect": true,
+                    "need_inspect": false,
                     "pose": {
                         "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
                         "position": { "x": 20.4795, "y": -27.9918, "z": 0.0}
@@ -600,7 +600,7 @@
                     "type": "single_pose"
                 },
                 "middle_middle_out": {
-                    "need_inspect": true,
+                    "need_inspect": false,
                     "pose": {
                         "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": -0.7071067811865476},
                         "position": { "x": 20.5686, "y": -29.4844, "z": 0.0}
@@ -624,7 +624,7 @@
                     "type": "single_pose"
                 },
                 "outdoor": {
-                    "need_inspect": true,
+                    "need_inspect": false,
                     "pose": {
                         "orientation": { "w": 0.0, "x": 0.0, "y": 0.0, "z": 1.0},
                         "position": { "x": 0.4195, "y": 0.0183, "z": 0.0}
@@ -632,7 +632,7 @@
                     "type": "single_pose"
                 },
                 "outdoor 2": {
-                    "need_inspect": true,
+                    "need_inspect": false,
                     "pose": {
                         "orientation": { "w": 0.0, "x": 0.0, "y": 0.0, "z": 1.0},
                         "position": { "x": -2.02, "y": -0.1, "z": 0.0}
@@ -640,7 +640,7 @@
                     "type": "single_pose"
                 },
                 "outdoor 3": {
-                    "need_inspect": true,
+                    "need_inspect": false,
                     "pose": {
                         "orientation": { "w": 0.0, "x": 0.0, "y": 0.0, "z": 1.0},
                         "position": { "x": -10.3, "y": -0.3746, "z": 0.0}
@@ -648,7 +648,7 @@
                     "type": "single_pose"
                 },
                 "park out": {
-                    "need_inspect": true,
+                    "need_inspect": false,
                     "pose": {
                         "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": -0.7071067811865476},
                         "position": { "x": 29.9045, "y": -77.0374, "z": 0.0}
@@ -688,7 +688,7 @@
                     "type": "single_pose"
                 },
                 "unload in": {
-                    "need_inspect": true,
+                    "need_inspect": false,
                     "pose": {
                         "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
                         "position": { "x": 27.8, "y": -0.6, "z": 0.0}
@@ -696,7 +696,7 @@
                     "type": "single_pose"
                 },
                 "unload out": {
-                    "need_inspect": true,
+                    "need_inspect": false,
                     "pose": {
                         "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": -0.7071067811865476},
                         "position": { "x": 26.0596, "y": -17.4319, "z": 0.0}
@@ -704,7 +704,7 @@
                     "type": "single_pose"
                 },
                 "unload point in": {
-                    "need_inspect": true,
+                    "need_inspect": false,
                     "pose": {
                         "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": 0.7071067811865476},
                         "position": { "x": 26.3683, "y": -16.5758, "z": 0.0}
@@ -712,7 +712,7 @@
                     "type": "single_pose"
                 },
                 "unload point out": {
-                    "need_inspect": true,
+                    "need_inspect": false,
                     "pose": {
                         "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": -0.7071067811865476},
                         "position": { "x": 27.8, "y": -0.6, "z": 0.0}
@@ -849,7 +849,7 @@
                     "type": "single_pose"
                 },
                 "meetingroom_out": {
-                    "need_inspect": true,
+                    "need_inspect": false,
                     "pose": {
                         "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
                         "position": { "x": 6.0875, "y": -12.3307, "z": 0.0}
@@ -857,7 +857,7 @@
                     "type": "single_pose"
                 },
                 "meetingroom_out_2": {
-                    "need_inspect": true,
+                    "need_inspect": false,
                     "pose": {
                         "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": 0.7071067811865476},
                         "position": { "x": 8.3, "y": -12.3, "z": 0.0}
@@ -873,7 +873,7 @@
                     "type": "single_pose"
                 },
                 "office_in": {
-                    "need_inspect": true,
+                    "need_inspect": false,
                     "pose": {
                         "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": -0.7071067811865476},
                         "position": { "x": 10.8314, "y": -4.838, "z": 0.0}
@@ -881,7 +881,7 @@
                     "type": "single_pose"
                 },
                 "office_in_0": {
-                    "need_inspect": true,
+                    "need_inspect": false,
                     "pose": {
                         "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
                         "position": { "x": 10.9, "y": -2.6, "z": 0.0}
@@ -889,7 +889,7 @@
                     "type": "single_pose"
                 },
                 "office_out": {
-                    "need_inspect": true,
+                    "need_inspect": false,
                     "pose": {
                         "orientation": { "w": 0.0, "x": 0.0, "y": 0.0, "z": 1.0},
                         "position": { "x": 10.8422, "y": -2.3181, "z": 0.0}
@@ -897,7 +897,7 @@
                     "type": "single_pose"
                 },
                 "office_out_0": {
-                    "need_inspect": true,
+                    "need_inspect": false,
                     "pose": {
                         "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": 0.7071067811865476},
                         "position": { "x": 10.800000190734863, "y": -4.599999904632568, "z": 0.0}
@@ -1025,7 +1025,7 @@
                     "type": "single_pose"
                 },
                 "control point 1": {
-                    "need_inspect": true,
+                    "need_inspect": false,
                     "pose": {
                         "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
                         "position": { "x": 5.5, "y": 0.6, "z": 0.0}
@@ -1033,7 +1033,7 @@
                     "type": "single_pose"
                 },
                 "control point2": {
-                    "need_inspect": true,
+                    "need_inspect": false,
                     "pose": {
                         "orientation": { "w": 0.0, "x": 0.0, "y": 0.0, "z": 1.0},
                         "position": { "x": 6.0, "y": 0.0, "z": 0.0}
