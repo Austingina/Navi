@@ -13,6 +13,8 @@
 #include <QApplication>
 #include <QDialog>
 #include <QPushButton>
+#include <QCloseEvent>
+#include <QDir>
 
 #include <Eigen/Geometry>
 #include <QSet>
@@ -87,11 +89,54 @@ QColor MainWindow::nextColor() {
 // ═══════════════════════════════════════════════════════════════════════
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle("MapEditor — 地图编辑器");
     resize(1400, 900);
     setupUI();
     setupMenuBar();
     connectSignals();
+    updateWindowTitle();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Dirty / 标题 / 关闭确认
+// ═══════════════════════════════════════════════════════════════════════
+
+void MainWindow::updateWindowTitle() {
+    QString base = "MapEditor — 地图编辑器";
+    if (!currentProjectDir_.isEmpty()) {
+        base = QString("MapEditor — %1").arg(currentProjectDir_);
+    }
+    if (project_.isDirty()) base += " *";
+    setWindowTitle(base);
+    setWindowModified(project_.isDirty());
+}
+
+void MainWindow::markDirty() {
+    project_.setDirty(true);
+    updateWindowTitle();
+}
+
+bool MainWindow::maybePromptSaveChanges() {
+    if (!project_.isDirty()) return true;
+
+    auto ret = QMessageBox::question(
+        this, "保存修改？",
+        "当前地图存在未保存的修改，是否保存？",
+        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
+        QMessageBox::Save);
+
+    if (ret == QMessageBox::Cancel) return false;
+    if (ret == QMessageBox::Discard) return true;
+
+    onSave();
+    return !project_.isDirty();
+}
+
+void MainWindow::closeEvent(QCloseEvent* event) {
+    if (maybePromptSaveChanges()) {
+        event->accept();
+    } else {
+        event->ignore();
+    }
 }
 
 void MainWindow::setupUI() {
@@ -124,7 +169,7 @@ void MainWindow::setupMenuBar() {
     fileMenu->addAction("保存", this, &MainWindow::onSave, QKeySequence::Save);
     fileMenu->addAction("另存为...", this, &MainWindow::onSaveAs, QKeySequence("Ctrl+Shift+S"));
     fileMenu->addSeparator();
-    fileMenu->addAction("退出", qApp, &QApplication::quit, QKeySequence::Quit);
+    fileMenu->addAction("退出", this, &QMainWindow::close, QKeySequence::Quit);
 
     auto* viewMenu = menuBar()->addMenu("视图(&V)");
     viewMenu->addAction("重置视角", this, &MainWindow::onResetView, QKeySequence("R"));
@@ -244,6 +289,8 @@ void MainWindow::connectSignals() {
 // ═══════════════════════════════════════════════════════════════════════
 
 void MainWindow::onOpen() {
+    if (!maybePromptSaveChanges()) return;
+
     QString path = QFileDialog::getExistingDirectory(
         this, "选择地图目录", "",
         QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
@@ -281,7 +328,8 @@ void MainWindow::onOpen() {
                               .arg(path)
                               .arg(project_.submapCount())
                               .arg(project_.routes().size()));
-    setWindowTitle(QString("MapEditor — %1").arg(QDir(path).dirName()));
+    project_.setDirty(false);
+    updateWindowTitle();
 }
 
 void MainWindow::onSave() {
@@ -298,6 +346,7 @@ void MainWindow::onSave() {
     }
     if (project_.save(currentProjectDir_)) {
         project_.setDirty(false);
+        updateWindowTitle();
         statusLabel_->setText("已保存: " + currentProjectDir_);
     } else {
         QMessageBox::critical(this, "错误", "保存失败");
@@ -310,6 +359,7 @@ void MainWindow::onSaveAs() {
         QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
     if (path.isEmpty()) return;
     currentProjectDir_ = path;
+    updateWindowTitle();
     onSave();
 }
 
@@ -457,7 +507,7 @@ void MainWindow::onSemanticPointChanged(const QString& smId, const QString& ptNa
     refreshMarkers();
     if (!smId.isEmpty()) refreshSubmap(smId);
     statusBar()->showMessage(QString("语义点已更新: %1").arg(ptName), 3000);
-    project_.setDirty();
+    markDirty();
 }
 
 void MainWindow::onPortalSelected(const QString& smId, int portalIdx) {
@@ -472,7 +522,7 @@ void MainWindow::onPortalPropertiesChanged(const QString& smId, int /*portalIdx*
     submapPanel_->rebuild(&project_);
     refreshMarkers();
     if (!smId.isEmpty()) refreshSubmap(smId);
-    project_.setDirty();
+    markDirty();
     statusBar()->showMessage(QString("传送门已更新: %1").arg(smId), 3000);
 }
 
@@ -519,7 +569,7 @@ void MainWindow::onRouteWaypointInserted(const QString& routeName, const QString
     else
         r->waypoints.insert(insertIndex, wp);
 
-    project_.setDirty();
+    markDirty();
     submapPanel_->rebuild(&project_);
     submapPanel_->expandRoute(routeName);
     refreshRouteLines();
@@ -542,7 +592,7 @@ void MainWindow::onRouteRefInserted(const QString& routeName, const QString& nes
     else
         r->waypoints.insert(insertIndex, wp);
 
-    project_.setDirty();
+    markDirty();
     submapPanel_->rebuild(&project_);
     submapPanel_->expandRoute(routeName);
     refreshRouteLines();
@@ -558,7 +608,7 @@ void MainWindow::onRouteWaypointRemoveRequested(const QString& routeName, int wa
 
     const auto w = r->waypoints[waypointIndex];
     r->waypoints.removeAt(waypointIndex);
-    project_.setDirty();
+    markDirty();
     submapPanel_->rebuild(&project_);
     submapPanel_->expandRoute(routeName);
     refreshRouteLines();
@@ -639,7 +689,7 @@ void MainWindow::refreshRouteLines() {
 void MainWindow::onSubmapPropertiesChanged(const QString& id) {
     refreshSubmap(id);
     refreshMarkers();
-    project_.setDirty();
+    markDirty();
     submapPanel_->rebuild(&project_);
 }
 
@@ -676,6 +726,7 @@ void MainWindow::onAddSubmap() {
         }
         sm->displayOptions().color = nextColor();
         project_.addSubmap(sm);
+        markDirty();
         submapPanel_->rebuild(&project_);
         refreshSubmap(sm->id());
         refreshMarkers();
@@ -695,7 +746,7 @@ void MainWindow::onAddRoute() {
     Route r;
     r.name = name;
     project_.addRoute(r);
-    project_.setDirty();
+    markDirty();
     submapPanel_->rebuild(&project_);
     refreshRouteLines();
     statusLabel_->setText("已添加路线: " + name);
@@ -707,7 +758,7 @@ void MainWindow::onRenameRoute(const QString& oldName, const QString& newName) {
             QString("重命名失败：路线 '%1' 不存在或 '%2' 已被占用").arg(oldName, newName));
         return;
     }
-    project_.setDirty();
+    markDirty();
     submapPanel_->rebuild(&project_);
     submapPanel_->expandRoute(newName);
     refreshRouteLines();
@@ -726,7 +777,7 @@ void MainWindow::onRenameSemanticPoint(const QString& smId,
     if (selectedSemanticSmId_ == smId && selectedSemanticPtName_ == oldName) {
         selectedSemanticPtName_ = newName;
     }
-    project_.setDirty();
+    markDirty();
     submapPanel_->rebuild(&project_);
     refreshSubmap(smId);
     refreshMarkers();
@@ -738,7 +789,7 @@ void MainWindow::onRenameSemanticPoint(const QString& smId,
 void MainWindow::onSetDefaultRoute(const QString& routeName) {
     if (routeName.isEmpty() || !project_.route(routeName)) return;
     project_.setDefaultRouteId(routeName);
-    project_.setDirty();
+    markDirty();
     submapPanel_->rebuild(&project_);
     statusLabel_->setText("已将 " + routeName + " 设置为 default_route");
 }
@@ -758,7 +809,7 @@ void MainWindow::onSetDefaultSubmap(const QString& id) {
         return;
     }
     project_.setDefaultSubmapId(id);
-    project_.setDirty();
+    markDirty();
     submapPanel_->rebuild(&project_);
     statusLabel_->setText("已将 " + id + " 设置为 default_submap");
 }
@@ -769,7 +820,7 @@ void MainWindow::onSetParentSubmap(const QString& submapId, const QString& paren
 
     if (parentId.isEmpty()) {
         sm->setParentSubmapId(QString());
-        project_.setDirty();
+        markDirty();
         submapPanel_->rebuild(&project_);
         refreshSubmap(submapId);
         refreshMarkers();
@@ -786,7 +837,7 @@ void MainWindow::onSetParentSubmap(const QString& submapId, const QString& paren
     }
 
     sm->setParentSubmapId(parentId);
-    project_.setDirty();
+    markDirty();
     submapPanel_->rebuild(&project_);
     refreshAllSubmaps();
     refreshMarkers();
@@ -900,6 +951,7 @@ void MainWindow::onRemoveSubmap(const QString& id) {
 
     viewer_->removeSubmap(id);
     project_.removeSubmap(id);
+    markDirty();
     submapPanel_->rebuild(&project_);
     refreshMarkers();
     propsPanel_->clear();
@@ -941,7 +993,7 @@ void MainWindow::onAddPortal(const QString& smId) {
         submapPanel_->rebuild(&project_);
         refreshMarkers();
         refreshSubmap(smId);
-        project_.setDirty();
+        markDirty();
         statusLabel_->setText(QString("已在子地图 %1 中添加传送门").arg(smId));
         statusBar()->showMessage("传送门已添加", 3000);
     }
@@ -1054,7 +1106,7 @@ void MainWindow::onAlignSubmap(const QString& smId) {
                 s->setTransform(result.transform);
                 refreshSubmap(smId);
                 refreshMarkers();
-                project_.setDirty();
+                markDirty();
                 submapPanel_->rebuild(&project_);
                 statusLabel_->setText(QString("子地图 '%1' 对齐成功 (fitness=%2)")
                                          .arg(smId).arg(result.fitness, 0, 'f', 4));
@@ -1187,7 +1239,7 @@ void MainWindow::onMarkerDragFinished(const QString& submapId, const QString& na
         markerDragUndo_.valid = false;
         Pose p; p.position = localPos; sp->poses.append(p);
     }
-    project_.setDirty();
+    markDirty();
     refreshMarkers();
     refreshSubmap(submapId);
     if (submapId == selectedSemanticSmId_ && name == selectedSemanticPtName_)
@@ -1210,7 +1262,7 @@ void MainWindow::undoMarkerDrag() {
     QString undonePtName = markerDragUndo_.pointName;
     markerDragUndo_.valid = false;
 
-    project_.setDirty();
+    markDirty();
     refreshMarkers();
     refreshSubmap(undoneSmId);
     if (undoneSmId == selectedSemanticSmId_ && undonePtName == selectedSemanticPtName_)

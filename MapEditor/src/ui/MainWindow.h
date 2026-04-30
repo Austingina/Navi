@@ -20,6 +20,9 @@ public:
     explicit MainWindow(QWidget* parent = nullptr);
     ~MainWindow() override = default;
 
+protected:
+    void closeEvent(QCloseEvent* event) override;
+
 private slots:
     // ── 菜单 ─────────────────────────────────────────────────────────
     void onOpen();
@@ -75,6 +78,13 @@ private:
     void setupUI();
     void setupMenuBar();
     void connectSignals();
+
+    /// 标记工程为已修改（dirty），并刷新窗口标题（追加 *）
+    void markDirty();
+    /// 根据当前工程路径与 dirty 状态刷新窗口标题
+    void updateWindowTitle();
+    /// 若有未保存更改则弹出对话框确认；返回是否允许继续（保存/丢弃 → true，取消 → false）
+    bool maybePromptSaveChanges();
 
     /// 刷新所有 submap 的 3D 显示
     void refreshAllSubmaps();
