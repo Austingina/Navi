@@ -5,7 +5,7 @@
         "default_submap": "2f"
     },
     "routes": {
-        "1f_cp_uo": {
+        "1f_cp_ua": {
             "description": "",
             "waypoints": [
                 {
@@ -43,11 +43,11 @@
                 }
             ]
         },
-        "1f_mmo_sw": {
+        "1f_mm_sw": {
             "description": "",
             "waypoints": [
                 {
-                    "semantic_point": "middle_middle_out",
+                    "semantic_point": "middle_middle_from_hall",
                     "submap": "1f"
                 },
                 {
@@ -106,7 +106,7 @@
                 }
             ]
         },
-        "1f_upi_cp": {
+        "1f_ua_cp": {
             "description": "",
             "waypoints": [
                 {
@@ -347,7 +347,7 @@
                     "submap": "1f"
                 },
                 {
-                    "route": "1f_mmo_sw"
+                    "route": "1f_mm_sw"
                 },
                 {
                     "route": "1f_sm_ne"
@@ -619,19 +619,19 @@
                     },
                     "type": "single_pose"
                 },
-                "middle_middle_in": {
-                    "need_inspect": false,
-                    "pose": {
-                        "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
-                        "position": { "x": 20.4795, "y": -27.9918, "z": 0.0}
-                    },
-                    "type": "single_pose"
-                },
-                "middle_middle_out": {
+                "middle_middle_from_hall": {
                     "need_inspect": false,
                     "pose": {
                         "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": -0.7071067811865476},
                         "position": { "x": 20.5686, "y": -29.4844, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "middle_middle_to_hall": {
+                    "need_inspect": false,
+                    "pose": {
+                        "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
+                        "position": { "x": 20.4795, "y": -27.9918, "z": 0.0}
                     },
                     "type": "single_pose"
                 },
@@ -760,7 +760,7 @@
                     "need_inspect": true,
                     "pose": {
                         "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
-                        "position": { "x": 1.8107, "y": -2.6509, "z": 0.0}
+                        "position": { "x": 1.81, "y": -2.6509, "z": 0.0}
                     },
                     "type": "single_pose"
                 },
