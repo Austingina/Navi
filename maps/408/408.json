@@ -887,7 +887,7 @@
                 "office_entrance_1": {
                     "need_inspect": false,
                     "pose": {
-                        "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
+                        "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": -0.7071067811865476},
                         "position": { "x": 10.9, "y": -2.6, "z": 0.0}
                     },
                     "type": "single_pose"
