@@ -1,6 +1,7 @@
 #include "ui/MainWindow.h"
 #include "ui/AddSubmapDialog.h"
 #include "ui/AlignSubmapDialog.h"
+#include "ui/BuildVprDatabaseDialog.h"
 #include "ui/PortalEditorDialog.h"
 
 #include <QMenuBar>
@@ -258,6 +259,8 @@ void MainWindow::connectSignals() {
             this, &MainWindow::onAddPortal);
     connect(submapPanel_, &SubmapPanel::alignSubmapRequested,
             this, &MainWindow::onAlignSubmap);
+    connect(submapPanel_, &SubmapPanel::buildVprDatabaseRequested,
+            this, &MainWindow::onBuildVprDatabase);
         connect(submapPanel_, &SubmapPanel::setDefaultSubmapRequested,
             this, &MainWindow::onSetDefaultSubmap);
     connect(submapPanel_, &SubmapPanel::setParentSubmapRequested,
@@ -1144,6 +1147,33 @@ void MainWindow::onAlignSubmap(const QString& smId) {
 
     dlg->setModal(false);
     dlg->show();
+}
+
+void MainWindow::onBuildVprDatabase(const QString& smId) {
+    if (!project_.submap(smId)) {
+        QMessageBox::warning(this, "错误", "指定的 Submap 不存在: " + smId);
+        return;
+    }
+    if (currentProjectDir_.isEmpty()) {
+        QMessageBox::warning(this, "请先保存工程",
+            "构建 VPR 数据库需要先确定输出目录。\n"
+            "请先用「文件 → 另存为...」把工程保存到一个目录。");
+        return;
+    }
+
+    // 每个 submap 的 VPR 数据库统一放在 <projectDir>/vpr/<submapId>/
+    QString outputDir = QDir(currentProjectDir_).absoluteFilePath("vpr/" + smId);
+
+    BuildVprParams params = lastBuildVprParams_.value(smId, BuildVprParams{});
+    BuildVprDatabaseDialog dlg(smId, outputDir, params, this);
+    dlg.exec();
+
+    // 不论成功失败都记下用户填的参数，下次再开免去重填
+    lastBuildVprParams_[smId] = dlg.currentParams();
+
+    if (dlg.ranSuccessfully()) {
+        statusLabel_->setText(QString("VPR 数据库已生成: %1").arg(outputDir));
+    }
 }
 
 QVector<MarkerVertex> MainWindow::buildWireframeBox(

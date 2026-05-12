@@ -468,6 +468,9 @@ void SubmapPanel::onContextMenu(const QPoint& pos) {
         menu.addAction("🚪 添加传送门", [this, smId]() {
             emit addPortalRequested(smId);
         });
+        menu.addAction("🧠 构建 VPR 数据库...", [this, smId]() {
+            emit buildVprDatabaseRequested(smId);
+        });
         menu.addSeparator();
         menu.addAction("🌳 显示 TF 树", [this]() {
             emit showTfTreeRequested();

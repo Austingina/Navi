@@ -7,7 +7,9 @@
 #include "ui/PointCloudViewer.h"
 #include "ui/SubmapPanel.h"
 #include "ui/PropertiesPanel.h"
+#include "ui/BuildVprDatabaseDialog.h"
 #include <QMainWindow>
+#include <QMap>
 #include <QStatusBar>
 #include <QLabel>
 #include <QDoubleSpinBox>
@@ -58,6 +60,7 @@ private slots:
                                const QString& newName);
     void onAddPortal(const QString& smId);
     void onAlignSubmap(const QString& smId);
+    void onBuildVprDatabase(const QString& smId);
     void onSetDefaultSubmap(const QString& id);
     void onSetParentSubmap(const QString& submapId, const QString& parentId);
     void onShowTfTree();
@@ -120,6 +123,9 @@ private:
                          PendingAlignGuess, PendingAlignSourceCenter };
     PendingAction pendingAction_ = NoPending;
     QString       pendingSubmapId_;
+
+    // 记忆每个 submap 上次填的 VPR 构建参数（仅本次运行内有效）
+    QMap<QString, BuildVprParams> lastBuildVprParams_;
 
     // 拖拽撤销（最多一次）
     void undoMarkerDrag();

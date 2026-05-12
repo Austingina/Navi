@@ -42,6 +42,7 @@ set(UI_SOURCES
     src/ui/AddSubmapDialog.h   src/ui/AddSubmapDialog.cpp
     src/ui/AlignSubmapDialog.h src/ui/AlignSubmapDialog.cpp
     src/ui/PortalEditorDialog.h src/ui/PortalEditorDialog.cpp
+    src/ui/BuildVprDatabaseDialog.h src/ui/BuildVprDatabaseDialog.cpp
 )
 
 set(ALGO_SOURCES
