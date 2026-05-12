@@ -6,6 +6,7 @@ from rcl_interfaces.msg import Parameter as ParameterMsg, ParameterValue, Parame
 from rclpy.executors import SingleThreadedExecutor  # 单线程执行器
 from geometry_msgs.msg import PoseStamped, Twist, TwistStamped  # 位姿消息类型和速度控制消息类型
 from nav_msgs.msg import OccupancyGrid, Path  # 占据网格、全局路径
+from sensor_msgs.msg import CompressedImage  # 压缩图像（用于 VPR 引导）
 from std_msgs.msg import String, Bool  # 字符串消息类型 / 布尔消息类型
 from std_srvs.srv import SetBool  # 用于 elevator_mode 服务
 from action_msgs.msg import GoalStatus, GoalStatusArray  # Action状态消息
@@ -43,8 +44,17 @@ class NavNode(Node):
     GOAL_CHECK_PENDING = "pending"
     GOAL_CHECK_FAILED = "failed"
 
-    def __init__(self):
-        """初始化ROS节点和相关发布者/订阅者"""
+    def __init__(self, camera_image_topic: str = "/hdas/camera_head/left_raw/image_raw_color/compressed"):
+        """初始化ROS节点和相关发布者/订阅者
+
+        :param camera_image_topic: 用于 VPR 引导/重定位的相机 CompressedImage 话题，
+                                    默认 ``/hdas/camera_head/left_raw/image_raw_color/compressed``
+                                    （部署机 408 项目使用 hdas head 左目 raw 压缩图像）。
+                                    注意这与 vpr_preprocess.py 解析离线 rosbag 时
+                                    使用的 ``/camera_agent/img_left/compressed`` 不同；
+                                    数据库本身只关心特征空间，不要求 live 话题与 bag
+                                    话题同名，只要相机参数与去畸变配置一致即可。
+        """
         # 先确保rclpy已经初始化
         if not rclpy.ok():
             rclpy.init()
@@ -91,6 +101,20 @@ class NavNode(Node):
                 '/map',
                 self.map_callback,
                 10
+            )
+
+            # 相机 CompressedImage 订阅：用于 VPR 引导/重定位。
+            # 只缓存最新一帧，无须高频处理。
+            self.camera_image_topic = camera_image_topic
+            self._latest_image_lock = threading.Lock()
+            self._latest_image_bytes: Optional[bytes] = None
+            self._latest_image_stamp_ns: Optional[int] = None
+            self._latest_image_event = threading.Event()
+            self.camera_image_sub = self.create_subscription(
+                CompressedImage,
+                camera_image_topic,
+                self._camera_image_callback,
+                10,
             )
             # Nav2 全局路径（下发新 goal 后 planner 会先清空再发布新路径）
             self._plan_lock = threading.Lock()
@@ -322,6 +346,54 @@ class NavNode(Node):
             self.get_logger().error(f"处理地图消息失败: {e}")
             import traceback
             self.get_logger().error(f"详细错误: {traceback.format_exc()}")
+
+    def _camera_image_callback(self, msg: CompressedImage) -> None:
+        """缓存最新一帧相机 CompressedImage（仅保留 bytes 与时间戳）。"""
+        try:
+            data = bytes(msg.data)
+            stamp_ns = int(msg.header.stamp.sec) * 1_000_000_000 + int(msg.header.stamp.nanosec)
+            with self._latest_image_lock:
+                self._latest_image_bytes = data
+                self._latest_image_stamp_ns = stamp_ns
+            self._latest_image_event.set()
+        except Exception as e:
+            self.get_logger().error(f"camera image callback 出错: {e}")
+
+    def get_latest_image_bytes(
+        self,
+        timeout_sec: float = 5.0,
+        max_age_sec: Optional[float] = None,
+    ) -> Optional[Tuple[bytes, int]]:
+        """获取最新一帧相机 CompressedImage 的字节与时间戳（ns）。
+
+        :param timeout_sec: 等待首帧到来的超时时间（已收到过任意一帧时立刻返回）
+        :param max_age_sec: 若指定，要求最新一帧相对当前 ROS 时间的年龄不超过该值；
+                             否则继续等待新帧。
+        :return: ``(jpeg_bytes, stamp_ns)`` 或 None（超时未拿到合规帧）
+        """
+        deadline = time.monotonic() + max(0.0, float(timeout_sec))
+        while True:
+            with self._latest_image_lock:
+                data = self._latest_image_bytes
+                stamp_ns = self._latest_image_stamp_ns
+
+            if data is not None and stamp_ns is not None:
+                if max_age_sec is None:
+                    return data, stamp_ns
+                try:
+                    now_ns = self.get_clock().now().nanoseconds
+                    age_ns = now_ns - stamp_ns
+                    if age_ns < int(max_age_sec * 1e9):
+                        return data, stamp_ns
+                except Exception:
+                    return data, stamp_ns
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            # 等待回调线程置事件后再轮询；超时时退出
+            self._latest_image_event.clear()
+            self._latest_image_event.wait(timeout=min(0.2, remaining))
 
     def _on_relocalization_request(self, reason: str) -> None:
         """换图/发初始位姿后：清定位标志，避免把旧 TF 当新定位；便于再次打出「TF定位成功」等日志。"""

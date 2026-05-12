@@ -1,6 +1,6 @@
 # 导入必要的库
 import time  # 时间处理库
-from typing import Dict, Any  # 类型提示
+from typing import Dict, Any, Optional  # 类型提示
 import inspect
 import asyncio  # 异步IO库
 import logging  # 日志记录库
@@ -12,6 +12,7 @@ import numpy as np  # 数值计算库
 from wgs84 import WGS84Converter 
 from nav_node import NavNode  # 导入导航节点类
 from map_manager import MapManager  # 导入多楼层地图管理器
+from vpr_bootstrap import VprBootstrap, VprBootstrapError  # VPR 引导 / 重定位
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import uvicorn
 # 导入ROS相关的库
@@ -33,11 +34,23 @@ class NavigationToolManager:
     2. 注册导航相关 RPC 方法（经 /ws JSON 调用）
     3. 管理 ROS 线程和资源清理
     """
-    def __init__(self, map_manager: MapManager = None):
+    def __init__(
+        self,
+        map_manager: MapManager = None,
+        *,
+        submap_specified: bool = False,
+        vpr_device: str = "cuda",
+        camera_image_topic: Optional[str] = None,
+    ):
         """
         初始化导航工具管理器
 
         :param map_manager: 多楼层地图管理器实例，可选
+        :param submap_specified: 用户是否在命令行显式指定了初始 submap；为 False
+                                  时若存在 VPR 数据库会用相机图像引导确定 submap
+        :param vpr_device: VPR 子进程使用的设备（``cuda`` / ``cpu``）
+        :param camera_image_topic: 用于 VPR 引导/重定位的 CompressedImage 话题；
+                                    None 时使用 NavNode 默认值
         """
         # 方法名 -> 可调用（同步或 async），由 register_tools 填充
         self._handlers = {}
@@ -46,10 +59,26 @@ class NavigationToolManager:
         # 初始化经纬度转换器
         self.wgs84_converter = WGS84Converter()
         self.wgs84_converter.initialize()
+        # 标记用户是否显式指定 submap：影响启动时是否触发 VPR 引导
+        self._submap_specified = submap_specified
+        # VPR 引导/重定位（独立子进程，使用 vpr 自己的 .venv）
+        self.vpr_bootstrap: Optional[VprBootstrap] = None
+        if map_manager is not None:
+            try:
+                self.vpr_bootstrap = VprBootstrap(map_manager, device=vpr_device)
+            except Exception as e:
+                logging.error(f"VprBootstrap 初始化失败: {e}", exc_info=True)
+                self.vpr_bootstrap = None
+        # VPR watchdog 协程相关状态
+        self._tf_watchdog_task: Optional[asyncio.Task] = None
+        self._shutdown = False
         # 初始化ROS
         try:
             # # 创建导航节点实例
-            self.ros_node = NavNode()
+            if camera_image_topic:
+                self.ros_node = NavNode(camera_image_topic=camera_image_topic)
+            else:
+                self.ros_node = NavNode()
             # 创建单线程执行器
             self.executor = SingleThreadedExecutor()
             # 将节点添加到执行器
@@ -59,7 +88,29 @@ class NavigationToolManager:
             # 创建后台守护线程运行ROS消息循环
             self.ros_thread = threading.Thread(target=self._ros_spin_thread, daemon=True)
             self.ros_thread.start()
-            
+
+            # 启动 VPR 子进程（如果发现至少一个 submap 有数据库）；
+            # 这一步会一直阻塞到模型 ready，之后才进入 sync_map_state。
+            if self.vpr_bootstrap is not None and self.vpr_bootstrap.has_databases:
+                self.vpr_bootstrap.start()
+
+            # 启动时若未指定 submap：先用 VPR 识别一个 submap，再让 _sync_map_state
+            # 完成 change_map
+            if (
+                not self._submap_specified
+                and self.vpr_bootstrap is not None
+                and self.vpr_bootstrap.available
+            ):
+                self._vpr_pick_initial_submap()
+            elif (
+                not self._submap_specified
+                and map_manager is not None
+            ):
+                logging.warning(
+                    "启动时未指定 submap 且 VPR 不可用，将使用 MapManager 当前 submap: %s",
+                    map_manager.get_current_submap(),
+                )
+
             # 同步地图状态：检查 MapManager 与 ROS 节点的当前地图是否一致
             self._sync_map_state()
         except Exception as e:
@@ -68,6 +119,146 @@ class NavigationToolManager:
 
         # 注册MCP工具函数
         self.register_tools()
+
+    # ------------------------------------------------------------------
+    # VPR 引导 / 重定位
+    # ------------------------------------------------------------------
+
+    def _vpr_query_latest_image(
+        self,
+        image_wait_sec: float,
+        top_k: int = 3,
+    ) -> Optional[Dict[str, Any]]:
+        """抓取最新一帧相机图像并调用 VPR；返回 ``locate`` 结果或 None。"""
+        if self.vpr_bootstrap is None or not self.vpr_bootstrap.available:
+            return None
+        img = self.ros_node.get_latest_image_bytes(timeout_sec=image_wait_sec)
+        if img is None:
+            logging.warning(
+                "VPR: 在 %.1fs 内未收到相机图像（topic=%s）",
+                image_wait_sec, self.ros_node.camera_image_topic,
+            )
+            return None
+        jpeg_bytes, _stamp_ns = img
+        try:
+            return self.vpr_bootstrap.locate(jpeg_bytes, top_k=top_k)
+        except VprBootstrapError as e:
+            logging.error(f"VPR 查询失败: {e}")
+            return None
+        except Exception as e:
+            logging.error(f"VPR 查询异常: {e}", exc_info=True)
+            return None
+
+    def _vpr_pick_initial_submap(self) -> None:
+        """启动时未指定 submap：用 VPR 识别一个并更新 MapManager.current_submap。"""
+        logging.info("启动时未指定 submap：尝试通过 VPR 自动识别 ...")
+        result = self._vpr_query_latest_image(image_wait_sec=10.0, top_k=3)
+        if result is None:
+            logging.warning(
+                "VPR 引导未能识别 submap，将回退到 MapManager 当前 submap: %s",
+                self.map_manager.get_current_submap(),
+            )
+            return
+        submap_id = result["submap_id"]
+        logging.info(
+            "VPR 引导识别 submap='%s' (distance=%.4f, xyz=(%.2f, %.2f, %.2f), 耗时=%.1fms)",
+            submap_id, result["distance"],
+            result["x"], result["y"], result["z"],
+            result.get("elapsed_ms") or -1.0,
+        )
+        if not self.map_manager.set_current_submap(submap_id):
+            logging.error(
+                "VPR 引导识别 submap='%s' 但 MapManager.set_current_submap 失败",
+                submap_id,
+            )
+
+    def _vpr_relocate_and_change_map(self, reason: str) -> bool:
+        """运行 VPR → 拿到目标 submap → change_map。供 watchdog 调用。
+
+        :return: True 当且仅当成功切到一个 submap（可能仍是当前 submap，
+                 但此时仍调用 change_map 以让上层重置初始位姿）。
+        """
+        logging.warning("[VPR] 触发重定位 (%s) ...", reason)
+        result = self._vpr_query_latest_image(image_wait_sec=5.0, top_k=3)
+        if result is None:
+            logging.warning("[VPR] 重定位失败：未识别到 submap")
+            return False
+
+        target_submap = result["submap_id"]
+        current = self.map_manager.get_current_submap()
+        logging.info(
+            "[VPR] 识别 submap='%s' (distance=%.4f, xyz=(%.2f, %.2f, %.2f), 当前='%s')",
+            target_submap, result["distance"],
+            result["x"], result["y"], result["z"], current,
+        )
+
+        target_map_path = self.map_manager.get_submap_full_map_path(target_submap)
+        if not target_map_path:
+            logging.error(f"[VPR] 无法获取 submap='{target_submap}' 的地图路径")
+            return False
+
+        # 即使 target == current，也仍然 change_map：这会触发
+        # _on_relocalization_request，给 LIO 一次重新发布 map→base_link 的机会
+        ok = self.ros_node.change_map(target_map_path)
+        if ok:
+            self.map_manager.set_current_submap(target_submap)
+            logging.info(
+                f"[VPR] 已切换地图到 {target_submap} ({target_map_path})"
+            )
+            return True
+        logging.error(f"[VPR] change_map 失败: {target_map_path}")
+        return False
+
+    async def _tf_localization_watchdog(self) -> None:
+        """后台监视 ``tf_ready``：定位丢失 grace 秒后触发一次 VPR 重定位。"""
+        if self.vpr_bootstrap is None or not self.vpr_bootstrap.available:
+            logging.info("[VPR-watchdog] VPR 不可用，跳过 tf_ready 监视")
+            return
+
+        grace_sec = 10.0          # 失定位至少持续这么久才认为是真的丢失
+        cooldown_sec = 30.0       # 两次 VPR 重定位尝试之间的最小间隔
+        check_interval_sec = 2.0
+        loss_since: Optional[float] = None
+        last_attempt_t = 0.0
+
+        logging.info(
+            "[VPR-watchdog] 已启动 (grace=%.0fs, cooldown=%.0fs, interval=%.1fs)",
+            grace_sec, cooldown_sec, check_interval_sec,
+        )
+
+        while not self._shutdown:
+            try:
+                await asyncio.sleep(check_interval_sec)
+                if self.ros_node.is_map_localized():
+                    if loss_since is not None:
+                        logging.info("[VPR-watchdog] TF 定位已恢复")
+                    loss_since = None
+                    continue
+                now = time.monotonic()
+                if loss_since is None:
+                    loss_since = now
+                    logging.warning(
+                        "[VPR-watchdog] 检测到 TF 定位丢失，%.1fs 后若未恢复将尝试 VPR 重定位",
+                        grace_sec,
+                    )
+                    continue
+                if now - loss_since < grace_sec:
+                    continue
+                if now - last_attempt_t < cooldown_sec:
+                    continue
+                last_attempt_t = now
+                lost_for = now - loss_since
+                # change_map / VPR 调用是同步阻塞的，丢到线程池避免卡 asyncio
+                await asyncio.to_thread(
+                    self._vpr_relocate_and_change_map,
+                    f"tf_ready=False 已 {lost_for:.1f}s",
+                )
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logging.error(f"[VPR-watchdog] 异常: {e}", exc_info=True)
+
+        logging.info("[VPR-watchdog] 已退出")
 
     def _sync_map_state(self):
         """
@@ -1254,7 +1445,25 @@ class NavigationToolManager:
         config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="warning")
         server = uvicorn.Server(config)
         print(f"FastAPI WebSocket: ws://0.0.0.0:{port}/ws  |  GET /health")
-        await server.serve()
+
+        # 在 uvicorn 同一事件循环里启动 VPR tf_ready 监视协程
+        if self.vpr_bootstrap is not None and self.vpr_bootstrap.available:
+            self._tf_watchdog_task = asyncio.create_task(
+                self._tf_localization_watchdog(),
+                name="vpr-tf-watchdog",
+            )
+
+        try:
+            await server.serve()
+        finally:
+            self._shutdown = True
+            if self._tf_watchdog_task is not None:
+                self._tf_watchdog_task.cancel()
+                try:
+                    await self._tf_watchdog_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+                self._tf_watchdog_task = None
 
     def cleanup(self):
         """
@@ -1266,7 +1475,14 @@ class NavigationToolManager:
         3. 关闭ROS客户端库
         """
         """清理资源"""
+        self._shutdown = True
         try:
+            # 关闭 VPR 子进程
+            if getattr(self, "vpr_bootstrap", None) is not None:
+                try:
+                    self.vpr_bootstrap.stop()
+                except Exception as e:
+                    logging.error(f"关闭 VPR 子进程失败: {e}")
             # 关闭执行器
             if hasattr(self, 'executor'):
                 self.executor.shutdown()
@@ -1292,7 +1508,13 @@ async def main():
     parser.add_argument('-m', '--map', type=str, default=None,
                         help='多楼层地图配置文件路径 (multifloor.json)')
     parser.add_argument('-s', '--submap', type=str, default=None,
-                        help='初始 submap ID；省略则使用配置文件中的 default_submap')
+                        help='初始 submap ID；省略则使用 VPR 自动识别，VPR 不可用时回退到 default_submap')
+    parser.add_argument('--image_topic', type=str, default=None,
+                        help='VPR 引导/重定位使用的相机 CompressedImage 话题；'
+                             '省略则使用 NavNode 默认 '
+                             '(/hdas/camera_head/left_raw/image_raw_color/compressed)')
+    parser.add_argument('--vpr_device', type=str, default='cuda', choices=['cuda', 'cpu'],
+                        help='VPR 子进程使用的设备')
     args = parser.parse_args()
 
     port = 9999 if args.test else 9000
@@ -1314,7 +1536,12 @@ async def main():
     mgr = None
     try:
         # 创建导航工具管理器
-        mgr = NavigationToolManager(map_manager=map_manager)
+        mgr = NavigationToolManager(
+            map_manager=map_manager,
+            submap_specified=args.submap is not None,
+            vpr_device=args.vpr_device,
+            camera_image_topic=args.image_topic,
+        )
         # 启动 FastAPI WebSocket 服务
         await mgr.start(port=port)
     except KeyboardInterrupt:

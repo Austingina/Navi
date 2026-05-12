@@ -32,12 +32,15 @@ Two ways to use this file:
 """
 
 import argparse
+import io
 import json
 import os
 import sys
+import time
+import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import faiss
 import numpy as np
@@ -47,9 +50,21 @@ from loguru import logger
 from PIL import Image
 
 from model_loader import get_model
+from undistort import PolyFisheyeUndistorter
 
 
-ImageInput = Union[str, "os.PathLike[str]", Path, Image.Image, np.ndarray]
+ImageInput = Union[str, "os.PathLike[str]", Path, Image.Image, np.ndarray, bytes]
+
+
+# 各 database build_info.json 中影响去畸变的字段；live query 必须保持一致才能
+# 让查询描述符落入同一特征空间。
+_UNDISTORT_KEYS = (
+    "undistort_fisheye",
+    "calibration_file",
+    "out_width",
+    "out_height",
+    "fov",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -69,6 +84,9 @@ class DatabaseBundle:
     descriptor_dim: int = 0
     # image_size 来自 database_meta.npz；None == 抽特征时未做 resize
     image_size: Optional[Tuple[int, ...]] = None
+    # database_build_info.json 的全部内容（缺失时为 None），用于查询时校验
+    # 去畸变配置是否与构造时一致。
+    build_info: Optional[Dict[str, Any]] = None
 
     @property
     def num_images(self) -> int:
@@ -94,6 +112,17 @@ def load_database(database_dir: str) -> DatabaseBundle:
     with open(paths_path) as f:
         rel_paths = [line.strip() for line in f if line.strip()]
     abs_paths = [os.path.join(database_dir, p) for p in rel_paths]
+
+    info_path = os.path.join(database_dir, "database_build_info.json")
+    build_info: Optional[Dict[str, Any]] = None
+    if os.path.isfile(info_path):
+        try:
+            with open(info_path, "r", encoding="utf-8") as f:
+                build_info = json.load(f)
+        except Exception as e:
+            logger.warning(
+                f"{database_dir}: failed to parse database_build_info.json: {e}"
+            )
 
     meta = np.load(meta_path, allow_pickle=False)
     method = str(meta["method"])
@@ -125,6 +154,7 @@ def load_database(database_dir: str) -> DatabaseBundle:
         method=method,
         descriptor_dim=descriptor_dim,
         image_size=image_size,
+        build_info=build_info,
     )
 
 
@@ -206,6 +236,15 @@ class VPRDetector:
             )
         effective_image_size = user_image_size if user_image_size is not None else db_image_size
 
+        # 所有 database 的去畸变配置必须一致（否则查询时无法决定单一 undistorter）
+        self.undistort_config: Optional[Dict[str, Any]] = self._resolve_undistort_config()
+        self.undistorter: Optional[PolyFisheyeUndistorter] = (
+            self._build_undistorter(self.undistort_config)
+            if self.undistort_config
+            and self.undistort_config.get("undistort_fisheye")
+            else None
+        )
+
         self.method: str = self.databases[0].method
         self.descriptor_dim: int = self.databases[0].descriptor_dim
         self.image_size: Optional[Tuple[int, ...]] = effective_image_size
@@ -231,10 +270,75 @@ class VPRDetector:
         logger.info(
             f"VPRDetector ready: {len(self.databases)} database(s), "
             f"{int(self._db_starts[-1])} total images, "
-            f"dim={self.descriptor_dim}, image_size={self.image_size}"
+            f"dim={self.descriptor_dim}, image_size={self.image_size}, "
+            f"undistort={'on' if self.undistorter is not None else 'off'}"
         )
         for db in self.databases:
             logger.info(f"  - {db.path}  ({db.num_images} images)")
+
+    # ------------------------------------------------------------------
+    # Undistortion config resolution
+    # ------------------------------------------------------------------
+
+    def _resolve_undistort_config(self) -> Optional[Dict[str, Any]]:
+        """所有 database 的去畸变配置（来自 build_info.json）必须一致才返回。
+
+        - 若所有 database 都缺 build_info.json：返回 None，且禁用 undistortion。
+        - 若部分 database 缺失：直接报错（无法保证查询与构造时的一致）。
+        - 若都存在但 _UNDISTORT_KEYS 任一字段不一致：报错。
+        """
+        infos = [db.build_info for db in self.databases]
+        if all(info is None for info in infos):
+            return None
+        missing = [db.path for db, info in zip(self.databases, infos) if info is None]
+        if missing:
+            raise ValueError(
+                "Some databases are missing database_build_info.json so the "
+                "fisheye undistortion config cannot be validated: "
+                f"{missing}. Rebuild them with the current vpr_preprocess.py "
+                "or remove them from the detector."
+            )
+
+        first = infos[0]
+        for info, db in zip(infos[1:], self.databases[1:]):
+            for k in _UNDISTORT_KEYS:
+                if info.get(k) != first.get(k):
+                    raise ValueError(
+                        f"Inconsistent undistortion config across databases. "
+                        f"Field '{k}' is {first.get(k)!r} in "
+                        f"{self.databases[0].path} but {info.get(k)!r} in "
+                        f"{db.path}. All databases must be built with the same "
+                        f"undistortion settings."
+                    )
+        return {k: first.get(k) for k in _UNDISTORT_KEYS}
+
+    @staticmethod
+    def _build_undistorter(cfg: Dict[str, Any]) -> PolyFisheyeUndistorter:
+        out_w = int(cfg.get("out_width") or 1024)
+        out_h = int(cfg.get("out_height") or 768)
+        fov = float(cfg.get("fov") or 90.0)
+        calib = cfg.get("calibration_file")
+        if calib and os.path.isfile(calib):
+            logger.info(
+                f"VPRDetector: building undistorter from {calib} "
+                f"({out_w}x{out_h}, FOV {fov}°)"
+            )
+            return PolyFisheyeUndistorter.from_yaml(
+                calib, out_w=out_w, out_h=out_h, fov_deg=fov
+            )
+        if calib:
+            logger.warning(
+                f"VPRDetector: calibration_file '{calib}' not found, "
+                f"falling back to PolyFisheyeUndistorter defaults"
+            )
+        else:
+            logger.info(
+                f"VPRDetector: building undistorter with default S20 calibration "
+                f"({out_w}x{out_h}, FOV {fov}°)"
+            )
+        return PolyFisheyeUndistorter.from_defaults(
+            out_w=out_w, out_h=out_h, fov_deg=fov
+        )
 
     # ------------------------------------------------------------------
     # Image -> descriptor
@@ -247,14 +351,39 @@ class VPRDetector:
             return image.convert("RGB")
         if isinstance(image, np.ndarray):
             return Image.fromarray(image).convert("RGB")
+        if isinstance(image, (bytes, bytearray, memoryview)):
+            return Image.open(io.BytesIO(bytes(image))).convert("RGB")
         raise TypeError(
             f"Unsupported image input type: {type(image).__name__}. "
-            f"Expected path, PIL.Image, or numpy.ndarray."
+            f"Expected path, PIL.Image, numpy.ndarray or bytes."
         )
 
     def encode(self, image: ImageInput) -> np.ndarray:
-        """Compute the (1, D) float32 descriptor for one query image."""
+        """Compute the (1, D) float32 descriptor for one query image.
+
+        NOTE: This path does **not** apply fisheye undistortion -- it assumes
+        the input is already in the same image space as the database (e.g.
+        one of the JPGs in ``database_image_paths.txt``). For live raw
+        fisheye frames from ROS, use ``encode_raw_bytes`` / ``query_raw_bytes``.
+        """
         pil = self._to_pil(image)
+        tensor = self.transform(pil).unsqueeze(0).to(self.device)
+        with torch.inference_mode():
+            desc = self.model(tensor).cpu().numpy()
+        return desc.astype("float32", copy=False)
+
+    def encode_raw_bytes(self, jpeg_bytes: bytes) -> np.ndarray:
+        """Compute a descriptor from raw camera JPEG bytes.
+
+        Applies the same fisheye undistortion as ``vpr_preprocess.py`` when the
+        databases were built with ``--undistort_fisheye``. Without undistortion
+        in the databases this just decodes the JPEG and runs the model.
+        """
+        if self.undistorter is not None:
+            rgb = self.undistorter.undistort_bytes(jpeg_bytes)
+            pil = Image.fromarray(rgb).convert("RGB")
+        else:
+            pil = Image.open(io.BytesIO(jpeg_bytes)).convert("RGB")
         tensor = self.transform(pil).unsqueeze(0).to(self.device)
         with torch.inference_mode():
             desc = self.model(tensor).cpu().numpy()
@@ -271,25 +400,8 @@ class VPRDetector:
         local_idx = int(global_idx - self._db_starts[db_id])
         return db_id, local_idx
 
-    def query(self, image: ImageInput, top_k: int = 1) -> List[dict]:
-        """Return the ``top_k`` best matches across all databases.
-
-        Each result is a dict with the following keys:
-            rank        int     -- 0 == best
-            distance    float   -- L2 distance in descriptor space
-            database    str     -- absolute path to the source database dir
-            image_rel   str     -- path as stored in database_image_paths.txt
-            image_path  str     -- absolute path on disk (database + image_rel)
-            x, y, z     float   -- coordinates from database_poses.npy
-            timestamp   int     -- bag-message timestamp (ns)
-        """
-        if top_k < 1:
-            raise ValueError("top_k must be >= 1")
-        top_k = min(top_k, int(self._db_starts[-1]))
-
-        desc = self.encode(image)                              # (1, D)
+    def _search(self, desc: np.ndarray, top_k: int) -> List[dict]:
         distances, indices = self.index.search(desc, top_k)    # (1, top_k)
-
         results: List[dict] = []
         for rank, (gidx, dist) in enumerate(zip(indices[0], distances[0])):
             gidx = int(gidx)
@@ -311,6 +423,37 @@ class VPRDetector:
             })
         return results
 
+    def query(self, image: ImageInput, top_k: int = 1) -> List[dict]:
+        """Return the ``top_k`` best matches across all databases.
+
+        ``image`` is treated as already-prepared (same space as the database
+        images). Each result is a dict with the following keys:
+            rank        int     -- 0 == best
+            distance    float   -- L2 distance in descriptor space
+            database    str     -- absolute path to the source database dir
+            image_rel   str     -- path as stored in database_image_paths.txt
+            image_path  str     -- absolute path on disk (database + image_rel)
+            x, y, z     float   -- coordinates from database_poses.npy
+            timestamp   int     -- bag-message timestamp (ns)
+        """
+        if top_k < 1:
+            raise ValueError("top_k must be >= 1")
+        top_k = min(top_k, int(self._db_starts[-1]))
+        desc = self.encode(image)                              # (1, D)
+        return self._search(desc, top_k)
+
+    def query_raw_bytes(self, jpeg_bytes: bytes, top_k: int = 1) -> List[dict]:
+        """Same as ``query`` but takes raw camera JPEG bytes.
+
+        Applies the same fisheye undistortion the databases were built with.
+        Primary entry point for live ROS ``CompressedImage`` frames.
+        """
+        if top_k < 1:
+            raise ValueError("top_k must be >= 1")
+        top_k = min(top_k, int(self._db_starts[-1]))
+        desc = self.encode_raw_bytes(jpeg_bytes)
+        return self._search(desc, top_k)
+
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -321,8 +464,8 @@ def parse_args():
         description="Match a query image against one or more VPR databases.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--image", type=str, required=True,
-                        help="Path to the query image")
+    parser.add_argument("--image", type=str, default=None,
+                        help="Path to the query image (one-shot mode)")
     parser.add_argument("--databases", type=str, nargs="+", required=True,
                         help="One or more VPR database directories "
                              "(each produced by vpr_preprocess.py)")
@@ -335,6 +478,11 @@ def parse_args():
                              "(use the same value as in vpr_preprocess.py)")
     parser.add_argument("--json", action="store_true",
                         help="Print results as JSON on stdout (and silence logs)")
+    parser.add_argument("--serve", action="store_true",
+                        help="Run as a long-lived stdin/stdout JSON service. "
+                             "Load model+databases once, then process "
+                             "newline-delimited JSON requests from stdin "
+                             "(see _serve_loop docstring for the protocol).")
     return parser.parse_args()
 
 
@@ -371,10 +519,112 @@ def _print_topk(results):
         )
 
 
+def _emit(obj: dict) -> None:
+    """Write one newline-delimited JSON event to stdout and flush."""
+    sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
+    sys.stdout.flush()
+
+
+def _serve_loop(detector: VPRDetector) -> None:
+    """Long-lived stdin/stdout JSON RPC for live VPR queries.
+
+    Protocol (one JSON object per line, in both directions):
+
+    Server -> client (once at startup, after databases+model are ready)::
+
+        {"event": "ready",
+         "method": "...",
+         "descriptor_dim": ...,
+         "image_size": [...],
+         "undistort": true/false,
+         "databases": [{"path": "...", "num_images": ...}, ...]}
+
+    Client -> server::
+
+        {"id": "<opaque-string>",
+         "image_path": "/tmp/live.jpg",       # raw camera JPEG bytes on disk
+         "top_k": 1}
+
+    Either ``image_path`` (raw JPEG bytes on disk; undistortion is applied
+    if the databases were built with it) **or** ``image_processed_path``
+    (already in the database's image space; undistortion is NOT applied)
+    must be set.
+
+    Server -> client (per request)::
+
+        {"id": "<echoed>", "results": [...]}   # success
+        {"id": "<echoed>", "error": "..."}     # failure
+    """
+    _emit({
+        "event": "ready",
+        "method": detector.method,
+        "descriptor_dim": detector.descriptor_dim,
+        "image_size": list(detector.image_size) if detector.image_size else None,
+        "undistort": detector.undistorter is not None,
+        "databases": [
+            {"path": db.path, "num_images": db.num_images}
+            for db in detector.databases
+        ],
+    })
+
+    for raw_line in sys.stdin:
+        line = raw_line.strip()
+        if not line:
+            continue
+        req_id: Any = None
+        try:
+            req = json.loads(line)
+            req_id = req.get("id")
+            top_k = int(req.get("top_k", 1))
+            image_path = req.get("image_path")
+            processed_path = req.get("image_processed_path")
+            if not image_path and not processed_path:
+                raise ValueError(
+                    "request needs 'image_path' (raw bytes) or "
+                    "'image_processed_path' (already in database space)"
+                )
+
+            t0 = time.time()
+            if image_path:
+                with open(image_path, "rb") as f:
+                    jpeg = f.read()
+                results = detector.query_raw_bytes(jpeg, top_k=top_k)
+            else:
+                results = detector.query(processed_path, top_k=top_k)
+            elapsed_ms = (time.time() - t0) * 1000.0
+
+            _emit({
+                "id": req_id,
+                "results": results,
+                "elapsed_ms": round(elapsed_ms, 2),
+            })
+        except Exception as e:
+            _emit({
+                "id": req_id,
+                "error": str(e),
+                "traceback": traceback.format_exc(),
+            })
+
+
 def main():
     args = parse_args()
-    _configure_logging(quiet=args.json)
 
+    if args.serve:
+        # 服务模式不能让 loguru 写到 stdout，否则会污染协议帧
+        logger.remove()
+        logger.add(sys.stderr, level="INFO",
+                   format="{time:%Y-%m-%d %H:%M:%S} | {level} | {message}")
+        detector = VPRDetector(
+            database_dirs=args.databases,
+            device=args.device,
+            image_size=args.image_size,
+        )
+        _serve_loop(detector)
+        return
+
+    _configure_logging(quiet=args.json)
+    if not args.image:
+        raise SystemExit("--image is required when not running in --serve mode")
     if not os.path.isfile(args.image):
         raise FileNotFoundError(f"Image not found: {args.image}")
 
