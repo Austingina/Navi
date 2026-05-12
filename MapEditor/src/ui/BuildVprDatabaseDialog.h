@@ -36,6 +36,9 @@ struct BuildVprParams {
     QString device           = "cuda";
     int     batchSize        = 4;
     int     numWorkers       = 4;
+    /// 提取出的 JPG 缓存目录；空时由 MainWindow 决定默认值
+    /// (一般为 ~/.vpr/<projectName>/<submapId>/)
+    QString imageCacheDir;
 };
 
 class BuildVprDatabaseDialog : public QDialog {
@@ -43,6 +46,7 @@ class BuildVprDatabaseDialog : public QDialog {
 public:
     BuildVprDatabaseDialog(const QString& submapId,
                            const QString& outputDir,
+                           const QString& defaultImageCacheDir,
                            const BuildVprParams& initial,
                            QWidget* parent = nullptr);
     ~BuildVprDatabaseDialog() override;
@@ -60,6 +64,7 @@ private slots:
     void onBrowseBag();
     void onBrowsePose();
     void onBrowseCalibration();
+    void onBrowseImageCache();
     void onUndistortToggled(bool enabled);
     void onRun();
     void onStop();
@@ -93,8 +98,10 @@ private:
     QComboBox*       cmbDevice_     = nullptr;
     QSpinBox*        spinBatch_     = nullptr;
     QSpinBox*        spinWorkers_   = nullptr;
-    QLineEdit*       editOutputDir_ = nullptr;
-    QPlainTextEdit*  logView_       = nullptr;
+    QLineEdit*       editOutputDir_     = nullptr;
+    QLineEdit*       editImageCacheDir_ = nullptr;
+    QString          defaultImageCacheDir_;
+    QPlainTextEdit*  logView_           = nullptr;
     QPushButton*     btnRun_        = nullptr;
     QPushButton*     btnStop_       = nullptr;
     QPushButton*     btnClose_      = nullptr;

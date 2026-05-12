@@ -2,3 +2,4 @@
 *.pcd
 *.yaml
 *.pgm
+vpr/

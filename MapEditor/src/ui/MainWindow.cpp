@@ -1161,11 +1161,18 @@ void MainWindow::onBuildVprDatabase(const QString& smId) {
         return;
     }
 
-    // 每个 submap 的 VPR 数据库统一放在 <projectDir>/vpr/<submapId>/
+    // 数据库 (.npy/.npz/.txt/.log) 放在工程目录下，detect 直接吃这个目录
     QString outputDir = QDir(currentProjectDir_).absoluteFilePath("vpr/" + smId);
 
+    // 图片缓存默认放在用户目录的 ~/.vpr/<projectName>/<submapId>/
+    // —— 这样工程目录保持精简，缓存可独立清理
+    QString projectName = QDir(currentProjectDir_).dirName();
+    if (projectName.isEmpty()) projectName = "project";
+    QString defaultCacheDir = QDir::home().absoluteFilePath(
+        QString(".vpr/%1/%2").arg(projectName, smId));
+
     BuildVprParams params = lastBuildVprParams_.value(smId, BuildVprParams{});
-    BuildVprDatabaseDialog dlg(smId, outputDir, params, this);
+    BuildVprDatabaseDialog dlg(smId, outputDir, defaultCacheDir, params, this);
     dlg.exec();
 
     // 不论成功失败都记下用户填的参数，下次再开免去重填

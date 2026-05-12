@@ -10,15 +10,18 @@ It merges:
 
 Output (under ``--output_dir``)::
 
-    database/                     # extracted JPGs, names @x@y@z@ts@.jpg
     database_descriptors.npy      # (N, D) float32 feature database
     database_poses.npy            # (N, 4) float64 -- [x, y, z, ts_ns]
-    database_image_paths.txt      # one relative image path per line
+    database_image_paths.txt      # one path per line (relative if the image
+                                  # cache lives inside output_dir, absolute
+                                  # otherwise)
     database_meta.npz             # method, descriptor_dim, num_database
 
-The second module (detection / recognition) only needs to load
-``database_descriptors.npy`` + ``database_poses.npy`` to match live images
-against the pre-built database.
+By default, the extracted JPGs are written under ``<output_dir>/database/``
+so the directory is self-contained. For larger deployments where you don't
+want the keep the per-frame images next to the (tiny) descriptor files, pass
+``--image_cache_dir`` to redirect them elsewhere (e.g. ``~/.vpr/<scene>``).
+The downstream detection module only needs the four files above.
 
 Example
 -------
@@ -93,7 +96,9 @@ def extract_database_from_ros1(args):
     from rosbags.rosbag1 import Reader
     from rosbags.typesys import Stores, get_typestore
 
-    db_dir = os.path.join(args.output_dir, "database")
+    # main() guarantees args.image_cache_dir is set (defaults to
+    # <output_dir>/database for backward compatibility)
+    db_dir = args.image_cache_dir
     os.makedirs(db_dir, exist_ok=True)
 
     poses = load_poses_from_imgpose_file(args.pose_file, prefix="left")
@@ -271,9 +276,16 @@ def extract_descriptors(args, db_dir):
 
     np.save(descriptors_path, descriptors)
     np.save(poses_path, poses)
+    # 写图片路径：缓存若在 output_dir 内则写相对路径（方便整目录搬迁），
+    # 否则写绝对路径（缓存可能在 ~/.vpr/... 等独立位置）
+    abs_out = os.path.abspath(args.output_dir)
     with open(paths_path, "w") as f:
         for p in image_paths:
-            f.write(os.path.relpath(p, args.output_dir) + "\n")
+            abs_p = os.path.abspath(p)
+            if abs_p == abs_out or abs_p.startswith(abs_out + os.sep):
+                f.write(os.path.relpath(abs_p, abs_out) + "\n")
+            else:
+                f.write(abs_p + "\n")
     np.savez(
         meta_path,
         method=np.array(args.method),
@@ -309,7 +321,14 @@ def parse_args():
 
     # Output
     parser.add_argument("--output_dir", type=str, required=True,
-                        help="Directory to write database/ + .npy outputs")
+                        help="Directory to write the descriptor database "
+                             "(.npy/.npz/.txt/.log)")
+    parser.add_argument("--image_cache_dir", type=str, default=None,
+                        help="Directory for the extracted JPGs. "
+                             "Default: <output_dir>/database. "
+                             "Pass a path outside output_dir "
+                             "(e.g. ~/.vpr/<scene>) to keep the descriptor "
+                             "database lean.")
 
     # Sampling
     parser.add_argument("--db_distance", type=float, default=1.0,
@@ -362,17 +381,29 @@ def _configure_logging(output_dir):
 
 def main():
     args = parse_args()
+    args.output_dir = os.path.abspath(os.path.expanduser(args.output_dir))
     os.makedirs(args.output_dir, exist_ok=True)
     _configure_logging(args.output_dir)
-    logger.info(f"Arguments: {vars(args)}")
 
-    db_dir = os.path.join(args.output_dir, "database")
+    # 解析图片缓存目录：未指定时回退到 <output_dir>/database (向后兼容)
+    if args.image_cache_dir:
+        args.image_cache_dir = os.path.abspath(
+            os.path.expanduser(args.image_cache_dir)
+        )
+    else:
+        args.image_cache_dir = os.path.join(args.output_dir, "database")
+
+    logger.info(f"Arguments: {vars(args)}")
+    logger.info(f"Image cache dir : {args.image_cache_dir}")
+    logger.info(f"Descriptor dir  : {args.output_dir}")
+
     if args.skip_extraction:
-        if not os.path.isdir(db_dir):
+        if not os.path.isdir(args.image_cache_dir):
             raise FileNotFoundError(
-                f"--skip_extraction set but {db_dir} does not exist"
+                f"--skip_extraction set but {args.image_cache_dir} does not exist"
             )
-        logger.info(f"Skipping image extraction; reusing {db_dir}")
+        logger.info(f"Skipping image extraction; reusing {args.image_cache_dir}")
+        db_dir = args.image_cache_dir
     else:
         db_dir = extract_database_from_ros1(args)
 

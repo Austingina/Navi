@@ -33,11 +33,15 @@ namespace me {
 
 BuildVprDatabaseDialog::BuildVprDatabaseDialog(const QString& submapId,
                                                 const QString& outputDir,
+                                                const QString& defaultImageCacheDir,
                                                 const BuildVprParams& initial,
                                                 QWidget* parent)
-    : QDialog(parent), submapId_(submapId), outputDir_(outputDir) {
+    : QDialog(parent),
+      submapId_(submapId),
+      outputDir_(outputDir),
+      defaultImageCacheDir_(defaultImageCacheDir) {
     setWindowTitle(QString("构建 VPR 数据库 — %1").arg(submapId));
-    setMinimumSize(760, 640);
+    setMinimumSize(760, 660);
     buildUI();
     populateFromParams(initial);
 }
@@ -135,12 +139,32 @@ void BuildVprDatabaseDialog::buildUI() {
     perfRow->addStretch();
     pform->addRow("性能:", perfRow);
 
+    QFont mono = font();
+    mono.setFamily("monospace");
+
     editOutputDir_ = new QLineEdit(outputDir_);
     editOutputDir_->setReadOnly(true);
-    QFont mono = editOutputDir_->font();
-    mono.setFamily("monospace");
     editOutputDir_->setFont(mono);
-    pform->addRow("输出目录:", editOutputDir_);
+    editOutputDir_->setToolTip(
+        QStringLiteral("数据库文件 (.npy / .npz / .txt / .log) 的存放路径。\n"
+                       "由 MapEditor 根据工程目录与 submap ID 自动决定。"));
+    pform->addRow("数据库目录:", editOutputDir_);
+
+    auto* cacheRow = new QHBoxLayout();
+    editImageCacheDir_ = new QLineEdit();
+    editImageCacheDir_->setFont(mono);
+    editImageCacheDir_->setToolTip(
+        QStringLiteral("提取出的 JPG 缓存目录。\n"
+                       "默认放在用户目录下的 ~/.vpr/<工程名>/<submapId>/，\n"
+                       "这样工程目录里只保留检测所需的描述符数据。\n"
+                       "如需放到其他磁盘可在此修改。"));
+    auto* btnCache = new QPushButton("浏览...");
+    btnCache->setFixedWidth(80);
+    cacheRow->addWidget(editImageCacheDir_);
+    cacheRow->addWidget(btnCache);
+    connect(btnCache, &QPushButton::clicked, this,
+            &BuildVprDatabaseDialog::onBrowseImageCache);
+    pform->addRow("图片缓存目录:", cacheRow);
 
     root->addWidget(paramsBox);
 
@@ -187,6 +211,10 @@ void BuildVprDatabaseDialog::populateFromParams(const BuildVprParams& p) {
     if (int idx = cmbDevice_->findText(p.device); idx >= 0) cmbDevice_->setCurrentIndex(idx);
     spinBatch_->setValue(p.batchSize);
     spinWorkers_->setValue(p.numWorkers);
+    // 历史值优先；空时回退到调用方提供的默认（通常 ~/.vpr/<projectName>/<smId>/）
+    editImageCacheDir_->setText(
+        p.imageCacheDir.isEmpty() ? defaultImageCacheDir_ : p.imageCacheDir
+    );
     onUndistortToggled(p.undistortFisheye);
 }
 
@@ -205,6 +233,7 @@ BuildVprParams BuildVprDatabaseDialog::currentParams() const {
     p.device           = cmbDevice_->currentText();
     p.batchSize        = spinBatch_->value();
     p.numWorkers       = spinWorkers_->value();
+    p.imageCacheDir    = editImageCacheDir_->text().trimmed();
     return p;
 }
 
@@ -242,6 +271,15 @@ void BuildVprDatabaseDialog::onBrowseCalibration() {
     if (!path.isEmpty()) editCalib_->setText(path);
 }
 
+void BuildVprDatabaseDialog::onBrowseImageCache() {
+    QString start = editImageCacheDir_->text().trimmed();
+    if (start.isEmpty()) start = defaultImageCacheDir_;
+    QString dir = QFileDialog::getExistingDirectory(this,
+        "选择图片缓存目录", start,
+        QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
+    if (!dir.isEmpty()) editImageCacheDir_->setText(dir);
+}
+
 void BuildVprDatabaseDialog::onUndistortToggled(bool enabled) {
     spinOutW_->setEnabled(enabled);
     spinOutH_->setEnabled(enabled);
@@ -253,7 +291,10 @@ bool BuildVprDatabaseDialog::validate(QString* err) const {
     auto fail = [&](const QString& s) { if (err) *err = s; return false; };
 
     if (outputDir_.isEmpty())
-        return fail("输出目录未设置（请先保存工程）");
+        return fail("数据库目录未设置（请先保存工程）");
+
+    if (editImageCacheDir_->text().trimmed().isEmpty())
+        return fail("请填写图片缓存目录");
 
     QString bag = editBag_->text().trimmed();
     if (bag.isEmpty())              return fail("请选择 ROS1 bag 文件");
@@ -277,15 +318,16 @@ bool BuildVprDatabaseDialog::validate(QString* err) const {
 QStringList BuildVprDatabaseDialog::buildArgList(const QString& scriptPath) const {
     QStringList args;
     args << scriptPath
-         << "--bag_path"    << editBag_->text().trimmed()
-         << "--pose_file"   << editPose_->text().trimmed()
-         << "--image_topic" << editTopic_->text().trimmed()
-         << "--output_dir"  << outputDir_
-         << "--db_distance" << QString::number(spinDbDist_->value(), 'f', 3)
-         << "--method"      << cmbMethod_->currentText()
-         << "--device"      << cmbDevice_->currentText()
-         << "--batch_size"  << QString::number(spinBatch_->value())
-         << "--num_workers" << QString::number(spinWorkers_->value());
+         << "--bag_path"        << editBag_->text().trimmed()
+         << "--pose_file"       << editPose_->text().trimmed()
+         << "--image_topic"     << editTopic_->text().trimmed()
+         << "--output_dir"      << outputDir_
+         << "--image_cache_dir" << editImageCacheDir_->text().trimmed()
+         << "--db_distance"     << QString::number(spinDbDist_->value(), 'f', 3)
+         << "--method"          << cmbMethod_->currentText()
+         << "--device"          << cmbDevice_->currentText()
+         << "--batch_size"      << QString::number(spinBatch_->value())
+         << "--num_workers"     << QString::number(spinWorkers_->value());
 
     if (chkUndistort_->isChecked()) {
         args << "--undistort_fisheye"
