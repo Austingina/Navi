@@ -36,10 +36,12 @@ Example
 """
 
 import argparse
+import json
 import os
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from datetime import datetime
 from glob import glob
 
 import numpy as np
@@ -273,6 +275,7 @@ def extract_descriptors(args, db_dir):
     poses_path = os.path.join(args.output_dir, "database_poses.npy")
     paths_path = os.path.join(args.output_dir, "database_image_paths.txt")
     meta_path = os.path.join(args.output_dir, "database_meta.npz")
+    info_path = os.path.join(args.output_dir, "database_build_info.json")
 
     np.save(descriptors_path, descriptors)
     np.save(poses_path, poses)
@@ -294,10 +297,41 @@ def extract_descriptors(args, db_dir):
         image_size=np.array(args.image_size if args.image_size else [], dtype=np.int64),
     )
 
+    # 人类可读 + 跨语言可读的构造信息（C++ GUI 等下游消费者用）
+    build_info = {
+        "built_at":          datetime.now().isoformat(timespec="seconds"),
+        "method":            args.method,
+        "descriptor_dim":    int(descriptor_dim),
+        "num_database":      int(len(image_paths)),
+        "image_size":        list(args.image_size) if args.image_size else None,
+        "output_dir":        args.output_dir,
+        "image_cache_dir":   args.image_cache_dir,
+        "bag_path":          args.bag_path,
+        "pose_file":         args.pose_file,
+        "image_topic":       args.image_topic,
+        "db_distance":       float(args.db_distance),
+        "undistort_fisheye": bool(args.undistort_fisheye),
+        "calibration_file":  args.calibration_file,
+        "out_width":         int(args.out_width),
+        "out_height":        int(args.out_height),
+        "fov":               float(args.fov),
+        "device":            args.device,
+        "batch_size":        int(args.batch_size),
+        "num_workers":       int(args.num_workers),
+        "xy_min":            poses[:, :2].min(axis=0).tolist(),
+        "xy_max":            poses[:, :2].max(axis=0).tolist(),
+        "z_min":             float(poses[:, 2].min()),
+        "z_max":             float(poses[:, 2].max()),
+        "descriptor_extraction_seconds": float(time.time() - t0),
+    }
+    with open(info_path, "w") as f:
+        json.dump(build_info, f, indent=2, ensure_ascii=False)
+
     logger.info(f"Saved descriptors -> {descriptors_path} (shape={descriptors.shape})")
     logger.info(f"Saved poses       -> {poses_path} (shape={poses.shape})")
     logger.info(f"Saved image paths -> {paths_path}")
     logger.info(f"Saved metadata    -> {meta_path}")
+    logger.info(f"Saved build info  -> {info_path}")
 
 
 # ---------------------------------------------------------------------------

@@ -3,6 +3,7 @@
 #include "ui/AlignSubmapDialog.h"
 #include "ui/BuildVprDatabaseDialog.h"
 #include "ui/PortalEditorDialog.h"
+#include "ui/VprDatabaseInfoDialog.h"
 
 #include <QMenuBar>
 #include <QToolBar>
@@ -261,6 +262,8 @@ void MainWindow::connectSignals() {
             this, &MainWindow::onAlignSubmap);
     connect(submapPanel_, &SubmapPanel::buildVprDatabaseRequested,
             this, &MainWindow::onBuildVprDatabase);
+    connect(submapPanel_, &SubmapPanel::viewVprDatabaseRequested,
+            this, &MainWindow::onViewVprDatabase);
         connect(submapPanel_, &SubmapPanel::setDefaultSubmapRequested,
             this, &MainWindow::onSetDefaultSubmap);
     connect(submapPanel_, &SubmapPanel::setParentSubmapRequested,
@@ -1171,7 +1174,16 @@ void MainWindow::onBuildVprDatabase(const QString& smId) {
     QString defaultCacheDir = QDir::home().absoluteFilePath(
         QString(".vpr/%1/%2").arg(projectName, smId));
 
-    BuildVprParams params = lastBuildVprParams_.value(smId, BuildVprParams{});
+    // 优先用本次会话内缓存；否则尝试从上次构建留下的 build_info.json 还原
+    // 这样跨会话点 "更新" 时也能预填上次的参数
+    BuildVprParams params;
+    if (lastBuildVprParams_.contains(smId)) {
+        params = lastBuildVprParams_.value(smId);
+    } else {
+        VprDatabaseInfo info = loadVprDatabaseInfo(outputDir);
+        if (info.valid) params = toBuildVprParams(info);
+    }
+
     BuildVprDatabaseDialog dlg(smId, outputDir, defaultCacheDir, params, this);
     dlg.exec();
 
@@ -1180,7 +1192,24 @@ void MainWindow::onBuildVprDatabase(const QString& smId) {
 
     if (dlg.ranSuccessfully()) {
         statusLabel_->setText(QString("VPR 数据库已生成: %1").arg(outputDir));
+        submapPanel_->rebuild(&project_);  // 刷新菜单项 (构建 → 更新)
     }
+}
+
+void MainWindow::onViewVprDatabase(const QString& smId) {
+    if (!project_.submap(smId)) return;
+    if (currentProjectDir_.isEmpty()) {
+        QMessageBox::warning(this, "提示", "请先保存工程");
+        return;
+    }
+    QString outputDir = QDir(currentProjectDir_).absoluteFilePath("vpr/" + smId);
+    if (!QFileInfo(outputDir + "/database_meta.npz").exists()) {
+        QMessageBox::information(this, "尚未构建",
+            QString("Submap「%1」还未构建 VPR 数据库。").arg(smId));
+        return;
+    }
+    VprDatabaseInfoDialog dlg(smId, outputDir, this);
+    dlg.exec();
 }
 
 QVector<MarkerVertex> MainWindow::buildWireframeBox(

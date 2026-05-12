@@ -7,6 +7,7 @@
 #include <QInputDialog>
 #include <QDataStream>
 #include <QCheckBox>
+#include <QFile>
 
 namespace me {
 
@@ -468,9 +469,28 @@ void SubmapPanel::onContextMenu(const QPoint& pos) {
         menu.addAction("🚪 添加传送门", [this, smId]() {
             emit addPortalRequested(smId);
         });
-        menu.addAction("🧠 构建 VPR 数据库...", [this, smId]() {
-            emit buildVprDatabaseRequested(smId);
-        });
+
+        // 如果当前工程目录下已经存在该 submap 的 VPR 数据库，则把
+        // "构建" 改成 "更新"，并额外提供 "查看" 入口
+        bool hasVprDb = false;
+        if (project_ && !project_->projectDir().isEmpty()) {
+            QString metaPath = QString("%1/vpr/%2/database_meta.npz")
+                                   .arg(project_->projectDir(), smId);
+            hasVprDb = QFile::exists(metaPath);
+        }
+        if (hasVprDb) {
+            menu.addAction("🧠 更新 VPR 数据库...", [this, smId]() {
+                emit buildVprDatabaseRequested(smId);
+            });
+            menu.addAction("📊 查看 VPR 数据库...", [this, smId]() {
+                emit viewVprDatabaseRequested(smId);
+            });
+        } else {
+            menu.addAction("🧠 构建 VPR 数据库...", [this, smId]() {
+                emit buildVprDatabaseRequested(smId);
+            });
+        }
+
         menu.addSeparator();
         menu.addAction("🌳 显示 TF 树", [this]() {
             emit showTfTreeRequested();

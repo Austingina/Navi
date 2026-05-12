@@ -78,6 +78,7 @@ signals:
     void addPortalRequested(const QString& submapId);
     void alignSubmapRequested(const QString& submapId);
     void buildVprDatabaseRequested(const QString& submapId);
+    void viewVprDatabaseRequested(const QString& submapId);
     void addRouteRequested();
     void removeRouteRequested(const QString& routeName);
     void renameRouteRequested(const QString& oldName, const QString& newName);

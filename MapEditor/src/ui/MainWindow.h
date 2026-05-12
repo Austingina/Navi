@@ -61,6 +61,7 @@ private slots:
     void onAddPortal(const QString& smId);
     void onAlignSubmap(const QString& smId);
     void onBuildVprDatabase(const QString& smId);
+    void onViewVprDatabase(const QString& smId);
     void onSetDefaultSubmap(const QString& id);
     void onSetParentSubmap(const QString& submapId, const QString& parentId);
     void onShowTfTree();
