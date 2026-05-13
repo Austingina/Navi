@@ -9,7 +9,7 @@ SESSION="navi"
 tmux new-session -d -s $SESSION "bash $NAVI_SCRIPT_DIR/start_r1pro.bash; exec bash"
 
 # 水平分割面板并运行 Lidar
-tmux split-window -h "bash $NAVI_SCRIPT_DIR/start_navigation.launch; exec bash"
+tmux split-window -h "bash $NAVI_SCRIPT_DIR/start_navigation.bash; exec bash"
 
 # 在左侧面板垂直分割并运行 Localization
 tmux select-pane -t 0

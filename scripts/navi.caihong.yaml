@@ -18,7 +18,7 @@ windows:
           - bash $NAVI_SCRIPT_DIR/start_mcp.sh -m $NAVI_ROOT_DIR/maps/408/408.json
       - shell_command:
           - sleep 40
-          - bash $NAVI_SCRIPT_DIR/start_navigation.launch
+          - bash $NAVI_SCRIPT_DIR/start_navigation.bash
 
   - window_name: monitoring
     panes:
