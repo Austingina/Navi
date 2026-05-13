@@ -48,6 +48,104 @@ _DEFAULT_VPR_DIR = os.path.abspath(
 )
 
 
+# 与构建数据库时使用的 R1Pro 图像规格保持一致：先去畸变，再中心裁剪到 1024x768。
+# 这样在线查询的图像几何尺寸与离线建库的图像保持一致，否则会显著掉精度。
+_VPR_QUERY_TARGET_W = 1024
+_VPR_QUERY_TARGET_H = 768
+
+# 延迟导入：cv2 / numpy / undistort_r1pro_image 都依赖于本进程能装载 OpenCV，
+# 一次性失败就关掉预处理，让查询退化为 "原图直接送" 的旧行为。
+_preprocess_init_lock = threading.Lock()
+_preprocess_initialized = False
+_preprocess_enabled = False
+_cv2 = None
+_np = None
+_undistort_r1pro_image = None
+
+
+def _ensure_preprocess_loaded() -> bool:
+    """加载 cv2 / numpy / undistort_r1pro_image，返回是否可用。"""
+    global _preprocess_initialized, _preprocess_enabled
+    global _cv2, _np, _undistort_r1pro_image
+    if _preprocess_initialized:
+        return _preprocess_enabled
+    with _preprocess_init_lock:
+        if _preprocess_initialized:
+            return _preprocess_enabled
+        try:
+            import cv2  # type: ignore
+            import numpy as np  # type: ignore
+            if _DEFAULT_VPR_DIR not in sys.path:
+                sys.path.insert(0, _DEFAULT_VPR_DIR)
+            from build_database_3d import undistort_r1pro_image  # type: ignore
+
+            _cv2 = cv2
+            _np = np
+            _undistort_r1pro_image = undistort_r1pro_image
+            _preprocess_enabled = True
+            logger.info(
+                "VprBootstrap: 已启用查询图像预处理（去畸变 + 中心裁剪到 %dx%d）",
+                _VPR_QUERY_TARGET_W, _VPR_QUERY_TARGET_H,
+            )
+        except Exception as e:
+            _preprocess_enabled = False
+            logger.warning(
+                "VprBootstrap: 无法加载 undistort_r1pro_image (%s)，"
+                "查询图像将直接送给 VPR（不去畸变 / 不裁剪），可能影响匹配精度。",
+                e,
+            )
+        finally:
+            _preprocess_initialized = True
+    return _preprocess_enabled
+
+
+def _undistort_and_center_crop(
+    jpeg_bytes: bytes,
+    target_w: int = _VPR_QUERY_TARGET_W,
+    target_h: int = _VPR_QUERY_TARGET_H,
+) -> bytes:
+    """对 JPEG 字节流去畸变并中心裁剪到 target_w x target_h，返回新的 JPEG 字节。
+
+    若任一步失败（解码失败 / 尺寸过小 / 编码失败），返回原始 jpeg_bytes，
+    保证在线查询路径不会因为预处理异常而整体失败。
+    """
+    if not _ensure_preprocess_loaded():
+        return jpeg_bytes
+
+    cv2 = _cv2
+    np = _np
+    try:
+        buf = np.frombuffer(jpeg_bytes, dtype=np.uint8)
+        img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+        if img is None:
+            logger.warning("VprBootstrap: JPEG 解码失败，预处理跳过")
+            return jpeg_bytes
+
+        undistorted = _undistort_r1pro_image(img)
+        h, w = undistorted.shape[:2]
+        if w < target_w or h < target_h:
+            logger.warning(
+                "VprBootstrap: 去畸变后图像尺寸 %dx%d 小于目标 %dx%d，跳过裁剪",
+                w, h, target_w, target_h,
+            )
+            cropped = undistorted
+        else:
+            x0 = (w - target_w) // 2
+            y0 = (h - target_h) // 2
+            cropped = undistorted[y0:y0 + target_h, x0:x0 + target_w]
+
+        ok, enc = cv2.imencode(".jpg", cropped, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+        if not ok:
+            logger.warning("VprBootstrap: JPEG 编码失败，回退到原始字节")
+            return jpeg_bytes
+        return enc.tobytes()
+    except Exception as e:
+        logger.warning(
+            "VprBootstrap: 查询图像预处理异常 (%s)，回退到原始字节", e,
+        )
+        return jpeg_bytes
+
+
 class VprBootstrapError(RuntimeError):
     """Raised when the VPR helper cannot complete a request."""
 
@@ -385,11 +483,15 @@ class VprBootstrap:
         if self._tmpdir is None:
             return None
 
+        # 与离线建库一致的预处理：先按 R1Pro 内参去畸变，再中心裁剪到 1024x768。
+        # 失败会回退为原始 jpeg_bytes，不会阻断查询。
+        processed_bytes = _undistort_and_center_crop(jpeg_bytes)
+
         # 写到子进程可读的临时文件（避免 stdin 内塞二进制数据，协议是行 JSON）
         # 注意：暂不删除该临时文件，便于离线 debug；进程退出时 self._tmpdir 会整体清理。
         path = os.path.join(self._tmpdir.name, f"q_{uuid.uuid4().hex}.jpg")
         with open(path, "wb") as f:
-            f.write(jpeg_bytes)
+            f.write(processed_bytes)
         logger.warning(f"write image to tmp file: {path}")
         resp = self._send_request(
             {"image_path": path, "top_k": top_k},
@@ -410,6 +512,8 @@ class VprBootstrap:
                 "VprBootstrap: 匹配到未知 database '%s'", best.get("database"),
             )
             return None
+
+        logger.warning(f"locate result: {best.get('image_path')}")
         return {
             "submap_id": submap_id,
             "distance": best.get("distance"),
