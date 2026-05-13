@@ -386,19 +386,15 @@ class VprBootstrap:
             return None
 
         # 写到子进程可读的临时文件（避免 stdin 内塞二进制数据，协议是行 JSON）
+        # 注意：暂不删除该临时文件，便于离线 debug；进程退出时 self._tmpdir 会整体清理。
         path = os.path.join(self._tmpdir.name, f"q_{uuid.uuid4().hex}.jpg")
-        try:
-            with open(path, "wb") as f:
-                f.write(jpeg_bytes)
-            resp = self._send_request(
-                {"image_path": path, "top_k": top_k},
-                timeout_sec=timeout_sec,
-            )
-        finally:
-            try:
-                os.unlink(path)
-            except OSError:
-                pass
+        with open(path, "wb") as f:
+            f.write(jpeg_bytes)
+        logger.warning(f"write image to tmp file: {path}")
+        resp = self._send_request(
+            {"image_path": path, "top_k": top_k},
+            timeout_sec=timeout_sec,
+        )
 
         if "error" in resp:
             raise VprBootstrapError(resp["error"])

@@ -459,7 +459,7 @@ class NavNode(Node):
             
         # 仅当 map→base_link 在 buffer 中无法求出（缺边、时间外推失败等）时才会抛出，与「缓冲里仍有旧变换」不同
         except TransformException as ex:
-            self.get_logger().info(f"无法获取tf变换: {ex}")
+            self.get_logger().debug(f"无法获取tf变换: {ex}")
             self.tf_fail_count += 1
             
             # 检测状态变化：从 ready 变为 not ready（连续失败超过阈值）

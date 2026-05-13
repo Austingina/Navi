@@ -150,7 +150,7 @@ class NavigationToolManager:
             return None
 
     def _vpr_pick_initial_submap(self) -> None:
-        """启动时未指定 submap：用 VPR 识别一个并更新 MapManager.current_submap。"""
+        """启动时未指定 submap：用 VPR 识别一个并触发完整 change_map。"""
         logging.info("启动时未指定 submap：尝试通过 VPR 自动识别 ...")
         result = self._vpr_query_latest_image(image_wait_sec=10.0, top_k=3)
         if result is None:
@@ -166,17 +166,16 @@ class NavigationToolManager:
             result["x"], result["y"], result["z"],
             result.get("elapsed_ms") or -1.0,
         )
-        if not self.map_manager.set_current_submap(submap_id):
+        cm = self._change_map(submap_id)
+        if not cm.get("success"):
             logging.error(
-                "VPR 引导识别 submap='%s' 但 MapManager.set_current_submap 失败",
-                submap_id,
+                "VPR 引导 _change_map 失败: %s", cm.get("msg"),
             )
 
     def _vpr_relocate_and_change_map(self, reason: str) -> bool:
         """运行 VPR → 拿到目标 submap → change_map。供 watchdog 调用。
 
-        :return: True 当且仅当成功切到一个 submap（可能仍是当前 submap，
-                 但此时仍调用 change_map 以让上层重置初始位姿）。
+        :return: 成功识别到 submap 且与当前一致（已就位）或 change_map 成功时返回 True。
         """
         logging.warning("[VPR] 触发重定位 (%s) ...", reason)
         result = self._vpr_query_latest_image(image_wait_sec=5.0, top_k=3)
@@ -191,23 +190,172 @@ class NavigationToolManager:
             target_submap, result["distance"],
             result["x"], result["y"], result["z"], current,
         )
+        cm = self._change_map(target_submap)
+        if not cm.get("success"):
+            logging.error("[VPR] _change_map 失败: %s", cm.get("msg"))
+            return False
+        return True
 
+    def _change_map(
+        self,
+        target_submap: str,
+        *,
+        timeout: float = 60.0,
+        poll_interval: float = 0.5,
+    ) -> Dict[str, Any]:
+        """统一的换图流程，被 ``_sync_map_state`` / VPR 引导 / VPR 重定位 /
+        WebSocket RPC ``change_map`` 全部复用。
+
+        完整步骤：
+
+        1. 校验 ``target_submap`` 是否在 MapManager 中存在
+        2. 取 ROS 端当前地图（``get_current_map_path``）；若已是 ``target_submap``
+           则直接返回成功，不再下发 change_map 请求
+        3. 若已定位（``ros_node.current_pose`` 非空且能确定 ``from_map_id``），
+           计算目标 submap 中的初始位姿；未定位则跳过
+        4. 通过 ``ros_node.change_map`` 发送切换请求
+        5. 轮询 ``get_current_map_path`` 直到目标地图加载完成或超时
+        6. 更新 MapManager.current_submap
+        7. 若步骤 3 算出 ``init_pose_in_target``，发布到 ``/pose_in_target``
+
+        返回的字典与 WebSocket RPC ``change_map`` 兼容：
+        ``{success, map_id, map_path, from_map_id, msg,
+           pose_in_source?, pose_in_target?}``。
+        """
+        if not self.map_manager:
+            return {"success": False, "msg": "MapManager 未配置"}
+
+        # 1. map_id 合法性
+        submap_list = self.map_manager.get_submap_list()
+        if target_submap not in submap_list:
+            return {
+                "success": False,
+                "msg": f"地图 {target_submap} 不存在，可用地图: {submap_list}",
+            }
+
+        # 2. ROS 端当前地图（以 ROS 为单一真相，避免 MapManager 缓存与实际不一致）
+        current_map_path = self.ros_node.get_current_map_path()
+        current_map_id_ros: Optional[str] = None
+        if current_map_path:
+            current_map_id_ros = self.map_manager.get_submap_id_by_map_file(current_map_path)
+        # from_map_id：用于位姿换算与结果上报；ROS 端无法判定时回退到 MapManager 缓存
+        from_map_id = current_map_id_ros or self.map_manager.get_current_submap()
+
+        if current_map_id_ros == target_submap:
+            # 同步缓存以防外部直接改过 ROS 端地图
+            self.map_manager.set_current_submap(target_submap)
+            return {
+                "success": True,
+                "map_id": target_submap,
+                "map_path": current_map_path or "",
+                "from_map_id": current_map_id_ros,
+                "msg": f"当前已经是地图 {target_submap}，无需切换",
+            }
+
+        # 3. 当前已定位时，计算目标 submap 中的初始位姿；未定位则跳过
+        current_pose: Optional[Dict[str, Any]] = None
+        init_pose_in_target: Optional[Dict[str, Any]] = None
+        odom = self.ros_node.current_pose
+        if odom is not None and from_map_id:
+            current_pose = {
+                "position": {
+                    "x": odom.pose.position.x,
+                    "y": odom.pose.position.y,
+                    "z": odom.pose.position.z,
+                },
+                "orientation": {
+                    "x": odom.pose.orientation.x,
+                    "y": odom.pose.orientation.y,
+                    "z": odom.pose.orientation.z,
+                    "w": odom.pose.orientation.w,
+                },
+            }
+            try:
+                init_pose_in_target = self.map_manager.get_init_pose_after_changemap(
+                    current_pose, from_map_id, target_submap
+                )
+                # 强制 z=0（目标地图为平面位姿）
+                if init_pose_in_target and isinstance(init_pose_in_target, dict):
+                    pos = init_pose_in_target.get("position")
+                    if not isinstance(pos, dict):
+                        init_pose_in_target["position"] = {"x": 0.0, "y": 0.0, "z": 0.0}
+                    else:
+                        try:
+                            init_pose_in_target["position"]["z"] = 0
+                        except Exception:
+                            init_pose_in_target["position"] = {
+                                **init_pose_in_target.get("position", {}),
+                                "z": 0,
+                            }
+            except Exception as e:
+                logging.warning(
+                    "_change_map: 计算 init_pose_in_target 失败 (from=%s, to=%s): %s",
+                    from_map_id, target_submap, e,
+                )
+                init_pose_in_target = None
+        else:
+            logging.info(
+                "_change_map: 未定位 (current_pose=%s, from_map_id=%s)，跳过位姿换算",
+                "set" if odom is not None else "None", from_map_id,
+            )
+
+        # 4. 下发 change_map
         target_map_path = self.map_manager.get_submap_full_map_path(target_submap)
         if not target_map_path:
-            logging.error(f"[VPR] 无法获取 submap='{target_submap}' 的地图路径")
-            return False
+            return {"success": False, "msg": f"无法获取地图 {target_submap} 的路径"}
 
-        # 即使 target == current，也仍然 change_map：这会触发
-        # _on_relocalization_request，给 LIO 一次重新发布 map→base_link 的机会
-        ok = self.ros_node.change_map(target_map_path)
-        if ok:
-            self.map_manager.set_current_submap(target_submap)
-            logging.info(
-                f"[VPR] 已切换地图到 {target_submap} ({target_map_path})"
-            )
-            return True
-        logging.error(f"[VPR] change_map 失败: {target_map_path}")
-        return False
+        if not self.ros_node.change_map(target_map_path):
+            return {
+                "success": False,
+                "msg": f"发送切换地图请求失败: {target_map_path}",
+            }
+
+        # 5. 轮询等待 ROS 端真正切到目标地图
+        target_basename = os.path.basename(target_map_path)
+        start_time = time.time()
+        map_switched = False
+        while time.time() - start_time < timeout:
+            time.sleep(poll_interval)
+            new_map_path = self.ros_node.get_current_map_path()
+            if new_map_path:
+                if (
+                    new_map_path == target_map_path
+                    or os.path.basename(new_map_path) == target_basename
+                ):
+                    map_switched = True
+                    logging.info(f"地图切换完成: {new_map_path}")
+                    break
+
+        if not map_switched:
+            return {
+                "success": False,
+                "msg": f"地图切换超时({timeout}秒)，目标地图: {target_map_path}",
+            }
+
+        # 6. 更新 MapManager 缓存
+        self.map_manager.set_current_submap(target_submap)
+
+        # 7. 若有初始位姿则发布到 /pose_in_target
+        if init_pose_in_target:
+            try:
+                if isinstance(init_pose_in_target.get("position"), dict):
+                    init_pose_in_target["position"]["z"] = 0
+                self.ros_node.publish_pose_in_target(init_pose_in_target)
+            except Exception as e:
+                logging.warning(f"_change_map: publish_pose_in_target 失败: {e}")
+
+        result: Dict[str, Any] = {
+            "success": True,
+            "map_id": target_submap,
+            "map_path": target_map_path,
+            "from_map_id": from_map_id,
+            "msg": f"已切换到地图 {target_submap}",
+        }
+        if current_pose is not None:
+            result["pose_in_source"] = current_pose
+        if init_pose_in_target is not None:
+            result["pose_in_target"] = init_pose_in_target
+        return result
 
     async def _tf_localization_watchdog(self) -> None:
         """后台监视 ``tf_ready``：定位丢失 grace 秒后触发一次 VPR 重定位。"""
@@ -262,52 +410,29 @@ class NavigationToolManager:
 
     def _sync_map_state(self):
         """
-        同步地图状态
-        
-        检查 MapManager 的当前 submap 与 ROS 节点的当前地图是否一致，
-        如果不一致则调用 change_map 切换到 MapManager 配置的地图
+        同步地图状态：把 ROS 端的当前地图对齐到 MapManager 配置的 submap。
+
+        实际换图流程统一委托给 ``_change_map``（含 ROS 端一致性检查、位姿
+        换算、轮询等待与 ``/pose_in_target`` 发布）。
         """
         if not self.map_manager:
             logging.info("未配置 MapManager，跳过地图同步")
             return
-        
+
         try:
-            # 等待一小段时间让 ROS 节点初始化完成
-            import time
+            # 给 ROS 节点一小段时间初始化（订阅 /map_path 等参数）
             time.sleep(1.0)
-            
-            # 获取 MapManager 配置的当前 submap
-            expected_submap_id = self.map_manager.get_current_submap()
-            if not expected_submap_id:
+
+            expected = self.map_manager.get_current_submap()
+            if not expected:
                 logging.warning("MapManager 未设置当前 submap，跳过地图同步")
                 return
-            
-            # 获取 ROS 节点当前加载的地图路径
-            current_map_path = self.ros_node.get_current_map_path()
-            
-            if current_map_path:
-                # 根据地图路径获取 submap ID
-                current_submap_id = self.map_manager.get_submap_id_by_map_file(current_map_path)
-                
-                if current_submap_id == expected_submap_id:
-                    logging.info(f"地图状态一致，当前地图: {expected_submap_id}")
-                    return
-                else:
-                    logging.info(f"地图状态不一致: ROS={current_submap_id}, MapManager={expected_submap_id}")
+
+            result = self._change_map(expected)
+            if result.get("success"):
+                logging.info(result.get("msg", f"地图已同步到 {expected}"))
             else:
-                logging.info(f"无法获取 ROS 节点当前地图路径，将切换到 MapManager 配置的地图: {expected_submap_id}")
-            
-            # 获取目标地图的完整路径并切换
-            target_map_path = self.map_manager.get_submap_full_map_path(expected_submap_id)
-            if target_map_path:
-                success = self.ros_node.change_map(target_map_path)
-                if success:
-                    logging.info(f"已切换地图到: {expected_submap_id} ({target_map_path})")
-                else:
-                    logging.error(f"切换地图失败: {target_map_path}")
-            else:
-                logging.error(f"无法获取 submap {expected_submap_id} 的地图路径")
-                
+                logging.error(f"地图同步失败: {result.get('msg')}")
         except Exception as e:
             logging.error(f"同步地图状态失败: {e}")
 
@@ -811,135 +936,15 @@ class NavigationToolManager:
 
             参数:
             map_id: 目标地图 ID（如 floor, underground, 5floor）
-            timeout: 等待地图切换完成的超时时间（秒），默认10秒
+            timeout: 等待地图切换完成的超时时间（秒），默认60秒
 
             返回:
-            Dict: {"success": True, "map_id": "...", "map_path": "...", "init_pose": {...}, "msg": "..."}
+            Dict: {"success": True, "map_id": "...", "map_path": "...",
+                   "from_map_id": "...", "pose_in_source": {...},
+                   "pose_in_target": {...}, "msg": "..."}
             """
             try:
-                # 检查 map_id 是否存在
-                submap_list = self.map_manager.get_submap_list()
-                if map_id not in submap_list:
-                    return {
-                        "success": False,
-                        "msg": f"地图 {map_id} 不存在，可用地图: {submap_list}"
-                    }
-                
-                # 获取当前地图 ID（ROS 参数服务优先，超时则回退到 MapManager 缓存）
-                current_map_path = self.ros_node.get_current_map_path()
-                current_map_id = None
-                if current_map_path:
-                    current_map_id = self.map_manager.get_submap_id_by_map_file(current_map_path)
-                if not current_map_id:
-                    current_map_id = self.map_manager.get_current_submap()
-                if current_map_id == map_id:
-                    return {
-                        "success": True,
-                        "map_id": map_id,
-                        "map_path": current_map_path or "",
-                        "msg": f"当前已经是地图 {map_id}，无需切换"
-                    }
-                
-                # 获取当前位姿（在切换地图之前）
-                current_pose = None
-                init_pose_in_target = None
-                odom = self.ros_node.current_pose
-                if odom and current_map_id:
-                    current_pose = {
-                        "position": {
-                            "x": odom.pose.position.x,
-                            "y": odom.pose.position.y,
-                            "z": odom.pose.position.z
-                        },
-                        "orientation": {
-                            "x": odom.pose.orientation.x,
-                            "y": odom.pose.orientation.y,
-                            "z": odom.pose.orientation.z,
-                            "w": odom.pose.orientation.w
-                        }
-                    }
-                    # 计算在目标 submap 中的初始位姿
-                    init_pose_in_target = self.map_manager.get_init_pose_after_changemap(
-                        current_pose, current_map_id, map_id
-                    )
-                    # Ensure the z component is zeroed out (we want planar pose on target map)
-                    if init_pose_in_target and isinstance(init_pose_in_target, dict):
-                        pos = init_pose_in_target.get('position')
-                        if pos is None or not isinstance(pos, dict):
-                            init_pose_in_target['position'] = {'x': 0.0, 'y': 0.0, 'z': 0.0}
-                        else:
-                            # override z to 0 while preserving x/y if present
-                            try:
-                                init_pose_in_target['position']['z'] = 0
-                            except Exception:
-                                init_pose_in_target['position'] = {**init_pose_in_target.get('position', {}), 'z': 0}
-                
-                # 获取目标地图的完整路径
-                target_map_path = self.map_manager.get_submap_full_map_path(map_id)
-                if not target_map_path:
-                    return {"success": False, "msg": f"无法获取地图 {map_id} 的路径"}
-                
-                # 通过 NavNode 发送切换地图请求
-                success = self.ros_node.change_map(target_map_path)
-                if not success:
-                    return {"success": False, "msg": f"发送切换地图请求失败: {target_map_path}"}
-                
-                # 轮询等待地图切换完成
-                import os
-                target_map_basename = os.path.basename(target_map_path)
-                start_time = time.time()
-                map_switched = False
-                
-                while time.time() - start_time < timeout:
-                    time.sleep(0.5)  # 500ms 轮询间隔
-                    new_map_path = self.ros_node.get_current_map_path()
-                    if new_map_path:
-                        new_map_basename = os.path.basename(new_map_path)
-                        if new_map_basename == target_map_basename or new_map_path == target_map_path:
-                            map_switched = True
-                            logging.info(f"地图切换完成: {new_map_path}")
-                            break
-                
-                if not map_switched:
-                    return {
-                        "success": False,
-                        "msg": f"地图切换超时({timeout}秒)，目标地图: {target_map_path}"
-                    }
-                
-                # 更新 MapManager 的当前 submap
-                self.map_manager.set_current_submap(map_id)
-                
-                # 发布目标地图初始位姿到 /pose_in_target
-                if init_pose_in_target:
-                    # defensively force z to 0 before publish
-                    try:
-                        if isinstance(init_pose_in_target, dict) and 'position' in init_pose_in_target:
-                            init_pose_in_target['position']['z'] = 0
-                    except Exception:
-                        pass
-                    self.ros_node.publish_pose_in_target(init_pose_in_target)
-                
-                result = {
-                    "success": True,
-                    "map_id": map_id,
-                    "map_path": target_map_path,
-                    "from_map_id": current_map_id,
-                    "msg": f"已切换到地图 {map_id}"
-                }
-                
-                # 添加位姿信息
-                if current_pose:
-                    result["pose_in_source"] = current_pose
-                if init_pose_in_target:
-                    # ensure returned pose has z==0
-                    try:
-                        if isinstance(init_pose_in_target, dict) and 'position' in init_pose_in_target:
-                            init_pose_in_target['position']['z'] = 0
-                    except Exception:
-                        pass
-                    result["pose_in_target"] = init_pose_in_target
-                
-                return result
+                return self._change_map(map_id, timeout=timeout)
             except Exception as e:
                 return {"success": False, "msg": f"切换地图失败: {str(e)}"}
 
