@@ -35,5 +35,16 @@ if [[ "$TEST" -eq 1 ]]; then
 fi
 CMD+=(-m "$MAP_PATH")
 
+# 让 INFO 级别日志也实时落盘，绕开 spdlog 文件 sink 的 flush_on(error) 缓冲。
+# 详见 start_localization.bash 的注释。
+export RCUTILS_LOGGING_BUFFERED_STREAM=0
+export RCUTILS_COLORIZED_OUTPUT=0
+export PYTHONUNBUFFERED=1
+
+LOG_DIR="$NAVI_ROOT_DIR/logs"
+mkdir -p "$LOG_DIR"
+LOG_FILE="$LOG_DIR/mcp_$(date +%Y%m%d_%H%M%S).log"
+echo "logging to $LOG_FILE"
+
 # Execute
-"${CMD[@]}"
+"${CMD[@]}" 2>&1 | stdbuf -oL -eL tee -a "$LOG_FILE"
