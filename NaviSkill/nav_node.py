@@ -143,10 +143,13 @@ class NavNode(Node):
             
             # TF状态跟踪
             self.tf_ready = False  # TF是否可用（定位是否成功）
-            self.tf_fail_count = 0  # TF连续失败计数
-            self.tf_fail_threshold = 3  # 连续失败多少次认为定位丢失
+            # TransformException 路径下的连续失败计数（仅用于 lookup_transform 抛异常的情况）
+            self.tf_fail_count = 0
+            self.tf_fail_threshold = 3  # 连续异常多少次认为定位丢失
             # 查询成功但 transform.stamp 落后此时钟超过该秒数时，认为可能是缓冲内旧 TF（换图后 LIO 暂停广播时常如此）
             self._tf_stale_warn_sec = 1.5
+            # 落后超过该秒数则直接判为定位失败（LIO 长时间未广播新 TF），独立于 tf_fail_count，直接将 tf_ready 置 false
+            self._tf_stale_fail_sec = 10.0
             self._last_stale_tf_warn_mono = 0.0  # time.monotonic()，节流 stale 警告
             
             # 底盘速度反馈订阅（用于检测卡住状态）
@@ -428,7 +431,19 @@ class NavNode(Node):
                         f"map→base_link 查询成功，但 TF 时间戳已落后约 {stamp_age_sec:.2f}s（tf2 仍可能返回缓冲中的旧变换）。"
                         "换图后若 LIO 暂停发 TF，通常不会进入「无法获取tf变换」，除非整段 TF 链断裂。"
                     )
-            
+
+            # 落后超过失败阈值（默认 10s）：直接判为定位失败，不与 tf_fail_count 混用
+            # 不再用这帧旧 TF 覆盖 current_pose，避免上层把陈旧位姿当作有效定位
+            if stamp_age_sec > self._tf_stale_fail_sec:
+                if self.tf_ready:
+                    self.tf_ready = False
+                    self.get_logger().warn(
+                        f"✗ TF定位丢失：map→base_link 时间戳落后 {stamp_age_sec:.2f}s "
+                        f"超过失败阈值 {self._tf_stale_fail_sec:.1f}s，进入not ready状态"
+                    )
+                    self.play_audio("fail.mp3")
+                return
+
             # 将Transform转换为PoseStamped格式（兼容原有代码）
             pose_stamped = PoseStamped()
             pose_stamped.header = transform.header
