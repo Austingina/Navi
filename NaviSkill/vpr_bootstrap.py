@@ -1,6 +1,6 @@
 """VPR-based submap bootstrap / re-localization helper for ``server.py``.
 
-This wraps ``vpr/vpr-pipeline-v1/vpr_detect.py`` running in **service mode**
+This wraps ``NaviSkill/vpr/vpr_detect.py`` running in **service mode**
 (``--serve``) as a long-lived subprocess. The subprocess uses its own
 virtual environment (PyTorch / torchvision / faiss / loguru, tuned for the
 target machine -- typically a Jetson), which is intentionally decoupled from
@@ -42,9 +42,11 @@ logger = logging.getLogger(__name__)
 
 
 # Where vpr_detect.py and its dedicated venv live. Kept here so server.py
-# doesn't need to know about layout details.
+# doesn't need to know about layout details. The VPR module is a sibling of
+# this file (``NaviSkill/vpr/``); the dedicated venv lives at
+# ``NaviSkill/vpr/.venv/`` and is bootstrapped by ``vpr/install_jetson.sh``.
 _DEFAULT_VPR_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "vpr", "vpr-pipeline-v1")
+    os.path.join(os.path.dirname(__file__), "vpr")
 )
 
 
@@ -159,8 +161,8 @@ class VprBootstrap:
         Used to enumerate submaps and to resolve ``project_dir`` from the
         loaded multifloor config.
     vpr_dir : str, optional
-        Override the vpr-pipeline-v1 directory (defaults to ``../vpr/vpr-pipeline-v1``
-        relative to this file).
+        Override the VPR module directory (defaults to ``./vpr`` relative
+        to this file -- i.e. ``NaviSkill/vpr/``).
     python_executable : str, optional
         Python interpreter to invoke (defaults to the venv at
         ``<vpr_dir>/.venv/bin/python``).

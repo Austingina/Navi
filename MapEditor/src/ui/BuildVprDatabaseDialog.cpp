@@ -344,14 +344,22 @@ QStringList BuildVprDatabaseDialog::buildArgList(const QString& scriptPath) cons
 //  Path resolution
 // ───────────────────────────────────────────────────────────────────────
 
+// VPR 模块已搬到 NaviSkill/vpr/ 下面。下面的两个 findVpr*() 助手从
+// MapEditor 可执行文件所在目录向上寻祖，命中第一个有效路径。
+// 仍保留 vpr/vpr-pipeline-v1/... 作为兼容候选，便于在旧 checkout 上运行。
 QString BuildVprDatabaseDialog::findVprPython() {
     QString v = qEnvironmentVariable("VPR_PYTHON");
     if (!v.isEmpty()) return v;
-    // 从可执行文件向上找 vpr/vpr-pipeline-v1/.venv/bin/python
+    const QStringList relCandidates = {
+        "/NaviSkill/vpr/.venv/bin/python",
+        "/vpr/vpr-pipeline-v1/.venv/bin/python",  // legacy
+    };
     QDir d(QCoreApplication::applicationDirPath());
     forever {
-        QString cand = d.absolutePath() + "/vpr/vpr-pipeline-v1/.venv/bin/python";
-        if (QFile::exists(cand)) return cand;
+        for (const QString& rel : relCandidates) {
+            QString cand = d.absolutePath() + rel;
+            if (QFile::exists(cand)) return cand;
+        }
         if (!d.cdUp()) break;
         if (d.absolutePath() == "/") break;
     }
@@ -361,10 +369,16 @@ QString BuildVprDatabaseDialog::findVprPython() {
 QString BuildVprDatabaseDialog::findVprScript() {
     QString v = qEnvironmentVariable("VPR_PREPROCESS_SCRIPT");
     if (!v.isEmpty()) return v;
+    const QStringList relCandidates = {
+        "/NaviSkill/vpr/vpr_preprocess.py",
+        "/vpr/vpr-pipeline-v1/vpr_preprocess.py",  // legacy
+    };
     QDir d(QCoreApplication::applicationDirPath());
     forever {
-        QString cand = d.absolutePath() + "/vpr/vpr-pipeline-v1/vpr_preprocess.py";
-        if (QFile::exists(cand)) return cand;
+        for (const QString& rel : relCandidates) {
+            QString cand = d.absolutePath() + rel;
+            if (QFile::exists(cand)) return cand;
+        }
         if (!d.cdUp()) break;
         if (d.absolutePath() == "/") break;
     }
@@ -402,7 +416,7 @@ void BuildVprDatabaseDialog::onRun() {
         QMessageBox::critical(this, "找不到 vpr_preprocess.py",
             "未能定位 vpr_preprocess.py。\n"
             "请设置环境变量 VPR_PREPROCESS_SCRIPT 指向脚本路径，"
-            "或将仓库放在 …/Navi/vpr/vpr-pipeline-v1/ 下。");
+            "或将仓库放在 …/Navi/NaviSkill/vpr/ 下。");
         return;
     }
     QString python = findVprPython();

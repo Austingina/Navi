@@ -1,6 +1,7 @@
-# Ignore 3d_bbs build directory
+# Local artefacts of the VPR module
 __pycache__/
+*.egg-info/
+.venv/
 datasets/
 logs/
 data/
-

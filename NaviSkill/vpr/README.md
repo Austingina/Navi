@@ -53,7 +53,7 @@ Visual Place Recognition pipeline with selectable global descriptors (MegaLoc or
 ## File Structure
 
 ```
-vpr-pipeline-v1/
+NaviSkill/vpr/             # VPR module of NaviSkill (was vpr/vpr-pipeline-v1/)
 ├── README.md              # This file
 ├── pyproject.toml         # Package metadata + dependencies (uv / pip)
 ├── requirements.txt       # Legacy dependency list
@@ -99,7 +99,7 @@ vpr-pipeline-v1/
 
 ```bash
 # Python 3.10+ required — use uv for dependency management
-cd vpr-pipeline-v1
+cd NaviSkill/vpr
 uv sync                    # Creates .venv and installs all deps
 
 # For ROS2 bag support only: requires ROS2 Humble system install
@@ -178,7 +178,7 @@ C++ application  ──►  libvrr_vpr (pybind11 embed)  ──►  vrr_vpr Pyth
 ### Building the C++ library
 
 ```bash
-cd vpr-pipeline-v1/cpp
+cd NaviSkill/vpr/cpp
 mkdir build && cd build
 cmake .. -DPython3_EXECUTABLE=$(realpath ../.. )/.venv/bin/python
 make -j$(nproc)
@@ -195,7 +195,7 @@ make -j$(nproc)
 # ┌─────────────────────────────────────────────────────────────────────┐
 # │  REQUIRED — set before running any C++ binary that uses libvrr_vpr │
 # └─────────────────────────────────────────────────────────────────────┘
-export VPR_ROOT=/path/to/vpr-pipeline-v1
+export VPR_ROOT=/path/to/Navi/NaviSkill/vpr
 export PYTHONPATH="${VPR_ROOT}:${VPR_ROOT}/.venv/lib/python3.10/site-packages"
 ```
 

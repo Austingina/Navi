@@ -9,7 +9,7 @@
  *
  * Run:
  *   # Make sure vrr_vpr Python package is installed / on PYTHONPATH:
- *   export PYTHONPATH=/path/to/vpr-pipeline-v1:$PYTHONPATH
+ *   export PYTHONPATH=/path/to/Navi/NaviSkill/vpr:$PYTHONPATH
  *   ./vrr_vpr_example /path/to/database /path/to/query.jpg
  */
 
