@@ -52,20 +52,34 @@ BuildVprParams toBuildVprParams(const VprDatabaseInfo& info) {
     BuildVprParams p;
     if (!info.valid) return p;
     const QJsonObject& j = info.raw;
-    p.bagPath          = j.value("bag_path").toString();
-    p.poseFile         = j.value("pose_file").toString();
-    p.imageTopic       = j.value("image_topic").toString(p.imageTopic);
-    p.calibrationFile  = j.value("calibration_file").toString();
-    p.undistortFisheye = j.value("undistort_fisheye").toBool(p.undistortFisheye);
+
+    // 旧版数据库 (无 source 字段) 一律视作 ros1，保持向后兼容
+    p.source = j.value("source").toString(QStringLiteral("ros1"));
+
+    // 公共字段
     p.dbDistance       = j.value("db_distance").toDouble(p.dbDistance);
-    p.outWidth         = j.value("out_width").toInt(p.outWidth);
-    p.outHeight        = j.value("out_height").toInt(p.outHeight);
-    p.fov              = j.value("fov").toDouble(p.fov);
     p.method           = j.value("method").toString(p.method);
     p.device           = j.value("device").toString(p.device);
     p.batchSize        = j.value("batch_size").toInt(p.batchSize);
     p.numWorkers       = j.value("num_workers").toInt(p.numWorkers);
     p.imageCacheDir    = info.imageCacheDir;
+
+    if (p.source == "ros2_r1pro") {
+        p.r1proBagPath    = j.value("bag_path").toString();
+        p.poseTopic       = j.value("pose_topic").toString(p.poseTopic);
+        p.r1proImageTopic = j.value("image_topic").toString(p.r1proImageTopic);
+        p.cropWidth       = j.value("crop_width").toInt(p.cropWidth);
+        p.cropHeight      = j.value("crop_height").toInt(p.cropHeight);
+    } else {
+        p.s20BagPath       = j.value("bag_path").toString();
+        p.poseFile         = j.value("pose_file").toString();
+        p.s20ImageTopic    = j.value("image_topic").toString(p.s20ImageTopic);
+        p.calibrationFile  = j.value("calibration_file").toString();
+        p.undistortFisheye = j.value("undistort_fisheye").toBool(p.undistortFisheye);
+        p.outWidth         = j.value("out_width").toInt(p.outWidth);
+        p.outHeight        = j.value("out_height").toInt(p.outHeight);
+        p.fov              = j.value("fov").toDouble(p.fov);
+    }
     return p;
 }
 
@@ -128,11 +142,19 @@ VprDatabaseInfoDialog::VprDatabaseInfoDialog(const QString& submapId,
     scroll->setWidget(content);
     outer->addWidget(scroll, /*stretch=*/1);
 
+    // 数据来源标签（旧库缺 source 字段时按 ros1/S20 处理）
+    const QString source = info.raw.value("source").toString(QStringLiteral("ros1"));
+    const bool sourceR1Pro = (source == "ros2_r1pro");
+    const QString sourceLabel = sourceR1Pro
+        ? QStringLiteral("R1Pro (ROS2 bag, PinHole 去畸变 + 中心裁剪)")
+        : QStringLiteral("S20 (ROS1 bag, PolyFisheye 可选去畸变)");
+
     // ── 概览 ───────────────────────────────────────────────────────
     {
         auto* box = new QGroupBox("概览");
         auto* form = new QFormLayout(box);
         form->setContentsMargins(10, 18, 10, 10);
+        form->addRow("数据源:", new QLabel(sourceLabel));
         form->addRow("数据库目录:", makePathField(info.dbDir));
         form->addRow("图片缓存:", makePathField(
             info.imageCacheDir.isEmpty() ? "（未记录）" : info.imageCacheDir));
@@ -209,24 +231,47 @@ VprDatabaseInfoDialog::VprDatabaseInfoDialog(const QString& submapId,
         auto* form = new QFormLayout(box);
         form->setContentsMargins(10, 18, 10, 10);
 
-        form->addRow("Bag 文件:",   makePathField(j.value("bag_path").toString()));
-        form->addRow("位姿文件:",   makePathField(j.value("pose_file").toString()));
-        form->addRow("图像话题:",   makePathField(j.value("image_topic").toString()));
+        form->addRow("Bag 路径:",  makePathField(j.value("bag_path").toString()));
+
+        if (sourceR1Pro) {
+            form->addRow("位姿话题:",
+                makePathField(j.value("pose_topic").toString(QStringLiteral("/Odometry"))));
+            form->addRow("图像话题:",
+                makePathField(j.value("image_topic").toString()));
+        } else {
+            form->addRow("位姿文件:",
+                makePathField(j.value("pose_file").toString()));
+            form->addRow("图像话题:",
+                makePathField(j.value("image_topic").toString()));
+        }
+
         form->addRow("db_distance:",
             new QLabel(QString::number(j.value("db_distance").toDouble(), 'f', 2) + " m"));
 
-        bool undist = j.value("undistort_fisheye").toBool();
-        QString uText = undist
-            ? QString("启用 — %1 × %2, FOV %3°")
-                .arg(j.value("out_width").toInt())
-                .arg(j.value("out_height").toInt())
-                .arg(j.value("fov").toDouble(), 0, 'f', 0)
-            : QStringLiteral("关闭");
-        form->addRow("鱼眼去畸变:", new QLabel(uText));
+        if (sourceR1Pro) {
+            // R1Pro 路径：固定 PinHole + 中心裁剪
+            int cw = j.value("crop_width").toInt(0);
+            int ch = j.value("crop_height").toInt(0);
+            QString cropText = (cw > 0 && ch > 0)
+                ? QString("中心裁剪 %1 × %2").arg(cw).arg(ch)
+                : QStringLiteral("中心裁剪（尺寸未记录）");
+            form->addRow("PinHole 去畸变:",
+                new QLabel(QStringLiteral("启用 (R1Pro 默认内参)")));
+            form->addRow("裁剪尺寸:", new QLabel(cropText));
+        } else {
+            bool undist = j.value("undistort_fisheye").toBool();
+            QString uText = undist
+                ? QString("启用 — %1 × %2, FOV %3°")
+                    .arg(j.value("out_width").toInt())
+                    .arg(j.value("out_height").toInt())
+                    .arg(j.value("fov").toDouble(), 0, 'f', 0)
+                : QStringLiteral("关闭");
+            form->addRow("鱼眼去畸变:", new QLabel(uText));
 
-        QString calib = j.value("calibration_file").toString();
-        form->addRow("标定文件:",
-            makePathField(calib.isEmpty() ? "（默认 S20 内参）" : calib));
+            QString calib = j.value("calibration_file").toString();
+            form->addRow("标定文件:",
+                makePathField(calib.isEmpty() ? "（默认 S20 内参）" : calib));
+        }
 
         form->addRow("推理设备:",  new QLabel(j.value("device").toString()));
         form->addRow("batch / workers:", new QLabel(
