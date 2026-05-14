@@ -55,20 +55,20 @@ _DEFAULT_VPR_DIR = os.path.abspath(
 _VPR_QUERY_TARGET_W = 1024
 _VPR_QUERY_TARGET_H = 768
 
-# 延迟导入：cv2 / numpy / undistort_r1pro_image 都依赖于本进程能装载 OpenCV，
+# 延迟导入：cv2 / numpy / PinHoleUndistorter 都依赖于本进程能装载 OpenCV，
 # 一次性失败就关掉预处理，让查询退化为 "原图直接送" 的旧行为。
 _preprocess_init_lock = threading.Lock()
 _preprocess_initialized = False
 _preprocess_enabled = False
 _cv2 = None
 _np = None
-_undistort_r1pro_image = None
+_pinhole_undistorter = None  # type: Optional[object]
 
 
 def _ensure_preprocess_loaded() -> bool:
-    """加载 cv2 / numpy / undistort_r1pro_image，返回是否可用。"""
+    """加载 cv2 / numpy / PinHoleUndistorter，返回是否可用。"""
     global _preprocess_initialized, _preprocess_enabled
-    global _cv2, _np, _undistort_r1pro_image
+    global _cv2, _np, _pinhole_undistorter
     if _preprocess_initialized:
         return _preprocess_enabled
     with _preprocess_init_lock:
@@ -79,20 +79,20 @@ def _ensure_preprocess_loaded() -> bool:
             import numpy as np  # type: ignore
             if _DEFAULT_VPR_DIR not in sys.path:
                 sys.path.insert(0, _DEFAULT_VPR_DIR)
-            from build_database_3d import undistort_r1pro_image  # type: ignore
+            from undistort2 import PinHoleUndistorter  # type: ignore
 
             _cv2 = cv2
             _np = np
-            _undistort_r1pro_image = undistort_r1pro_image
+            _pinhole_undistorter = PinHoleUndistorter.from_defaults()
             _preprocess_enabled = True
             logger.info(
-                "VprBootstrap: 已启用查询图像预处理（去畸变 + 中心裁剪到 %dx%d）",
+                "VprBootstrap: 已启用查询图像预处理（PinHoleUndistorter 去畸变 + 中心裁剪到 %dx%d）",
                 _VPR_QUERY_TARGET_W, _VPR_QUERY_TARGET_H,
             )
         except Exception as e:
             _preprocess_enabled = False
             logger.warning(
-                "VprBootstrap: 无法加载 undistort_r1pro_image (%s)，"
+                "VprBootstrap: 无法加载 PinHoleUndistorter (%s)，"
                 "查询图像将直接送给 VPR（不去畸变 / 不裁剪），可能影响匹配精度。",
                 e,
             )
@@ -116,6 +116,7 @@ def _undistort_and_center_crop(
 
     cv2 = _cv2
     np = _np
+    undistorter = _pinhole_undistorter
     try:
         buf = np.frombuffer(jpeg_bytes, dtype=np.uint8)
         img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
@@ -123,7 +124,7 @@ def _undistort_and_center_crop(
             logger.warning("VprBootstrap: JPEG 解码失败，预处理跳过")
             return jpeg_bytes
 
-        undistorted = _undistort_r1pro_image(img)
+        undistorted = undistorter.undistort(img)
         h, w = undistorted.shape[:2]
         if w < target_w or h < target_h:
             logger.warning(

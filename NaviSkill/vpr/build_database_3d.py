@@ -46,6 +46,7 @@ import numpy as np
 from PIL import Image
 
 from undistort import PolyFisheyeUndistorter
+from undistort2 import PinHoleUndistorter
 
 
 # ---------------------------------------------------------------------------
@@ -186,42 +187,13 @@ def save_compressed_bytes(img_bytes, path, quality=90):
     return path
 
 
-# R1Pro camera intrinsics and distortion coefficients
-R1PRO_CAMERA_MATRIX = np.array([
-    [1012.5934446010, 0, 959.1535002056],
-    [0, 1012.7695042461, 538.7995847097],
-    [0, 0, 1]
-], dtype=np.float64)
-
-R1PRO_DIST_COEFFS = np.array([
-    0.3278033404,   # K1
-    -0.1678714011,  # K2
-    0.0000012166,   # P1
-    0.0000388473,   # P2
-    -0.0124574817,  # K3
-    0.7233630949,   # K4
-    -0.1359816721,  # K5
-    -0.0630068024   # K6
-], dtype=np.float64)
-
-def undistort_r1pro_image(img_array):
-    """Undistort image using R1Pro camera parameters (rational model)."""
-    return cv2.undistort(img_array, R1PRO_CAMERA_MATRIX, R1PRO_DIST_COEFFS)
-
-
-def save_compressed_bytes_undistorted(img_bytes, path, quality=90):
-    """Decode compressed image bytes, undistort, and save as JPEG."""
-    # Decode image
-    img_array = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
-    # Undistort
-    undistorted = undistort_r1pro_image(img_array)
-    # Save as JPEG (OpenCV uses BGR, no conversion needed)
-    cv2.imwrite(path, undistorted)
-    return path
-
-
 def undistort_and_save(img_bytes, undistorter, path, quality=90):
-    """Decode, undistort fisheye, save as JPEG."""
+    """Decode, undistort (fisheye or pinhole), save as JPEG.
+
+    ``undistorter`` must expose ``undistort_bytes(jpeg_bytes) -> RGB ndarray``;
+    both :class:`PolyFisheyeUndistorter` and :class:`PinHoleUndistorter`
+    conform to that contract.
+    """
     rgb = undistorter.undistort_bytes(img_bytes)
     Image.fromarray(rgb).save(path, quality=quality)
     return path
@@ -488,6 +460,7 @@ def extract_from_ros2_of_r1pro(args):
     sampler = DistanceSampler(args.db_distance, args.query_distance)
     raw_count = 0
     saved_count = 0
+    undistorter = PinHoleUndistorter.from_defaults()
 
     while reader.has_next():
         topic, data, t = reader.read_next()
@@ -510,7 +483,7 @@ def extract_from_ros2_of_r1pro(args):
         path = os.path.join(out_dir, fname)
         
         img_data = bytes(img_msg.data)
-        save_compressed_bytes_undistorted(img_data, path)
+        undistort_and_save(img_data, undistorter, path)
         saved_count += 1
 
         if raw_count % 500 == 0:
