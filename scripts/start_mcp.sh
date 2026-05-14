@@ -3,37 +3,31 @@ source "$(dirname "$0")/common.sh"
 
 cd $NAVI_ROOT_DIR/NaviSkill
 
-# Parse arguments: support -t (test) and -m <map_path>
-TEST=0
-MAP_PATH=""
-while [[ $# -gt 0 ]]; do
-	case "$1" in
-		-t)
-			TEST=1
-			shift
-			;;
-		-m)
-			MAP_PATH="$2"
-			shift 2
-			;;
-		*)
-			# ignore unknown args
-			shift
+# 所有参数原样透传给 server.py（见 server.py main() 中的 argparse 定义）：
+#   -t, --test                    测试环境
+#   -m, --map <path>              多楼层地图配置文件路径 (multifloor.json)
+#   -s, --submap <id>             初始 submap ID
+#       --image_topic <topic>     VPR 使用的 CompressedImage 话题
+#       --vpr_device <cuda|cpu>   VPR 子进程使用的设备
+#
+# 唯一的便利逻辑：若用户没显式给 -m/--map，则填入默认的 408.json。
+DEFAULT_MAP="$NAVI_ROOT_DIR/maps/408/408.json"
+
+HAS_MAP=0
+for arg in "$@"; do
+	case "$arg" in
+		-m|--map|-m=*|--map=*)
+			HAS_MAP=1
+			break
 			;;
 	esac
 done
 
-# Default map if not provided
-if [[ -z "$MAP_PATH" ]]; then
-	MAP_PATH="$NAVI_ROOT_DIR/maps/multifloor/multifloor.json"
-fi
-
-# Build command
 CMD=(/usr/bin/python3 server.py)
-if [[ "$TEST" -eq 1 ]]; then
-	CMD+=("-t")
+if [[ $HAS_MAP -eq 0 ]]; then
+	CMD+=(-m "$DEFAULT_MAP")
 fi
-CMD+=(-m "$MAP_PATH")
+CMD+=("$@")
 
 # 让 INFO 级别日志也实时落盘，绕开 spdlog 文件 sink 的 flush_on(error) 缓冲。
 # 详见 start_localization.bash 的注释。
@@ -45,6 +39,6 @@ LOG_DIR="$NAVI_ROOT_DIR/logs"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/mcp_$(date +%Y%m%d_%H%M%S).log"
 echo "logging to $LOG_FILE"
+echo "command: ${CMD[*]}"
 
-# Execute
 "${CMD[@]}" 2>&1 | stdbuf -oL -eL tee -a "$LOG_FILE"
