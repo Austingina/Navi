@@ -60,12 +60,10 @@ Examples
 """
 
 import argparse
-import bisect
 import json
 import os
 import sys
 import time
-from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from glob import glob
 
@@ -77,15 +75,9 @@ from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
-from build_database_3d import (
-    load_poses_from_imgpose_file,
-    r1pro_undistort_crop_save,
-    r1pro_worker_init,
-    save_compressed_bytes,
-    undistort_and_save,
-)
 from model_loader import get_model
-from undistort import PolyFisheyeUndistorter
+from r1pro_utils import extract_database_from_ros2_r1pro
+from s20_utils import extract_database_from_ros1
 
 
 # ---------------------------------------------------------------------------
@@ -117,249 +109,13 @@ class DatabaseSampler:
 
 
 # ---------------------------------------------------------------------------
-# Step 1a: extract distance-sampled database images from a ROS1 bag
+# Step 1a / 1a-bis: distance-sampled database image extraction
 # ---------------------------------------------------------------------------
-
-def extract_database_from_ros1(args):
-    """Parse a ROS1 bag + ImgPose.txt and write sampled JPGs to disk."""
-    from rosbags.rosbag1 import Reader
-    from rosbags.typesys import Stores, get_typestore
-
-    # main() guarantees args.image_cache_dir is set (defaults to
-    # <output_dir>/database for backward compatibility)
-    db_dir = args.image_cache_dir
-    os.makedirs(db_dir, exist_ok=True)
-
-    poses = load_poses_from_imgpose_file(args.pose_file, prefix="left")
-    logger.info(f"Loaded {len(poses)} left-frame poses from {args.pose_file}")
-
-    undistorter = None
-    if args.undistort_fisheye:
-        if args.calibration_file:
-            undistorter = PolyFisheyeUndistorter.from_yaml(
-                args.calibration_file,
-                out_w=args.out_width, out_h=args.out_height, fov_deg=args.fov,
-            )
-        else:
-            undistorter = PolyFisheyeUndistorter.from_defaults(
-                out_w=args.out_width, out_h=args.out_height, fov_deg=args.fov,
-            )
-        logger.info(
-            f"Fisheye undistortion enabled "
-            f"({args.out_width}x{args.out_height}, {args.fov}° FOV)"
-        )
-
-    typestore = get_typestore(Stores.ROS1_NOETIC)
-    sampler = DatabaseSampler(args.db_distance)
-    raw_count = 0
-    unmatched = 0
-    futures = []
-    t0 = time.time()
-
-    with Reader(args.bag_path) as reader, \
-         ProcessPoolExecutor(max_workers=args.num_workers) as pool:
-
-        conns = [c for c in reader.connections if c.topic == args.image_topic]
-        if not conns:
-            raise ValueError(
-                f"Topic '{args.image_topic}' not found in {args.bag_path}"
-            )
-        logger.info(f"Reading {args.image_topic} from {args.bag_path}")
-
-        for conn, timestamp, rawdata in reader.messages(connections=conns):
-            msg = typestore.deserialize_ros1(rawdata, conn.msgtype)
-            # 帧号与 ImgPose.txt 中 left_* 的顺序一一对应（与 build_database_3d 保持一致）
-            frame_index = raw_count
-            raw_count += 1
-
-            if frame_index >= len(poses):
-                unmatched += 1
-                continue
-
-            x, y, z, _pose_ts = poses[frame_index]
-            if not sampler.keep(x, y):
-                continue
-
-            fname = f"@{x:.6f}@{y:.6f}@{z:.6f}@{timestamp}@.jpg"
-            path = os.path.join(db_dir, fname)
-            img_data = bytes(msg.data)
-
-            if undistorter is not None:
-                futures.append(
-                    pool.submit(undistort_and_save, img_data, undistorter, path)
-                )
-            else:
-                futures.append(
-                    pool.submit(save_compressed_bytes, img_data, path)
-                )
-
-            if raw_count % 200 == 0:
-                rate = raw_count / (time.time() - t0)
-                logger.info(
-                    f"  Read {raw_count} frames "
-                    f"(kept={sampler.kept}, skipped={sampler.skipped}) "
-                    f"[{rate:.0f} fr/s]"
-                )
-
-        logger.info(f"  Waiting for {len(futures)} image saves ...")
-        for f in as_completed(futures):
-            f.result()
-
-    if raw_count != len(poses):
-        logger.warning(
-            f"Frame count mismatch: bag has {raw_count} frames, "
-            f"pose file has {len(poses)} left poses."
-        )
-
-    elapsed = time.time() - t0
-    logger.info(f"Image extraction done in {elapsed:.1f}s.")
-    logger.info(f"  Kept (database):  {sampler.kept} -> {db_dir}")
-    logger.info(f"  Skipped:          {sampler.skipped}")
-    if unmatched:
-        logger.info(f"  Unmatched frames: {unmatched}")
-
-    return db_dir
-
-
-# ---------------------------------------------------------------------------
-# Step 1a-bis: extract distance-sampled database images from a ROS2 R1Pro bag
-# ---------------------------------------------------------------------------
-# The actual per-frame undistort/crop/save work lives in
-# ``build_database_3d.r1pro_undistort_crop_save`` so that
-# ``ProcessPoolExecutor`` can pickle it by a stable module path.
-
-def _load_ros2_odometry_poses(bag_path, pose_topic):
-    """Read every Odometry message on ``pose_topic`` and return sorted poses.
-
-    Returns
-    -------
-    poses : list of (ts_ns, x, y, z)
-        Sorted ascending by ``ts_ns``.
-    """
-    import rosbag2_py
-    from rclpy.serialization import deserialize_message
-    from nav_msgs.msg import Odometry
-
-    reader = rosbag2_py.SequentialReader()
-    opts = rosbag2_py.StorageOptions(uri=bag_path, storage_id="sqlite3")
-    conv = rosbag2_py.ConverterOptions(
-        input_serialization_format="cdr", output_serialization_format="cdr"
-    )
-    reader.open(opts, conv)
-    reader.set_filter(rosbag2_py.StorageFilter(topics=[pose_topic]))
-
-    poses = []
-    while reader.has_next():
-        _topic, data, _t = reader.read_next()
-        msg = deserialize_message(data, Odometry)
-        ts = msg.header.stamp.sec * 10**9 + msg.header.stamp.nanosec
-        p = msg.pose.pose.position
-        poses.append((ts, p.x, p.y, p.z))
-    poses.sort(key=lambda x: x[0])
-    return poses
-
-
-def extract_database_from_ros2_r1pro(args):
-    """Parse an R1Pro ROS2 bag and write undistorted+cropped JPGs to disk.
-
-    Args:
-        args: Namespace with attributes ``bag_path``, ``image_topic``,
-            ``pose_topic``, ``db_distance``, ``image_cache_dir``,
-            ``crop_width``, ``crop_height``, ``num_workers``.
-    """
-    import rosbag2_py
-    from rclpy.serialization import deserialize_message
-    from sensor_msgs.msg import CompressedImage
-
-    db_dir = args.image_cache_dir
-    os.makedirs(db_dir, exist_ok=True)
-
-    # ROS2 bag 目录约定：传入 .db3 时取其所在目录
-    bag_path = args.bag_path
-    if bag_path.endswith(".db3"):
-        bag_path = os.path.dirname(bag_path) or "."
-
-    t0 = time.time()
-    logger.info(f"[1/2] Reading poses from {args.pose_topic} ...")
-    poses = _load_ros2_odometry_poses(bag_path, args.pose_topic)
-    if not poses:
-        raise RuntimeError(f"No poses found on {args.pose_topic} in {bag_path}")
-    pose_timestamps = [p[0] for p in poses]
-    logger.info(f"  Found {len(poses)} poses in {time.time() - t0:.1f}s")
-
-    def find_nearest_pose(query_ts):
-        idx = bisect.bisect_left(pose_timestamps, query_ts)
-        candidates = []
-        if idx > 0:
-            candidates.append(idx - 1)
-        if idx < len(pose_timestamps):
-            candidates.append(idx)
-        if not candidates:
-            return None
-        best = min(candidates, key=lambda i: abs(pose_timestamps[i] - query_ts))
-        return poses[best]
-
-    logger.info(f"[2/2] Extracting images from {args.image_topic} ...")
-    reader = rosbag2_py.SequentialReader()
-    opts = rosbag2_py.StorageOptions(uri=bag_path, storage_id="sqlite3")
-    conv = rosbag2_py.ConverterOptions(
-        input_serialization_format="cdr", output_serialization_format="cdr"
-    )
-    reader.open(opts, conv)
-    reader.set_filter(rosbag2_py.StorageFilter(topics=[args.image_topic]))
-
-    sampler = DatabaseSampler(args.db_distance)
-    raw_count = 0
-    futures = []
-    t1 = time.time()
-
-    with ProcessPoolExecutor(
-        max_workers=args.num_workers,
-        initializer=r1pro_worker_init,
-    ) as pool:
-        while reader.has_next():
-            _topic, data, _t = reader.read_next()
-            msg = deserialize_message(data, CompressedImage)
-            img_ts = msg.header.stamp.sec * 10**9 + msg.header.stamp.nanosec
-            raw_count += 1
-
-            pose = find_nearest_pose(img_ts)
-            if pose is None:
-                continue
-            _, x, y, z = pose
-
-            if not sampler.keep(x, y):
-                continue
-
-            fname = f"@{x:.6f}@{y:.6f}@{z:.6f}@{img_ts}@.jpg"
-            path = os.path.join(db_dir, fname)
-            img_data = bytes(msg.data)
-            futures.append(
-                pool.submit(
-                    r1pro_undistort_crop_save,
-                    img_data, path, args.crop_width, args.crop_height,
-                )
-            )
-
-            if raw_count % 200 == 0:
-                rate = raw_count / (time.time() - t1)
-                logger.info(
-                    f"  Read {raw_count} frames "
-                    f"(kept={sampler.kept}, skipped={sampler.skipped}) "
-                    f"[{rate:.0f} fr/s]"
-                )
-
-        logger.info(f"  Waiting for {len(futures)} image saves ...")
-        for f in as_completed(futures):
-            f.result()
-
-    elapsed = time.time() - t0
-    logger.info(f"Image extraction done in {elapsed:.1f}s.")
-    logger.info(f"  Kept (database):  {sampler.kept} -> {db_dir}")
-    logger.info(f"  Skipped:          {sampler.skipped}")
-    logger.info(f"  Raw image frames: {raw_count}")
-
-    return db_dir
+# Source-specific bag parsing + undistortion lives in:
+#   * s20_utils.extract_database_from_ros1       (ros1 / SHARE SLAM S20)
+#   * r1pro_utils.extract_database_from_ros2_r1pro (ros2 / R1Pro)
+# Both accept the DB-only :class:`DatabaseSampler` defined above and the
+# loguru logger configured here.
 
 
 # ---------------------------------------------------------------------------
@@ -693,9 +449,15 @@ def main():
         logger.info(f"Skipping image extraction; reusing {args.image_cache_dir}")
         db_dir = args.image_cache_dir
     elif args.source == "ros1":
-        db_dir = extract_database_from_ros1(args)
+        sampler = DatabaseSampler(args.db_distance)
+        db_dir = extract_database_from_ros1(
+            args, sampler, args.image_cache_dir, logger=logger,
+        )
     elif args.source == "ros2_r1pro":
-        db_dir = extract_database_from_ros2_r1pro(args)
+        sampler = DatabaseSampler(args.db_distance)
+        db_dir = extract_database_from_ros2_r1pro(
+            args, sampler, args.image_cache_dir, logger=logger,
+        )
     else:
         raise AssertionError(f"unhandled source: {args.source}")
 

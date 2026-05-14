@@ -1,43 +1,53 @@
 #!/usr/bin/env python3
-"""Build VPR image database and query sets from raw data.
+"""Build VPR image database + query sets from raw data (legacy entry point).
 
-Supports three input sources:
-  - ROS1 bags (.bag) with external pose file (frame_pose.txt)
-  - ROS2 bags (.db3) with odometry topic
-  - Plain image folders with a pose file
+Supports three input sources, dispatched via ``--source``:
 
-Images are distance-sampled and saved with @x@y@timestamp@.jpg filenames
-for use with the VPR pipeline.
+* ``ros1``  -- SHARE SLAM S20 ROS1 bag + ImgPose.txt, optional fisheye
+  undistortion. Implementation lives in :mod:`s20_utils`.
+* ``ros2``  -- R1Pro ROS2 bag with ``nav_msgs/Odometry`` +
+  ``sensor_msgs/CompressedImage``, always pinhole-undistorted.
+  Implementation lives in :mod:`r1pro_utils`.
+* ``folder`` -- plain image folder + ``frame_pose.txt``.
+
+Platform-specific logic has been factored out into :mod:`s20_utils`
+and :mod:`r1pro_utils`. This module retains:
+
+* shared helpers (samplers, image savers, output-dir/progress/summary
+  utilities) consumed by both util modules;
+* the *generic* ROS2 path (Image + Path) and folder path;
+* the CLI entry point.
+
+Images are distance-sampled and saved with ``@x@y[@z]@timestamp@.jpg``
+filenames for downstream use by ``pipeline_3d.py``.
 
 Examples:
     # From ROS1 bag (SHARE SLAM S20 with fisheye)
-    python build_database.py --source=ros1 \\
+    python build_database_3d.py --source=ros1 \\
         --bag_path=data/all_*.bag --pose_file=data/frame_pose.txt \\
         --image_topic=/camera_agent/img_left/compressed \\
         --undistort_fisheye \\
         --db_distance=1.0 --query_distance=0.5 \\
         --output_dir=datasets/my_scene
 
-    # From ROS2 bag (ZED robot)
-    python build_database.py --source=ros2 \\
-        --bag_path=data/ --pose_topic=/laser_odom_path \\
-        --image_topic=/zed/zed_node/rgb/color/rect/image \\
+    # From ROS2 bag (R1Pro)
+    python build_database_3d.py --source=ros2 \\
+        --bag_path=data/ --pose_topic=/Odometry \\
+        --image_topic=/hdas/camera_head/left_raw/image_raw_color/compressed \\
         --db_distance=1.0 --query_distance=0.5 \\
         --output_dir=datasets/my_scene
 
     # From plain image folder
-    python build_database.py --source=folder \\
+    python build_database_3d.py --source=folder \\
         --image_dir=raw_images/ --pose_file=poses.txt \\
         --db_distance=1.0 --query_distance=0.5 \\
         --output_dir=datasets/my_scene
 """
 
 import argparse
-import bisect
-import io
 import os
 import time
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor
 from glob import glob
 from pathlib import Path
 
@@ -45,292 +55,37 @@ import cv2
 import numpy as np
 from PIL import Image
 
+from extract_common import (
+    DistanceSampler,
+    find_nearest_pose,
+    load_poses_from_file,
+    make_output_dirs,
+    print_progress,
+    print_summary,
+    save_rgb_array,
+    wait_for_futures,
+)
 from undistort import PolyFisheyeUndistorter
-from undistort2 import PinHoleUndistorter
 
 
 # ---------------------------------------------------------------------------
-# Pose loading
-# ---------------------------------------------------------------------------
-
-def load_poses_from_file(path):
-    """Load poses from frame_pose.txt format.
-
-    Expected format (one pose per line):
-        # timestamp tx ty tz qx qy qz qw
-        1772004062.900 -0.000113 -0.000093 0.000036 0 0 0 1
-
-    Returns list of (timestamp_sec, x, y) tuples sorted by timestamp.
-    """
-    poses = []
-    with open(path) as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            parts = line.split()
-            ts = float(parts[0])
-            tx, ty = float(parts[1]), float(parts[2])
-            poses.append((ts, tx, ty))
-    poses.sort(key=lambda p: p[0])
-    return poses
-
-
-def find_nearest_pose(pose_timestamps, poses, query_ts):
-    """Binary search for the pose closest in time to query_ts."""
-    idx = bisect.bisect_left(pose_timestamps, query_ts)
-    candidates = []
-    if idx > 0:
-        candidates.append(idx - 1)
-    if idx < len(pose_timestamps):
-        candidates.append(idx)
-    if not candidates:
-        return None
-    best = min(candidates, key=lambda i: abs(pose_timestamps[i] - query_ts))
-    return poses[best]
-
-
-def load_poses_from_imgpose_file(path, prefix="left"):
-    """Load poses from ImgPose.txt format.
-
-    Expected format (one pose per line):
-        index x y z roll pitch yaw qx qy qz qw timestamp
-        left_0001 -0.000113 -0.000093 0.000036 0 0 0 0 0 0 1 1772004062.900
-
-    Only reads lines where index starts with the given prefix (default: 'left').
-    Returns list of (x, y, z, timestamp) tuples in file order.
-    """
-    poses = []
-    with open(path) as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            parts = line.split()
-            if len(parts) < 12:
-                continue
-            index = parts[0]
-            # 只读取 prefix 开头的行
-            if not index.startswith(prefix):
-                continue
-            x, y, z = float(parts[1]), float(parts[2]), float(parts[3])
-            timestamp = float(parts[11])
-            poses.append((x, y, z, timestamp))
-    return poses
-
-
-# ---------------------------------------------------------------------------
-# Distance sampler
-# ---------------------------------------------------------------------------
-
-class DistanceSampler:
-    """Decide whether to save an image as database, query, or skip it."""
-
-    def __init__(self, db_distance=1.0, query_distance=0.5, db_query_exclusion=0.1):
-        self.db_distance = db_distance
-        self.query_distance = query_distance
-        self.db_query_exclusion = db_query_exclusion
-        self.last_db_x = None
-        self.last_db_y = None
-        self.last_q_x = None
-        self.last_q_y = None
-        self.db_positions = []
-        self.db_count = 0
-        self.q_count = 0
-        self.skipped = 0
-
-    def classify(self, x, y):
-        """Return 'database', 'query', or 'skip' for a position."""
-        if self.last_db_x is None:
-            self.last_db_x, self.last_db_y = x, y
-            self.db_positions.append((x, y))
-            self.db_count += 1
-            return "database"
-
-        db_dist = np.sqrt((x - self.last_db_x) ** 2 + (y - self.last_db_y) ** 2)
-        if db_dist >= self.db_distance:
-            self.last_db_x, self.last_db_y = x, y
-            self.db_positions.append((x, y))
-            self.db_count += 1
-            return "database"
-
-        if self.query_distance > 0 and self.last_q_x is not None:
-            q_dist = np.sqrt((x - self.last_q_x) ** 2 + (y - self.last_q_y) ** 2)
-            if q_dist < self.query_distance:
-                self.skipped += 1
-                return "skip"
-
-        for dbx, dby in self.db_positions:
-            if np.sqrt((x - dbx) ** 2 + (y - dby) ** 2) < self.db_query_exclusion:
-                self.skipped += 1
-                return "skip"
-
-        self.last_q_x, self.last_q_y = x, y
-        self.q_count += 1
-        return "query"
-
-
-# ---------------------------------------------------------------------------
-# Image saving helpers
-# ---------------------------------------------------------------------------
-
-def save_rgb_array(arr, path, quality=90):
-    """Save a numpy RGB array as JPEG."""
-    Image.fromarray(arr).save(path, quality=quality)
-    return path
-
-
-def save_compressed_bytes(img_bytes, path, quality=90):
-    """Decode compressed image bytes and save as JPEG."""
-    img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-    img.save(path, quality=quality)
-    return path
-
-
-def undistort_and_save(img_bytes, undistorter, path, quality=90):
-    """Decode, undistort (fisheye or pinhole), save as JPEG.
-
-    ``undistorter`` must expose ``undistort_bytes(jpeg_bytes) -> RGB ndarray``;
-    both :class:`PolyFisheyeUndistorter` and :class:`PinHoleUndistorter`
-    conform to that contract.
-    """
-    rgb = undistorter.undistort_bytes(img_bytes)
-    Image.fromarray(rgb).save(path, quality=quality)
-    return path
-
-
-# ---------------------------------------------------------------------------
-# R1Pro pinhole helpers (shared between offline build and ProcessPoolExecutor
-# workers). The worker helpers live here -- and NOT in the entry script
-# vpr_preprocess.py -- because ``ProcessPoolExecutor`` pickles function
-# references by their fully-qualified module path; placing them in an entry
-# script makes that path ``__main__.…`` which is brittle across spawn modes.
-# ---------------------------------------------------------------------------
-
-_WORKER_PINHOLE_UNDISTORTER = None
-
-
-def r1pro_worker_init():
-    """ProcessPoolExecutor initializer: build the pinhole undistorter once.
-
-    Each worker process pays one-off remap-table construction (~1920x1080 = 8 MB
-    of float32 maps) instead of pickling the table per task.
-    """
-    global _WORKER_PINHOLE_UNDISTORTER
-    _WORKER_PINHOLE_UNDISTORTER = PinHoleUndistorter.from_defaults()
-
-
-def r1pro_undistort_crop_save(img_bytes, path, crop_w, crop_h, quality=90):
-    """Decode JPEG -> pinhole undistort -> center-crop -> save as JPEG.
-
-    Matches the live-query geometry in
-    ``NaviSkill/vpr_bootstrap._undistort_and_center_crop`` so the database
-    images and online query images live in identical feature space.
-    """
-    undistorter = _WORKER_PINHOLE_UNDISTORTER
-    if undistorter is None:  # 直接在主进程调用时也能用
-        undistorter = PinHoleUndistorter.from_defaults()
-    rgb = undistorter.undistort_bytes(img_bytes)  # RGB ndarray
-    h, w = rgb.shape[:2]
-    if w >= crop_w and h >= crop_h:
-        x0 = (w - crop_w) // 2
-        y0 = (h - crop_h) // 2
-        rgb = rgb[y0:y0 + crop_h, x0:x0 + crop_w]
-    Image.fromarray(rgb).save(path, quality=quality)
-    return path
-
-
-# ---------------------------------------------------------------------------
-# Source: ROS1 bag
-# ---------------------------------------------------------------------------
-
-def extract_from_ros1(args):
-    """Extract images from a ROS1 bag with pose file."""
-    from rosbags.rosbag1 import Reader
-    from rosbags.typesys import Stores, get_typestore
-
-    db_dir, q_dir = _make_output_dirs(args.output_dir)
-    
-    # 从 ImgPose.txt 读取位姿，只读取 left 开头的行
-    poses = load_poses_from_imgpose_file(args.pose_file, prefix="left")
-    print(f"Loaded {len(poses)} poses (left frames) from {args.pose_file}")
-
-    undistorter = None
-    if args.undistort_fisheye:
-        if args.calibration_file:
-            undistorter = PolyFisheyeUndistorter.from_yaml(
-                args.calibration_file, out_w=args.out_width, out_h=args.out_height, fov_deg=args.fov
-            )
-        else:
-            undistorter = PolyFisheyeUndistorter.from_defaults(
-                out_w=args.out_width, out_h=args.out_height, fov_deg=args.fov
-            )
-        print(f"Fisheye undistortion enabled ({args.out_width}x{args.out_height}, {args.fov}° FOV)")
-
-    typestore = get_typestore(Stores.ROS1_NOETIC)
-    sampler = DistanceSampler(args.db_distance, args.query_distance)
-    raw_count = 0
-    unmatched = 0
-    futures = []
-    t0 = time.time()
-
-    with Reader(args.bag_path) as reader, \
-         ProcessPoolExecutor(max_workers=args.num_workers) as pool:
-
-        conns = [c for c in reader.connections if c.topic == args.image_topic]
-        if not conns:
-            raise ValueError(f"Topic '{args.image_topic}' not found in {args.bag_path}")
-        print(f"Reading {args.image_topic} from {args.bag_path}")
-
-        for conn, timestamp, rawdata in reader.messages(connections=conns):
-            msg = typestore.deserialize_ros1(rawdata, conn.msgtype)
-            frame_index = raw_count  # 当前帧索引
-            raw_count += 1
-
-            # 按帧序号索引位姿，而不是时间戳匹配
-            if frame_index >= len(poses):
-                unmatched += 1
-                continue
-
-            x, y, z, pose_ts = poses[frame_index]
-            role = sampler.classify(x, y)
-            if role == "skip":
-                continue
-
-            fname = f"@{x:.6f}@{y:.6f}@{z:.6f}@{timestamp}@.jpg"
-            out_dir = db_dir if role == "database" else q_dir
-            path = os.path.join(out_dir, fname)
-
-            img_data = bytes(msg.data)
-            if undistorter:
-                futures.append(pool.submit(undistort_and_save, img_data, undistorter, path))
-            else:
-                futures.append(pool.submit(save_compressed_bytes, img_data, path))
-
-            if raw_count % 200 == 0:
-                _print_progress(raw_count, sampler, t0)
-
-        _wait_for_futures(futures)
-
-    # 检查帧数一致性
-    if raw_count != len(poses):
-        print(f"\nWARNING: Frame count mismatch! Bag has {raw_count} frames, pose file has {len(poses)} left poses.")
-
-    _print_summary(raw_count, sampler, unmatched, t0, db_dir, q_dir)
-
-
-# ---------------------------------------------------------------------------
-# Source: ROS2 bag
+# Source: generic ROS2 bag (Image msg + Path msg). NOT R1Pro --
+# R1Pro uses Odometry + CompressedImage and lives in r1pro_utils.
 # ---------------------------------------------------------------------------
 
 def extract_from_ros2(args):
-    """Extract images from a ROS2 bag with odometry topic."""
+    """Extract images from a generic (non-R1Pro) ROS2 bag.
+
+    Expects ``sensor_msgs/Image`` on ``args.image_topic`` and
+    ``nav_msgs/Path`` on ``args.pose_topic``; uses the last pose in each
+    Path message as the keyframe pose.
+    """
     import rosbag2_py
     from rclpy.serialization import deserialize_message
     from sensor_msgs.msg import Image as RosImage
-    from nav_msgs.msg import Path
+    from nav_msgs.msg import Path as NavPath
 
-    db_dir, q_dir = _make_output_dirs(args.output_dir)
+    db_dir, q_dir = make_output_dirs(args.output_dir)
     bag_path = args.bag_path
     if bag_path.endswith(".db3"):
         bag_path = os.path.dirname(bag_path) or "."
@@ -344,7 +99,6 @@ def extract_from_ros2(args):
         reader.open(opts, conv)
         return reader
 
-    # Pass 1: extract poses
     print(f"[1/2] Reading poses from {args.pose_topic} ...")
     t0 = time.time()
     reader = _create_reader(bag_path)
@@ -352,8 +106,8 @@ def extract_from_ros2(args):
 
     poses = []
     while reader.has_next():
-        topic, data, t = reader.read_next()
-        path_msg = deserialize_message(data, Path)
+        _topic, data, _t = reader.read_next()
+        path_msg = deserialize_message(data, NavPath)
         if path_msg.poses:
             lp = path_msg.poses[-1]
             ts = lp.header.stamp.sec * 10**9 + lp.header.stamp.nanosec
@@ -365,7 +119,6 @@ def extract_from_ros2(args):
     if not poses:
         raise RuntimeError(f"No poses found on {args.pose_topic}")
 
-    # Pass 2: extract images
     print(f"[2/2] Extracting images from {args.image_topic} ...")
     reader = _create_reader(bag_path)
     reader.set_filter(rosbag2_py.StorageFilter(topics=[args.image_topic]))
@@ -398,7 +151,7 @@ def extract_from_ros2(args):
 
     with ProcessPoolExecutor(max_workers=args.num_workers) as pool:
         while reader.has_next():
-            topic, data, t = reader.read_next()
+            _topic, data, _t = reader.read_next()
             img_msg = deserialize_message(data, RosImage)
             img_ts = _msg_ts(img_msg)
             _, x, y = find_nearest_pose(pose_timestamps, poses, img_ts)
@@ -415,122 +168,11 @@ def extract_from_ros2(args):
             futures.append(pool.submit(save_rgb_array, arr, path))
 
             if raw_count % 500 == 0:
-                _print_progress(raw_count, sampler, t0)
+                print_progress(raw_count, sampler, t0)
 
-        _wait_for_futures(futures)
+        wait_for_futures(futures)
 
-    _print_summary(raw_count, sampler, 0, t0, db_dir, q_dir)
-
-
-# ---------------------------------------------------------------------------
-# Source: ROS2 bag from R1Pro (Odometry + CompressedImage)
-# ---------------------------------------------------------------------------
-
-def extract_from_ros2_of_r1pro(args):
-    """Extract images from a R1Pro ROS2 bag with Odometry and CompressedImage topics.
-    
-    Args:
-        args: Namespace with attributes:
-            - bag_path: Path to the ROS2 bag directory
-            - pose_topic: Odometry topic name (nav_msgs/msg/Odometry)
-            - image_topic: CompressedImage topic name (sensor_msgs/msg/CompressedImage)
-            - output_dir: Output directory for extracted images
-            - db_distance: Minimum distance between database images
-            - query_distance: Minimum distance between query images
-            - num_workers: Number of parallel workers for image saving
-    """
-    import rosbag2_py
-    from rclpy.serialization import deserialize_message
-    from sensor_msgs.msg import CompressedImage
-    from nav_msgs.msg import Odometry
-
-    db_dir, q_dir = _make_output_dirs(args.output_dir)
-    bag_path = args.bag_path
-    if bag_path.endswith(".db3"):
-        bag_path = os.path.dirname(bag_path) or "."
-
-    def _create_reader(uri):
-        reader = rosbag2_py.SequentialReader()
-        opts = rosbag2_py.StorageOptions(uri=uri, storage_id="sqlite3")
-        conv = rosbag2_py.ConverterOptions(
-            input_serialization_format="cdr", output_serialization_format="cdr"
-        )
-        reader.open(opts, conv)
-        return reader
-
-    # Pass 1: extract poses from Odometry topic
-    print(f"[1/2] Reading poses from {args.pose_topic} ...")
-    t0 = time.time()
-    reader = _create_reader(bag_path)
-    reader.set_filter(rosbag2_py.StorageFilter(topics=[args.pose_topic]))
-
-    poses = []
-    while reader.has_next():
-        topic, data, t = reader.read_next()
-        odom_msg = deserialize_message(data, Odometry)
-        ts = odom_msg.header.stamp.sec * 10**9 + odom_msg.header.stamp.nanosec
-        x = odom_msg.pose.pose.position.x
-        y = odom_msg.pose.pose.position.y
-        z = odom_msg.pose.pose.position.z
-        poses.append((ts, x, y, z))
-    poses.sort(key=lambda p: p[0])
-    pose_timestamps = [p[0] for p in poses]
-    print(f"  Found {len(poses)} poses in {time.time() - t0:.1f}s")
-
-    if not poses:
-        raise RuntimeError(f"No poses found on {args.pose_topic}")
-
-    def find_nearest_pose_3d(query_ts):
-        """Binary search for the pose closest in time to query_ts."""
-        idx = bisect.bisect_left(pose_timestamps, query_ts)
-        candidates = []
-        if idx > 0:
-            candidates.append(idx - 1)
-        if idx < len(pose_timestamps):
-            candidates.append(idx)
-        if not candidates:
-            return None
-        best = min(candidates, key=lambda i: abs(pose_timestamps[i] - query_ts))
-        return poses[best]
-
-    # Pass 2: extract images from CompressedImage topic
-    print(f"[2/2] Extracting images from {args.image_topic} ...")
-    reader = _create_reader(bag_path)
-    reader.set_filter(rosbag2_py.StorageFilter(topics=[args.image_topic]))
-
-    sampler = DistanceSampler(args.db_distance, args.query_distance)
-    raw_count = 0
-    saved_count = 0
-    undistorter = PinHoleUndistorter.from_defaults()
-
-    while reader.has_next():
-        topic, data, t = reader.read_next()
-        img_msg = deserialize_message(data, CompressedImage)
-        img_ts = img_msg.header.stamp.sec * 10**9 + img_msg.header.stamp.nanosec
-        
-        pose = find_nearest_pose_3d(img_ts)
-        if pose is None:
-            continue
-            
-        _, x, y, z = pose
-        raw_count += 1
-
-        role = sampler.classify(x, y)
-        if role == "skip":
-            continue
-
-        fname = f"@{x:.6f}@{y:.6f}@{z:.6f}@{img_ts}@.jpg"
-        out_dir = db_dir if role == "database" else q_dir
-        path = os.path.join(out_dir, fname)
-        
-        img_data = bytes(img_msg.data)
-        undistort_and_save(img_data, undistorter, path)
-        saved_count += 1
-
-        if raw_count % 500 == 0:
-            _print_progress(raw_count, sampler, t0)
-
-    _print_summary(raw_count, sampler, 0, t0, db_dir, q_dir)
+    print_summary(raw_count, sampler, 0, t0, db_dir, q_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -539,7 +181,7 @@ def extract_from_ros2_of_r1pro(args):
 
 def extract_from_folder(args):
     """Extract images from a folder with a pose file."""
-    db_dir, q_dir = _make_output_dirs(args.output_dir)
+    db_dir, q_dir = make_output_dirs(args.output_dir)
 
     poses = load_poses_from_file(args.pose_file)
     pose_timestamps = [p[0] for p in poses]
@@ -599,42 +241,7 @@ def extract_from_folder(args):
             img.save(out_path, quality=90)
         saved += 1
 
-    _print_summary(len(images), sampler, 0, t0, db_dir, q_dir)
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _make_output_dirs(output_dir):
-    db_dir = os.path.join(output_dir, "database")
-    q_dir = os.path.join(output_dir, "queries")
-    os.makedirs(db_dir, exist_ok=True)
-    os.makedirs(q_dir, exist_ok=True)
-    return db_dir, q_dir
-
-
-def _wait_for_futures(futures):
-    print(f"  Waiting for {len(futures)} image saves ...")
-    for f in as_completed(futures):
-        f.result()
-
-
-def _print_progress(raw_count, sampler, t0):
-    rate = raw_count / (time.time() - t0)
-    print(f"  Read {raw_count} frames "
-          f"(db={sampler.db_count}, queries={sampler.q_count}, "
-          f"skipped={sampler.skipped}) [{rate:.0f} fr/s]")
-
-
-def _print_summary(raw_count, sampler, unmatched, t0, db_dir, q_dir):
-    elapsed = time.time() - t0
-    print(f"\nDone in {elapsed:.1f}s! Read {raw_count} raw frames:")
-    print(f"  Database: {sampler.db_count} images in {db_dir}")
-    print(f"  Queries:  {sampler.q_count} images in {q_dir}")
-    print(f"  Skipped:  {sampler.skipped}")
-    if unmatched:
-        print(f"  Unmatched: {unmatched} (no pose within threshold)")
+    print_summary(len(images), sampler, 0, t0, db_dir, q_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -653,29 +260,27 @@ def main():
     parser.add_argument("--output_dir", type=str, required=True,
                         help="Output directory (will contain database/ and queries/)")
 
-    # Input paths
     parser.add_argument("--bag_path", type=str, default=None,
                         help="Path to ROS bag file (.bag or .db3 directory)")
     parser.add_argument("--image_dir", type=str, default=None,
                         help="Path to image folder (for --source=folder)")
     parser.add_argument("--pose_file", type=str, default=None,
-                        help="Path to frame_pose.txt (for ros1/folder sources)")
+                        help="Path to frame_pose.txt / ImgPose.txt "
+                             "(for ros1/folder sources)")
     parser.add_argument("--image_topic", type=str,
                         default="/camera_agent/img_left/compressed",
                         help="ROS image topic")
     parser.add_argument("--pose_topic", type=str,
                         default="/laser_odom_path",
-                        help="ROS2 odometry topic (for --source=ros2)")
+                        help="ROS2 pose topic (for --source=ros2)")
 
-    # Sampling
     parser.add_argument("--db_distance", type=float, default=1.0,
                         help="Min distance (m) between database images")
     parser.add_argument("--query_distance", type=float, default=0.5,
                         help="Min distance (m) between query images")
 
-    # Fisheye undistortion
     parser.add_argument("--undistort_fisheye", action="store_true",
-                        help="Apply POLYFISHEYE undistortion")
+                        help="Apply POLYFISHEYE undistortion (ros1/folder)")
     parser.add_argument("--calibration_file", type=str, default=None,
                         help="Path to calibration.yaml (uses S20 defaults if not set)")
     parser.add_argument("--out_width", type=int, default=1024)
@@ -683,7 +288,6 @@ def main():
     parser.add_argument("--fov", type=float, default=90,
                         help="Output perspective FOV in degrees")
 
-    # Performance
     parser.add_argument("--num_workers", type=int, default=16,
                         help="Parallel workers for image saving")
 
@@ -692,11 +296,13 @@ def main():
     if args.source == "ros1":
         if not args.bag_path or not args.pose_file:
             parser.error("--source=ros1 requires --bag_path and --pose_file")
+        from s20_utils import extract_from_ros1
         extract_from_ros1(args)
 
     elif args.source == "ros2":
         if not args.bag_path:
             parser.error("--source=ros2 requires --bag_path")
+        from r1pro_utils import extract_from_ros2_of_r1pro
         extract_from_ros2_of_r1pro(args)
 
     elif args.source == "folder":
