@@ -1,12 +1,24 @@
 #!/usr/bin/env python3
-"""Build a VPR feature database from a ROS1 bag (step 1 of the live pipeline).
+"""Build a VPR feature database from a ROS bag (step 1 of the live pipeline).
 
 This script is the first half of the actual (non-evaluation) VPR pipeline.
-It merges:
-  * ROS1 bag parsing + distance-sampled image extraction from
-    ``build_database_3d.py`` (poses are read with
-    ``load_poses_from_imgpose_file``).
-  * Global descriptor extraction from ``pipeline_3d.py`` (Stage 1).
+It currently supports two input sources, selected via ``--source``:
+
+* ``ros1`` (default, SHARE SLAM S20) -- read images from a ROS1 ``.bag``
+  and poses from ``ImgPose.txt``; fisheye undistortion is optional and
+  uses :class:`PolyFisheyeUndistorter`.
+* ``ros2_r1pro`` -- read images and poses from a ROS2 bag (sqlite3 .db3
+  directory): images from a ``sensor_msgs/CompressedImage`` topic
+  (default ``/hdas/camera_head/left_raw/image_raw_color/compressed``)
+  matched in time against ``nav_msgs/Odometry`` poses (default
+  ``/Odometry``). Pinhole rational undistortion is always applied with
+  :class:`PinHoleUndistorter`, followed by a center crop down to
+  ``--crop_width x --crop_height`` (default 1024x768). The crop matches
+  ``vpr_bootstrap._VPR_QUERY_TARGET_W/H`` so that live query frames go
+  through the *same* geometric pipeline as the database frames.
+
+Both pipelines share Stage 1 (global descriptor extraction from
+``pipeline_3d.py``).
 
 Output (under ``--output_dir``)::
 
@@ -16,16 +28,20 @@ Output (under ``--output_dir``)::
                                   # cache lives inside output_dir, absolute
                                   # otherwise)
     database_meta.npz             # method, descriptor_dim, num_database
+    database_build_info.json      # full build provenance (consumed by
+                                  # vpr_detect.py to validate undistortion
+                                  # consistency across submap databases)
 
-By default, the extracted JPGs are written under ``<output_dir>/database/``
-so the directory is self-contained. For larger deployments where you don't
-want the keep the per-frame images next to the (tiny) descriptor files, pass
-``--image_cache_dir`` to redirect them elsewhere (e.g. ``~/.vpr/<scene>``).
-The downstream detection module only needs the four files above.
+By default the extracted JPGs are written under ``<output_dir>/database/``.
+Pass ``--image_cache_dir`` to redirect them elsewhere (e.g. ``~/.vpr/<scene>``)
+when you don't want the per-frame images next to the (tiny) descriptor files.
+The downstream detection module only needs the files above.
 
-Example
--------
+Examples
+--------
+    # S20 fisheye / ROS1 bag
     python vpr_preprocess.py \\
+        --source ros1 \\
         --bag_path data/all_2024.bag \\
         --pose_file data/ImgPose.txt \\
         --image_topic /camera_agent/img_left/compressed \\
@@ -33,9 +49,18 @@ Example
         --db_distance 1.0 \\
         --method salad-indoor \\
         --output_dir datasets/scene_A
+
+    # R1Pro pinhole / ROS2 bag
+    python vpr_preprocess.py \\
+        --source ros2_r1pro \\
+        --bag_path /home/nvidia/vpr_data/2f/rosbag_20260514_093133 \\
+        --db_distance 1.0 \\
+        --method megaloc \\
+        --output_dir ~/Navi/maps/408/vpr/2f
 """
 
 import argparse
+import bisect
 import json
 import os
 import sys
@@ -54,6 +79,8 @@ from tqdm import tqdm
 
 from build_database_3d import (
     load_poses_from_imgpose_file,
+    r1pro_undistort_crop_save,
+    r1pro_worker_init,
     save_compressed_bytes,
     undistort_and_save,
 )
@@ -195,6 +222,147 @@ def extract_database_from_ros1(args):
 
 
 # ---------------------------------------------------------------------------
+# Step 1a-bis: extract distance-sampled database images from a ROS2 R1Pro bag
+# ---------------------------------------------------------------------------
+# The actual per-frame undistort/crop/save work lives in
+# ``build_database_3d.r1pro_undistort_crop_save`` so that
+# ``ProcessPoolExecutor`` can pickle it by a stable module path.
+
+def _load_ros2_odometry_poses(bag_path, pose_topic):
+    """Read every Odometry message on ``pose_topic`` and return sorted poses.
+
+    Returns
+    -------
+    poses : list of (ts_ns, x, y, z)
+        Sorted ascending by ``ts_ns``.
+    """
+    import rosbag2_py
+    from rclpy.serialization import deserialize_message
+    from nav_msgs.msg import Odometry
+
+    reader = rosbag2_py.SequentialReader()
+    opts = rosbag2_py.StorageOptions(uri=bag_path, storage_id="sqlite3")
+    conv = rosbag2_py.ConverterOptions(
+        input_serialization_format="cdr", output_serialization_format="cdr"
+    )
+    reader.open(opts, conv)
+    reader.set_filter(rosbag2_py.StorageFilter(topics=[pose_topic]))
+
+    poses = []
+    while reader.has_next():
+        _topic, data, _t = reader.read_next()
+        msg = deserialize_message(data, Odometry)
+        ts = msg.header.stamp.sec * 10**9 + msg.header.stamp.nanosec
+        p = msg.pose.pose.position
+        poses.append((ts, p.x, p.y, p.z))
+    poses.sort(key=lambda x: x[0])
+    return poses
+
+
+def extract_database_from_ros2_r1pro(args):
+    """Parse an R1Pro ROS2 bag and write undistorted+cropped JPGs to disk.
+
+    Args:
+        args: Namespace with attributes ``bag_path``, ``image_topic``,
+            ``pose_topic``, ``db_distance``, ``image_cache_dir``,
+            ``crop_width``, ``crop_height``, ``num_workers``.
+    """
+    import rosbag2_py
+    from rclpy.serialization import deserialize_message
+    from sensor_msgs.msg import CompressedImage
+
+    db_dir = args.image_cache_dir
+    os.makedirs(db_dir, exist_ok=True)
+
+    # ROS2 bag 目录约定：传入 .db3 时取其所在目录
+    bag_path = args.bag_path
+    if bag_path.endswith(".db3"):
+        bag_path = os.path.dirname(bag_path) or "."
+
+    t0 = time.time()
+    logger.info(f"[1/2] Reading poses from {args.pose_topic} ...")
+    poses = _load_ros2_odometry_poses(bag_path, args.pose_topic)
+    if not poses:
+        raise RuntimeError(f"No poses found on {args.pose_topic} in {bag_path}")
+    pose_timestamps = [p[0] for p in poses]
+    logger.info(f"  Found {len(poses)} poses in {time.time() - t0:.1f}s")
+
+    def find_nearest_pose(query_ts):
+        idx = bisect.bisect_left(pose_timestamps, query_ts)
+        candidates = []
+        if idx > 0:
+            candidates.append(idx - 1)
+        if idx < len(pose_timestamps):
+            candidates.append(idx)
+        if not candidates:
+            return None
+        best = min(candidates, key=lambda i: abs(pose_timestamps[i] - query_ts))
+        return poses[best]
+
+    logger.info(f"[2/2] Extracting images from {args.image_topic} ...")
+    reader = rosbag2_py.SequentialReader()
+    opts = rosbag2_py.StorageOptions(uri=bag_path, storage_id="sqlite3")
+    conv = rosbag2_py.ConverterOptions(
+        input_serialization_format="cdr", output_serialization_format="cdr"
+    )
+    reader.open(opts, conv)
+    reader.set_filter(rosbag2_py.StorageFilter(topics=[args.image_topic]))
+
+    sampler = DatabaseSampler(args.db_distance)
+    raw_count = 0
+    futures = []
+    t1 = time.time()
+
+    with ProcessPoolExecutor(
+        max_workers=args.num_workers,
+        initializer=r1pro_worker_init,
+    ) as pool:
+        while reader.has_next():
+            _topic, data, _t = reader.read_next()
+            msg = deserialize_message(data, CompressedImage)
+            img_ts = msg.header.stamp.sec * 10**9 + msg.header.stamp.nanosec
+            raw_count += 1
+
+            pose = find_nearest_pose(img_ts)
+            if pose is None:
+                continue
+            _, x, y, z = pose
+
+            if not sampler.keep(x, y):
+                continue
+
+            fname = f"@{x:.6f}@{y:.6f}@{z:.6f}@{img_ts}@.jpg"
+            path = os.path.join(db_dir, fname)
+            img_data = bytes(msg.data)
+            futures.append(
+                pool.submit(
+                    r1pro_undistort_crop_save,
+                    img_data, path, args.crop_width, args.crop_height,
+                )
+            )
+
+            if raw_count % 200 == 0:
+                rate = raw_count / (time.time() - t1)
+                logger.info(
+                    f"  Read {raw_count} frames "
+                    f"(kept={sampler.kept}, skipped={sampler.skipped}) "
+                    f"[{rate:.0f} fr/s]"
+                )
+
+        logger.info(f"  Waiting for {len(futures)} image saves ...")
+        for f in as_completed(futures):
+            f.result()
+
+    elapsed = time.time() - t0
+    logger.info(f"Image extraction done in {elapsed:.1f}s.")
+    logger.info(f"  Kept (database):  {sampler.kept} -> {db_dir}")
+    logger.info(f"  Skipped:          {sampler.skipped}")
+    logger.info(f"  Raw image frames: {raw_count}")
+
+    return db_dir
+
+
+# ---------------------------------------------------------------------------
 # Step 1b: extract global descriptors over the saved database images
 # ---------------------------------------------------------------------------
 
@@ -298,8 +466,13 @@ def extract_descriptors(args, db_dir):
     )
 
     # 人类可读 + 跨语言可读的构造信息（C++ GUI 等下游消费者用）
+    # 注意：``undistort_fisheye`` / ``out_width`` / ``out_height`` / ``fov`` /
+    # ``calibration_file`` 必须保留，因为 vpr_detect._UNDISTORT_KEYS 会跨 database
+    # 校验这几个字段是否一致；R1Pro 路径下我们写 ``undistort_fisheye=false``，
+    # 实际去畸变由 vpr_bootstrap 在线侧用 PinHoleUndistorter 完成。
     build_info = {
         "built_at":          datetime.now().isoformat(timespec="seconds"),
+        "source":            args.source,
         "method":            args.method,
         "descriptor_dim":    int(descriptor_dim),
         "num_database":      int(len(image_paths)),
@@ -307,14 +480,21 @@ def extract_descriptors(args, db_dir):
         "output_dir":        args.output_dir,
         "image_cache_dir":   args.image_cache_dir,
         "bag_path":          args.bag_path,
-        "pose_file":         args.pose_file,
+        "pose_file":         getattr(args, "pose_file", None),
+        "pose_topic":        getattr(args, "pose_topic", None),
         "image_topic":       args.image_topic,
         "db_distance":       float(args.db_distance),
+        # --- fisheye / S20 路径专用（R1Pro 时全部为 false / 默认值） ---
         "undistort_fisheye": bool(args.undistort_fisheye),
         "calibration_file":  args.calibration_file,
         "out_width":         int(args.out_width),
         "out_height":        int(args.out_height),
         "fov":               float(args.fov),
+        # --- R1Pro / pinhole 路径专用 ---
+        "undistort_pinhole_r1pro": bool(args.source == "ros2_r1pro"),
+        "crop_width":        int(getattr(args, "crop_width", 0)) or None,
+        "crop_height":       int(getattr(args, "crop_height", 0)) or None,
+        # --- 公共 ---
         "device":            args.device,
         "batch_size":        int(args.batch_size),
         "num_workers":       int(args.num_workers),
@@ -340,18 +520,32 @@ def extract_descriptors(args, db_dir):
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Build a VPR feature database (.npy) from a ROS1 bag.",
+        description="Build a VPR feature database (.npy) from a ROS bag.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
     # Input
+    parser.add_argument("--source", type=str, default="ros1",
+                        choices=["ros1", "ros2_r1pro"],
+                        help="Input pipeline: 'ros1' = SHARE SLAM S20 (.bag + "
+                             "ImgPose.txt, optional fisheye undistortion); "
+                             "'ros2_r1pro' = R1Pro (.db3 ROS2 bag with "
+                             "/Odometry + CompressedImage, always pinhole "
+                             "undistorted + center-cropped to match the live "
+                             "query pipeline in vpr_bootstrap).")
     parser.add_argument("--bag_path", type=str, required=True,
-                        help="Path to the ROS1 .bag file")
-    parser.add_argument("--pose_file", type=str, required=True,
-                        help="Path to ImgPose.txt (parsed with load_poses_from_imgpose_file)")
-    parser.add_argument("--image_topic", type=str,
-                        default="/camera_agent/img_left/compressed",
-                        help="ROS1 image topic to read")
+                        help="Path to the ROS1 .bag file (source=ros1) or "
+                             "ROS2 bag directory / .db3 file (source=ros2_r1pro)")
+    parser.add_argument("--pose_file", type=str, default=None,
+                        help="[source=ros1] Path to ImgPose.txt "
+                             "(parsed with load_poses_from_imgpose_file)")
+    parser.add_argument("--pose_topic", type=str, default="/Odometry",
+                        help="[source=ros2_r1pro] nav_msgs/Odometry topic name")
+    parser.add_argument("--image_topic", type=str, default=None,
+                        help="Compressed image topic to read. Defaults: "
+                             "/camera_agent/img_left/compressed (ros1) or "
+                             "/hdas/camera_head/left_raw/image_raw_color/"
+                             "compressed (ros2_r1pro)")
 
     # Output
     parser.add_argument("--output_dir", type=str, required=True,
@@ -368,15 +562,29 @@ def parse_args():
     parser.add_argument("--db_distance", type=float, default=1.0,
                         help="Min XY distance (m) between database keyframes")
 
-    # Fisheye undistortion (forwarded to PolyFisheyeUndistorter)
+    # Fisheye undistortion (forwarded to PolyFisheyeUndistorter) -- ros1 only
     parser.add_argument("--undistort_fisheye", action="store_true",
-                        help="Apply POLYFISHEYE -> perspective undistortion")
+                        help="[source=ros1] Apply POLYFISHEYE -> perspective "
+                             "undistortion")
     parser.add_argument("--calibration_file", type=str, default=None,
-                        help="Path to calibration.yaml (uses S20 defaults if unset)")
-    parser.add_argument("--out_width", type=int, default=1024)
-    parser.add_argument("--out_height", type=int, default=768)
+                        help="[source=ros1] Path to calibration.yaml "
+                             "(uses S20 defaults if unset)")
+    parser.add_argument("--out_width", type=int, default=1024,
+                        help="[source=ros1] PolyFisheyeUndistorter output width")
+    parser.add_argument("--out_height", type=int, default=768,
+                        help="[source=ros1] PolyFisheyeUndistorter output height")
     parser.add_argument("--fov", type=float, default=90,
-                        help="Output perspective FOV in degrees")
+                        help="[source=ros1] Output perspective FOV in degrees")
+
+    # R1Pro pinhole crop -- must match vpr_bootstrap._VPR_QUERY_TARGET_W/H
+    parser.add_argument("--crop_width", type=int, default=1024,
+                        help="[source=ros2_r1pro] Center-crop width after "
+                             "pinhole undistortion (must match the live "
+                             "query crop in vpr_bootstrap.py)")
+    parser.add_argument("--crop_height", type=int, default=768,
+                        help="[source=ros2_r1pro] Center-crop height after "
+                             "pinhole undistortion (must match the live "
+                             "query crop in vpr_bootstrap.py)")
 
     # Descriptor extraction
     parser.add_argument("--method", type=str, default="megaloc",
@@ -413,11 +621,46 @@ def _configure_logging(output_dir):
     logger.info(f"Logging to {log_path}")
 
 
+_DEFAULT_IMAGE_TOPIC = {
+    "ros1": "/camera_agent/img_left/compressed",
+    "ros2_r1pro": "/hdas/camera_head/left_raw/image_raw_color/compressed",
+}
+
+
+def _validate_source_args(args):
+    """Fill in source-dependent defaults and reject incompatible combos."""
+    if args.image_topic is None:
+        args.image_topic = _DEFAULT_IMAGE_TOPIC[args.source]
+
+    if args.source == "ros1":
+        if not args.pose_file:
+            raise SystemExit(
+                "source=ros1 requires --pose_file (path to ImgPose.txt)"
+            )
+    elif args.source == "ros2_r1pro":
+        if args.undistort_fisheye:
+            raise SystemExit(
+                "source=ros2_r1pro applies pinhole undistortion automatically; "
+                "do not pass --undistort_fisheye."
+            )
+        if args.pose_file:
+            logger.warning(
+                "source=ros2_r1pro reads poses from --pose_topic, "
+                "ignoring --pose_file"
+            )
+        # 强制把 fisheye 字段归零，确保写出的 build_info 不会误导 vpr_detect
+        args.undistort_fisheye = False
+        args.calibration_file = None
+
+
 def main():
     args = parse_args()
     args.output_dir = os.path.abspath(os.path.expanduser(args.output_dir))
+    args.bag_path = os.path.abspath(os.path.expanduser(args.bag_path))
     os.makedirs(args.output_dir, exist_ok=True)
     _configure_logging(args.output_dir)
+
+    _validate_source_args(args)
 
     # 解析图片缓存目录：未指定时回退到 <output_dir>/database (向后兼容)
     if args.image_cache_dir:
@@ -427,9 +670,20 @@ def main():
     else:
         args.image_cache_dir = os.path.join(args.output_dir, "database")
 
-    logger.info(f"Arguments: {vars(args)}")
+    logger.info(f"Source          : {args.source}")
+    logger.info(f"Bag path        : {args.bag_path}")
+    logger.info(f"Image topic     : {args.image_topic}")
+    if args.source == "ros1":
+        logger.info(f"Pose file       : {args.pose_file}")
+    else:
+        logger.info(f"Pose topic      : {args.pose_topic}")
+        logger.info(
+            f"Pinhole crop    : {args.crop_width}x{args.crop_height} "
+            f"(must match vpr_bootstrap._VPR_QUERY_TARGET_W/H)"
+        )
     logger.info(f"Image cache dir : {args.image_cache_dir}")
     logger.info(f"Descriptor dir  : {args.output_dir}")
+    logger.info(f"Arguments       : {vars(args)}")
 
     if args.skip_extraction:
         if not os.path.isdir(args.image_cache_dir):
@@ -438,8 +692,12 @@ def main():
             )
         logger.info(f"Skipping image extraction; reusing {args.image_cache_dir}")
         db_dir = args.image_cache_dir
-    else:
+    elif args.source == "ros1":
         db_dir = extract_database_from_ros1(args)
+    elif args.source == "ros2_r1pro":
+        db_dir = extract_database_from_ros2_r1pro(args)
+    else:
+        raise AssertionError(f"unhandled source: {args.source}")
 
     extract_descriptors(args, db_dir)
     logger.info("VPR preprocessing complete.")

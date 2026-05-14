@@ -200,6 +200,47 @@ def undistort_and_save(img_bytes, undistorter, path, quality=90):
 
 
 # ---------------------------------------------------------------------------
+# R1Pro pinhole helpers (shared between offline build and ProcessPoolExecutor
+# workers). The worker helpers live here -- and NOT in the entry script
+# vpr_preprocess.py -- because ``ProcessPoolExecutor`` pickles function
+# references by their fully-qualified module path; placing them in an entry
+# script makes that path ``__main__.…`` which is brittle across spawn modes.
+# ---------------------------------------------------------------------------
+
+_WORKER_PINHOLE_UNDISTORTER = None
+
+
+def r1pro_worker_init():
+    """ProcessPoolExecutor initializer: build the pinhole undistorter once.
+
+    Each worker process pays one-off remap-table construction (~1920x1080 = 8 MB
+    of float32 maps) instead of pickling the table per task.
+    """
+    global _WORKER_PINHOLE_UNDISTORTER
+    _WORKER_PINHOLE_UNDISTORTER = PinHoleUndistorter.from_defaults()
+
+
+def r1pro_undistort_crop_save(img_bytes, path, crop_w, crop_h, quality=90):
+    """Decode JPEG -> pinhole undistort -> center-crop -> save as JPEG.
+
+    Matches the live-query geometry in
+    ``NaviSkill/vpr_bootstrap._undistort_and_center_crop`` so the database
+    images and online query images live in identical feature space.
+    """
+    undistorter = _WORKER_PINHOLE_UNDISTORTER
+    if undistorter is None:  # 直接在主进程调用时也能用
+        undistorter = PinHoleUndistorter.from_defaults()
+    rgb = undistorter.undistort_bytes(img_bytes)  # RGB ndarray
+    h, w = rgb.shape[:2]
+    if w >= crop_w and h >= crop_h:
+        x0 = (w - crop_w) // 2
+        y0 = (h - crop_h) // 2
+        rgb = rgb[y0:y0 + crop_h, x0:x0 + crop_w]
+    Image.fromarray(rgb).save(path, quality=quality)
+    return path
+
+
+# ---------------------------------------------------------------------------
 # Source: ROS1 bag
 # ---------------------------------------------------------------------------
 
