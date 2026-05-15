@@ -57,28 +57,12 @@ NaviSkill/vpr/             # VPR module of NaviSkill (was vpr/vpr-pipeline-v1/)
 ├── README.md              # This file
 ├── pyproject.toml         # Package metadata + dependencies (uv / pip)
 ├── requirements.txt       # Legacy dependency list
-│
-├── vrr_vpr/               # ★ Installable Python package (C++ API target)
-│   ├── __init__.py        #   Exports VPREngine
-│   ├── engine.py          #   Stateful VPREngine class — main API
-│   ├── model_loader.py    #   MegaLoc + SALAD-indoor model loading
-│   ├── rerank.py          #   SuperPoint + LightGlue re-ranking
-│   ├── color_rerank.py    #   HSV color histogram re-scoring
-│   └── undistort.py       #   Fisheye undistortion
-│
-├── cpp/                   # ★ C++ wrapper library (pybind11 embed)
-│   ├── CMakeLists.txt     #   Build config
-│   ├── include/vrr_vpr/
-│   │   └── vrr_vpr.h      #   Public C++ API header
-│   ├── src/
-│   │   └── vrr_vpr.cpp    #   Implementation
-│   └── example/
-│       └── main.cpp       #   Usage example
+├── uv.lock                # uv lockfile
+├── install_jetson.sh      # Jetson-specific torch/torchvision install helper
 │
 ├── vpr_preprocess.py      # ★ Live pipeline: build per-submap descriptor DB
 ├── vpr_detect.py          # ★ Live pipeline: query detector (--serve mode)
 ├── model_loader.py        # MegaLoc + SALAD-indoor model loading
-├── visualizations.py      # Prediction visualization (eval-only)
 │
 ├── utils/                 # ★ Shared library code (no CLI / no main)
 │   ├── __init__.py
@@ -91,20 +75,11 @@ NaviSkill/vpr/             # VPR module of NaviSkill (was vpr/vpr-pipeline-v1/)
 │   ├── rerank.py          #   SuperPoint + LightGlue re-ranking (eval-only)
 │   └── color_rerank.py    #   HSV color histogram re-scoring (eval-only)
 │
-├── eval/                  # ★ Offline evaluation / algorithm-feasibility code
-│   ├── build_database_3d.py  # Legacy CLI: build DB + queries split
-│   ├── dataset_3d.py         # Eval Dataset (DB + queries pair, recall@K)
-│   └── pipeline_3d.py        # Eval pipeline: FAISS + optional re-ranking
-│
-└── datasets/              # ★ Included evaluation data
-    ├── cross_floor_eval/  #   Cross-floor: 59 DB + 112 queries (4 floors)
-    │   ├── database/      #     15 img/floor (11th, 12th, 3rd, 4th)
-    │   └── queries/       #     28 img/floor
-    └── floor_eval/        #   Per-floor: same-floor with ground truth
-        ├── 11th-floor/    #     database/ + queries/ with UTM coords
-        ├── 12th-floor/
-        ├── 3rd-floor/
-        └── 4th-floor/
+└── eval/                  # ★ Offline evaluation / algorithm-feasibility code
+    ├── build_database_3d.py  # Legacy CLI: build DB + queries split
+    ├── dataset_3d.py         # Eval Dataset (DB + queries pair, recall@K)
+    ├── pipeline_3d.py        # Eval pipeline: FAISS + optional re-ranking
+    └── visualizations.py     # Prediction visualization (used by pipeline_3d)
 ```
 
 ## Setup
@@ -117,6 +92,103 @@ uv sync                    # Creates .venv and installs all deps
 # For ROS2 bag support only: requires ROS2 Humble system install
 # (rosbag2_py, rclpy, sensor_msgs, nav_msgs are system packages — use native Python)
 ```
+
+## Live Pipeline
+
+Two top-level scripts drive the **production** pipeline:
+
+* `vpr_preprocess.py` — build a per-submap descriptor database from one ROS bag
+  (one bag per submap), invoked during map authoring (also wired into MapEditor's
+  "Build VPR database" dialog).
+* `vpr_detect.py` — query the database(s); supports a one-shot CLI mode and a
+  long-running `--serve` mode that talks JSON over stdin/stdout (used by
+  `NaviSkill/vpr_bootstrap.py` from `server.py`).
+
+### Build a database — `vpr_preprocess.py`
+
+Two input sources, selected via `--source`:
+
+* `--source=ros1` (default) — SHARE SLAM **S20** ROS1 `.bag` + `ImgPose.txt`.
+  Optional polyfisheye → perspective undistortion via `--undistort_fisheye`.
+* `--source=ros2_r1pro` — **R1Pro** ROS2 `.db3` with `/Odometry` +
+  `CompressedImage`. Pinhole-undistorted and center-cropped automatically to
+  match the geometry baked into `vpr_bootstrap`.
+
+```bash
+# S20 — ROS1 bag, fisheye undistortion → 1024x768 perspective
+uv run python vpr_preprocess.py \
+    --source=ros1 \
+    --bag_path=/data/maps/408/floor2/floor2.bag \
+    --pose_file=/data/maps/408/floor2/ImgPose.txt \
+    --image_topic=/camera_agent/img_left/compressed \
+    --undistort_fisheye \
+    --db_distance=1.0 \
+    --image_cache_dir=~/.vpr/408/floor2 \
+    --output_dir=/home/nvidia/Navi/maps/408/vpr/floor2 \
+    --method=salad-indoor --device=cuda
+
+# R1Pro — ROS2 bag, automatic pinhole undistortion + center crop to 1024x768
+uv run python vpr_preprocess.py \
+    --source=ros2_r1pro \
+    --bag_path=/data/rosbag_20260514_093133 \
+    --pose_topic=/Odometry \
+    --image_topic=/hdas/camera_head/left_raw/image_raw_color/compressed \
+    --db_distance=1.0 \
+    --crop_width=1024 --crop_height=768 \
+    --image_cache_dir=~/.vpr/408/floor2 \
+    --output_dir=/home/nvidia/Navi/maps/408/vpr/floor2 \
+    --method=salad-indoor --device=cuda
+```
+
+Output (`--output_dir`) is exactly what `vpr_detect.py` reads back:
+
+```
+<output_dir>/
+├── descriptors.npy            # (N, D) float32 L2-normalized global descriptors
+├── image_paths.json           # paths to the cached query JPEGs (under image_cache_dir)
+├── poses.npy                  # (N, 3) tx ty tz per image
+└── database_build_info.json   # method, source, undistort/crop config, etc.
+```
+
+Decoded JPEGs themselves live under `--image_cache_dir` (default
+`~/.vpr/<project>/<submap>`), so `--output_dir` stays small enough to keep
+under the map repo.
+
+### Query a database — `vpr_detect.py`
+
+One-shot CLI (sanity-check a freshly built database):
+
+```bash
+uv run python vpr_detect.py \
+    --image /tmp/query.jpg \
+    --databases /home/nvidia/Navi/maps/408/vpr/floor1 \
+                /home/nvidia/Navi/maps/408/vpr/floor2 \
+                /home/nvidia/Navi/maps/408/vpr/floor3 \
+    --top_k 3 \
+    --device cuda \
+    --json
+```
+
+JSON output reports — for each top-K hit — the matched image path, its
+`(x, y, z)`, and the source database directory (i.e. the submap id).
+
+Long-running RPC mode (this is how `vpr_bootstrap` keeps the model loaded
+between queries from `server.py`):
+
+```bash
+uv run python vpr_detect.py \
+    --databases /home/nvidia/Navi/maps/408/vpr/floor1 \
+                /home/nvidia/Navi/maps/408/vpr/floor2 \
+                /home/nvidia/Navi/maps/408/vpr/floor3 \
+    --device cuda \
+    --serve
+# Then write one JSON request per line on stdin and read one JSON response per
+# line from stdout. See NaviSkill/vpr_bootstrap.py for the wire format.
+```
+
+The set of `--databases` passed to `--serve` must all share the same
+undistortion config (validated at startup against each
+`database_build_info.json`); the live query image is preprocessed accordingly.
 
 ## Quick-Start Evaluation
 
@@ -150,20 +222,6 @@ uv run python eval/pipeline_3d.py \
 
 Expected: **96.4% R@1** for 11th floor. Replace `11th-floor` with `12th-floor`, `3rd-floor`, or `4th-floor`.
 
-### C++ example
-
-```bash
-cd cpp && mkdir -p build && cd build
-cmake .. -DPython3_EXECUTABLE=$(realpath ../../.venv/bin/python)
-make -j$(nproc)
-
-export VPR_ROOT=$(realpath ../..)
-export PYTHONPATH="${VPR_ROOT}:${VPR_ROOT}/.venv/lib/python3.10/site-packages"
-
-./vrr_vpr_example ../../datasets/cross_floor_eval/database \
-    ../../datasets/cross_floor_eval/queries/@0.000000@0.000000@11th-floor_q_1772003587158549694@.jpg 3
-```
-
 ### Included datasets
 
 | Dataset | DB Images | Query Images | Ground Truth | Purpose |
@@ -173,112 +231,6 @@ export PYTHONPATH="${VPR_ROOT}:${VPR_ROOT}/.venv/lib/python3.10/site-packages"
 | `floor_eval/12th-floor` | 15 | 28 | UTM coords in filename | Same-floor R@1 |
 | `floor_eval/3rd-floor` | 16 | 28 | UTM coords in filename | Same-floor R@1 |
 | `floor_eval/4th-floor` | 13 | 28 | UTM coords in filename | Same-floor R@1 |
-
----
-
-## C++ API Integration
-
-The `vrr_vpr` Python package exposes a stateful `VPREngine` class.
-The `cpp/` directory provides a C++ wrapper that embeds Python via **pybind11**,
-giving your C++ application a native API while all heavy lifting (PyTorch, FAISS,
-LightGlue) runs in Python.
-
-```
-C++ application  ──►  libvrr_vpr (pybind11 embed)  ──►  vrr_vpr Python module  ──►  PyTorch / FAISS / LightGlue
-```
-
-### Building the C++ library
-
-```bash
-cd NaviSkill/vpr/cpp
-mkdir build && cd build
-cmake .. -DPython3_EXECUTABLE=$(realpath ../.. )/.venv/bin/python
-make -j$(nproc)
-```
-
-### ⚠️ CRITICAL: Runtime PYTHONPATH
-
-> **The pybind11 embedded interpreter does NOT automatically activate the uv
-> virtual environment.** You **must** set `PYTHONPATH` at runtime so the
-> interpreter can find both the `vrr_vpr` package and its dependencies in the
-> venv `site-packages`.
-
-```bash
-# ┌─────────────────────────────────────────────────────────────────────┐
-# │  REQUIRED — set before running any C++ binary that uses libvrr_vpr │
-# └─────────────────────────────────────────────────────────────────────┘
-export VPR_ROOT=/path/to/Navi/NaviSkill/vpr
-export PYTHONPATH="${VPR_ROOT}:${VPR_ROOT}/.venv/lib/python3.10/site-packages"
-```
-
-Without this, the embedded Python will use system Python and fail with
-`ModuleNotFoundError: No module named 'faiss'` (or `torch`, etc.).
-
-For launch files or systemd services, bake the two paths into the environment.
-
-### C++ API reference
-
-```cpp
-#include "vrr_vpr/vrr_vpr.h"
-
-// Construct — SALAD-indoor with color re-scoring (best for cross-floor)
-vrr::VPREngine engine("salad-indoor", "cuda",
-    /*rerank=*/false, /*max_keypoints=*/1024, /*rerank_resize=*/512,
-    /*color_rerank=*/true, /*color_weight=*/5.0f);
-
-// Or MegaLoc with geometric re-ranking (best for same-floor)
-// vrr::VPREngine engine("megaloc", "cuda", /*rerank=*/true);
-
-// Build database from image folder (returns count)
-int n = engine.buildDatabase("/data/database_images");
-
-// Query by file path (FAISS only)
-vrr::QueryResult r = engine.query("/data/query.jpg", /*top_k=*/5);
-// r.indices, r.distances, r.paths
-
-// Query with color re-scoring (requires color_rerank=true)
-vrr::QueryResult r2 = engine.queryWithColorRerank("/data/query.jpg", 5, 20);
-// r2.scores contains combined scores
-
-// Query with geometric re-ranking (requires rerank=true)
-vrr::QueryResult r3 = engine.queryWithRerank("/data/query.jpg", 5, 20);
-// r3.scores contains inlier counts
-
-// Query by raw pixel buffer (e.g. from cv::Mat)
-vrr::QueryResult r4 = engine.queryImage(mat.data, mat.rows, mat.cols, 5);
-
-// Persist / reload database
-engine.saveDatabase("/tmp/vrr_db");
-engine.loadDatabase("/tmp/vrr_db");
-
-// Extract raw descriptor (8448-d float vector)
-std::vector<float> desc(engine.descriptorDim());
-engine.extractDescriptor("/data/image.jpg", desc.data());
-```
-
-### Python API reference (for direct use without C++)
-
-```python
-from vrr_vpr import VPREngine
-
-# Cross-floor: SALAD-indoor + color re-scoring
-engine = VPREngine(method="salad-indoor", device="cuda", color_rerank=True, color_weight=5.0)
-engine.build_database("/data/database_images")
-
-result = engine.query("/data/query.jpg", top_k=5)
-# result["indices"], result["distances"], result["paths"]
-
-result = engine.query_with_color_rerank("/data/query.jpg", top_k=5, candidates_k=20)
-# result["indices"], result["scores"], result["paths"]
-
-# Same-floor: MegaLoc + geometric re-ranking
-engine = VPREngine(method="megaloc", device="cuda", rerank=True)
-result = engine.query_with_rerank("/data/query.jpg", top_k=5, rerank_k=20)
-# result["scores"] contains inlier counts
-
-engine.save_database("/tmp/vrr_db")
-engine.load_database("/tmp/vrr_db")
-```
 
 ---
 

@@ -24,9 +24,10 @@ from datetime import datetime
 from pathlib import Path
 
 # Allow ``python eval/pipeline_3d.py`` (and ``python pipeline_3d.py`` from
-# eval/) to find the ``utils`` subpackage (rerank / color_rerank), plus
-# the top-level ``model_loader`` / ``visualizations`` modules that live
-# in the parent ``vpr/``.
+# eval/) to find the ``utils`` subpackage (rerank / color_rerank) and
+# the top-level ``model_loader`` in the parent ``vpr/``. The sibling
+# ``visualizations`` and ``dataset_3d`` resolve via the script-dir
+# entry that CPython implicitly adds to sys.path[0].
 _PARENT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PARENT_DIR not in sys.path:
     sys.path.insert(0, _PARENT_DIR)
