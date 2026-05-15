@@ -17,8 +17,8 @@ It currently supports two input sources, selected via ``--source``:
   ``vpr_bootstrap._VPR_QUERY_TARGET_W/H`` so that live query frames go
   through the *same* geometric pipeline as the database frames.
 
-Both pipelines share Stage 1 (global descriptor extraction from
-``pipeline_3d.py``).
+Both pipelines share Stage 1 (global descriptor extraction); the
+offline evaluation counterpart lives in ``eval/pipeline_3d.py``.
 
 Output (under ``--output_dir``)::
 

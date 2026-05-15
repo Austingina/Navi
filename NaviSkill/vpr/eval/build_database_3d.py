@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Build VPR image database + query sets from raw data (legacy entry point).
+"""Build VPR image database + query sets from raw data (legacy eval entry).
+
+This is an **evaluation-only** entry point that produces a *paired*
+database + query layout suitable for recall@K benchmarks via
+``eval/pipeline_3d.py``. The production live pipeline uses
+``vpr_preprocess.py`` (database-only output, no query split).
 
 Supports three input sources, dispatched via ``--source``:
 
@@ -11,19 +16,18 @@ Supports three input sources, dispatched via ``--source``:
 * ``folder`` -- plain image folder + ``frame_pose.txt``.
 
 Platform-specific logic has been factored out into :mod:`s20_utils`
-and :mod:`r1pro_utils`. This module retains:
+and :mod:`r1pro_utils` (which live one level up, next to the live
+pipeline). This module retains:
 
-* shared helpers (samplers, image savers, output-dir/progress/summary
-  utilities) consumed by both util modules;
 * the *generic* ROS2 path (Image + Path) and folder path;
 * the CLI entry point.
 
 Images are distance-sampled and saved with ``@x@y[@z]@timestamp@.jpg``
-filenames for downstream use by ``pipeline_3d.py``.
+filenames for downstream use by ``eval/pipeline_3d.py``.
 
 Examples:
     # From ROS1 bag (SHARE SLAM S20 with fisheye)
-    python build_database_3d.py --source=ros1 \\
+    python eval/build_database_3d.py --source=ros1 \\
         --bag_path=data/all_*.bag --pose_file=data/frame_pose.txt \\
         --image_topic=/camera_agent/img_left/compressed \\
         --undistort_fisheye \\
@@ -31,14 +35,14 @@ Examples:
         --output_dir=datasets/my_scene
 
     # From ROS2 bag (R1Pro)
-    python build_database_3d.py --source=ros2 \\
+    python eval/build_database_3d.py --source=ros2 \\
         --bag_path=data/ --pose_topic=/Odometry \\
         --image_topic=/hdas/camera_head/left_raw/image_raw_color/compressed \\
         --db_distance=1.0 --query_distance=0.5 \\
         --output_dir=datasets/my_scene
 
     # From plain image folder
-    python build_database_3d.py --source=folder \\
+    python eval/build_database_3d.py --source=folder \\
         --image_dir=raw_images/ --pose_file=poses.txt \\
         --db_distance=1.0 --query_distance=0.5 \\
         --output_dir=datasets/my_scene
@@ -46,16 +50,23 @@ Examples:
 
 import argparse
 import os
+import sys
 import time
 from concurrent.futures import ProcessPoolExecutor
 from glob import glob
 from pathlib import Path
 
-import cv2
-import numpy as np
-from PIL import Image
+# Allow ``python eval/build_database_3d.py`` and ``python build_database_3d.py``
+# (cwd = eval/) to find the shared helpers that live in the parent ``vpr/``.
+_PARENT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PARENT_DIR not in sys.path:
+    sys.path.insert(0, _PARENT_DIR)
 
-from extract_common import (
+import cv2  # noqa: E402
+import numpy as np  # noqa: E402
+from PIL import Image  # noqa: E402
+
+from extract_common import (  # noqa: E402
     DistanceSampler,
     find_nearest_pose,
     load_poses_from_file,
@@ -65,7 +76,7 @@ from extract_common import (
     save_rgb_array,
     wait_for_futures,
 )
-from undistort import PolyFisheyeUndistorter
+from undistort import PolyFisheyeUndistorter  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

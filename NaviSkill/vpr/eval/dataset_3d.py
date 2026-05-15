@@ -1,8 +1,11 @@
 """Dataset loader for VPR evaluation.
 
 Loads database and query images from two folders. If filenames follow the
-convention @x_coord@y_coord@...@.jpg, positional ground truth is computed
-for recall evaluation.
+convention ``@x@y@z@...@.jpg``, positional ground truth is computed for
+recall@K evaluation.
+
+Evaluation-only -- the live pipeline (``vpr_preprocess.py`` /
+``vpr_detect.py``) does not use this class.
 """
 
 import os
@@ -36,6 +39,8 @@ def read_images_paths(dataset_folder):
         ]
         if len(images_paths) == 0:
             raise FileNotFoundError(f"Directory {dataset_folder} does not contain any images")
+
+    print (f"Found {len(images_paths)} images in {dataset_folder}")        
     return images_paths
 
 
@@ -71,24 +76,44 @@ class VPRDataset(data.Dataset):
                 image_path = self.database_paths[0]
                 float(image_path.split("@")[1])
                 float(image_path.split("@")[2])
+                float(image_path.split("@")[3])
             except Exception:
                 raise ValueError(
-                    "Filenames must be path/to/file/@x@y@...@.jpg for labeled mode. "
+                    "Filenames must be path/to/file/@x@y@z@...@.jpg for labeled mode. "
                     f"Got: {self.database_paths[0]}"
                 )
 
             self.database_utms = np.array(
-                [(path.split("@")[1], path.split("@")[2]) for path in self.database_paths]
+                [(path.split("@")[1], path.split("@")[2], path.split("@")[3]) for path in self.database_paths]
             ).astype(float)
             self.queries_utms = np.array(
-                [(path.split("@")[1], path.split("@")[2]) for path in self.queries_paths]
+                [(path.split("@")[1], path.split("@")[2], path.split("@")[3]) for path in self.queries_paths]
             ).astype(float)
 
+            # 分别用 xy 平面距离和 z 差异来判断正样本
+            # 条件：xy 距离 <= positive_dist_threshold 且 |z差| <= 1.0
+            database_xy = self.database_utms[:, :2]
+            database_z = self.database_utms[:, 2]
+            queries_xy = self.queries_utms[:, :2]
+            queries_z = self.queries_utms[:, 2]
+
+            # 用 xy 坐标做 knn 搜索
             knn = NearestNeighbors(n_jobs=-1)
-            knn.fit(self.database_utms)
-            self.positives_per_query = knn.radius_neighbors(
-                self.queries_utms, radius=positive_dist_threshold, return_distance=False
+            knn.fit(database_xy)
+            xy_neighbors = knn.radius_neighbors(
+                queries_xy, radius=positive_dist_threshold, return_distance=False
             )
+
+            # 过滤：只保留 z 差异在 1.0 以内的
+            z_threshold = 1.0
+            self.positives_per_query = []
+            for qi, db_indices in enumerate(xy_neighbors):
+                valid_indices = [
+                    idx for idx in db_indices
+                    if abs(queries_z[qi] - database_z[idx]) <= z_threshold
+                ]
+                self.positives_per_query.append(np.array(valid_indices))
+            self.positives_per_query = np.array(self.positives_per_query, dtype=object)
 
         transformations = [
             transforms.ToTensor(),

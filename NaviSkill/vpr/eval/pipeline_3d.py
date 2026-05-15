@@ -1,34 +1,45 @@
 """VPR Pipeline V1: Global descriptors + FAISS + optional re-ranking.
 
-This is the main entry point. It orchestrates the pipeline:
+Evaluation-only pipeline. Orchestrates:
   Stage 1: Extract global descriptors (MegaLoc or SALAD-indoor)
   Stage 2: kNN retrieval (FAISS)
   Stage 3: Geometric re-ranking (SuperPoint + LightGlue) [optional]
   Stage 4: Color histogram re-scoring [optional]
 
+The live deployment uses ``vpr_preprocess.py`` (DB build) + ``vpr_detect.py``
+(query). This module is kept for offline algorithm benchmarking.
+
 Usage:
-    python pipeline.py \
-        --method=salad-indoor \
-        --database_folder=path/to/database \
-        --queries_folder=path/to/queries \
+    python eval/pipeline_3d.py \\
+        --method=salad-indoor \\
+        --database_folder=path/to/database \\
+        --queries_folder=path/to/queries \\
         --color_rerank --color_weight=5.0 --num_preds_to_save=3
 """
 
 import argparse
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
 
-import faiss
-import numpy as np
-import torch
-from loguru import logger
-from torch.utils.data import DataLoader
-from torch.utils.data.dataset import Subset
-from tqdm import tqdm
+# Allow ``python eval/pipeline_3d.py`` and ``python pipeline_3d.py`` (cwd =
+# eval/) to find ``model_loader`` / ``rerank`` / ``color_rerank`` /
+# ``visualizations`` that live in the parent ``vpr/``.
+_PARENT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PARENT_DIR not in sys.path:
+    sys.path.insert(0, _PARENT_DIR)
 
-from dataset_3d import VPRDataset
-from model_loader import get_model
+import faiss  # noqa: E402
+import numpy as np  # noqa: E402
+import torch  # noqa: E402
+from loguru import logger  # noqa: E402
+from torch.utils.data import DataLoader  # noqa: E402
+from torch.utils.data.dataset import Subset  # noqa: E402
+from tqdm import tqdm  # noqa: E402
+
+from dataset_3d import VPRDataset  # noqa: E402  -- sibling in eval/
+from model_loader import get_model  # noqa: E402  -- parent vpr/
 
 
 def parse_args():

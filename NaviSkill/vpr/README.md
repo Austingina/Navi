@@ -75,14 +75,22 @@ NaviSkill/vpr/             # VPR module of NaviSkill (was vpr/vpr-pipeline-v1/)
 │   └── example/
 │       └── main.cpp       #   Usage example
 │
-├── pipeline.py            # CLI entry point — orchestrates all stages
-├── build_database.py      # Step 0: Extract images from raw data
-├── model_loader.py        # Stage 1: MegaLoc + SALAD-indoor loading
-├── dataset.py             # Data loading, coordinate parsing, ground truth
-├── rerank.py              # Stage 3: SuperPoint + LightGlue (standalone)
-├── color_rerank.py        # Stage 4: HSV color re-scoring (standalone)
-├── undistort.py           # Fisheye camera undistortion
-├── visualizations.py      # Prediction visualization
+├── vpr_preprocess.py      # ★ Live pipeline: build per-submap descriptor DB
+├── vpr_detect.py          # ★ Live pipeline: query detector (--serve mode)
+├── model_loader.py        # MegaLoc + SALAD-indoor model loading
+├── extract_common.py      # Shared image-extraction helpers
+├── s20_utils.py           # SHARE SLAM S20 (ROS1 bag) extraction
+├── r1pro_utils.py         # R1Pro (ROS2 bag) extraction
+├── undistort.py           # Fisheye undistortion (PolyFisheye)
+├── undistort2.py          # Pinhole undistortion (R1Pro)
+├── rerank.py              # SuperPoint + LightGlue re-ranking (eval-only)
+├── color_rerank.py        # HSV color histogram re-scoring (eval-only)
+├── visualizations.py      # Prediction visualization (eval-only)
+│
+├── eval/                  # ★ Offline evaluation / algorithm-feasibility code
+│   ├── build_database_3d.py  # Legacy CLI: build DB + queries split
+│   ├── dataset_3d.py         # Eval Dataset (DB + queries pair, recall@K)
+│   └── pipeline_3d.py        # Eval pipeline: FAISS + optional re-ranking
 │
 └── datasets/              # ★ Included evaluation data
     ├── cross_floor_eval/  #   Cross-floor: 59 DB + 112 queries (4 floors)
@@ -113,7 +121,7 @@ Evaluation datasets are included in `datasets/`. Run these after `uv sync`:
 ### Cross-floor recognition (SALAD-indoor + color, best config)
 
 ```bash
-uv run python pipeline.py \
+uv run python eval/pipeline_3d.py \
     --method=salad-indoor \
     --database_folder=datasets/cross_floor_eval/database \
     --queries_folder=datasets/cross_floor_eval/queries \
@@ -127,7 +135,7 @@ Expected: **99.1% floor accuracy** (111/112 correct). Results in `logs/cross_flo
 
 ```bash
 # Example: 11th floor, with geometric re-ranking
-uv run python pipeline.py \
+uv run python eval/pipeline_3d.py \
     --method=megaloc \
     --database_folder=datasets/floor_eval/11th-floor/database \
     --queries_folder=datasets/floor_eval/11th-floor/queries \
@@ -361,7 +369,7 @@ output_dir/
 ### Cross-floor recognition (recommended for multi-floor buildings)
 
 ```bash
-python pipeline.py \
+python eval/pipeline_3d.py \
     --method=salad-indoor \
     --database_folder=/path/to/database \
     --queries_folder=/path/to/queries \
@@ -373,7 +381,7 @@ python pipeline.py \
 ### Same-floor localization (with geometric re-ranking)
 
 ```bash
-python pipeline.py \
+python eval/pipeline_3d.py \
     --method=megaloc \
     --database_folder=/path/to/database \
     --queries_folder=/path/to/queries \
@@ -387,7 +395,7 @@ python pipeline.py \
 Requires filenames in `@x_coord@y_coord@...@.jpg` format:
 
 ```bash
-python pipeline.py \
+python eval/pipeline_3d.py \
     --method=megaloc \
     --database_folder=/path/to/database \
     --queries_folder=/path/to/queries \
@@ -467,10 +475,10 @@ Extract images from your data source (ROS bags, video, etc.) and organize into t
 
 ```bash
 # Quick test (no re-ranking)
-python pipeline.py --database_folder=db/ --queries_folder=queries/ --no_labels --num_preds_to_save=3
+python eval/pipeline_3d.py --database_folder=db/ --queries_folder=queries/ --no_labels --num_preds_to_save=3
 
 # Production (with re-ranking for higher accuracy)
-python pipeline.py --database_folder=db/ --queries_folder=queries/ --no_labels --rerank --num_preds_to_save=3
+python eval/pipeline_3d.py --database_folder=db/ --queries_folder=queries/ --no_labels --rerank --num_preds_to_save=3
 ```
 
 ### Step 3: Inspect results

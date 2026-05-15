@@ -2,10 +2,10 @@
 """Common helpers shared by the platform-specific extraction modules.
 
 This module hosts the small, platform-agnostic utilities used by
-:mod:`s20_utils`, :mod:`r1pro_utils`, and :mod:`build_database_3d`:
+:mod:`s20_utils`, :mod:`r1pro_utils`, and :mod:`eval.build_database_3d`:
 
 * :class:`DistanceSampler` -- DB+query distance sampler for the legacy
-  ``build_database_3d`` pipelines.
+  ``eval/build_database_3d.py`` pipelines.
 * JPEG save helpers (``save_rgb_array``, ``save_compressed_bytes``,
   ``undistort_and_save``).
 * Output-directory / progress / summary helpers used by the
@@ -14,8 +14,8 @@ This module hosts the small, platform-agnostic utilities used by
   helper used by the folder and generic-ROS2 paths.
 
 Keeping these here means ``s20_utils`` and ``r1pro_utils`` do not need to
-import from ``build_database_3d`` (which is an entry script with a
-``main()`` and ``if __name__ == "__main__"`` block).
+import from ``eval/build_database_3d.py`` (which is an evaluation entry
+script with a ``main()`` and ``if __name__ == "__main__"`` block).
 """
 
 import bisect

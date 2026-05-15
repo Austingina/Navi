@@ -2,9 +2,9 @@
 """S20 (SHARE SLAM, ROS1 bag + ImgPose.txt) data-processing helpers.
 
 All S20-specific code that used to be scattered across
-``build_database_3d.py`` and ``vpr_preprocess.py`` lives here so that
-the live preprocessing pipeline and the legacy DB+query builder share
-one implementation.
+``eval/build_database_3d.py`` and ``vpr_preprocess.py`` lives here so that
+the live preprocessing pipeline and the legacy (evaluation) DB+query
+builder share one implementation.
 
 Geometric pipeline:
     raw CompressedImage (JPEG) from /camera_agent/img_left/compressed
@@ -200,13 +200,13 @@ def extract_database_from_ros1(args, sampler, db_dir, logger=None):
 
 
 # ---------------------------------------------------------------------------
-# DB + query extraction (called by build_database_3d.py legacy main())
+# DB + query extraction (called by eval/build_database_3d.py legacy main())
 # ---------------------------------------------------------------------------
 
 def extract_from_ros1(args):
     """Extract images from a ROS1 bag with pose file (DB + query split).
 
-    Legacy variant called by ``build_database_3d.py``. Self-contained:
+    Legacy variant called by ``eval/build_database_3d.py``. Self-contained:
     only depends on :mod:`extract_common` and the fisheye undistorter.
     """
     from rosbags.rosbag1 import Reader

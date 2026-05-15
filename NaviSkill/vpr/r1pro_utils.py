@@ -2,10 +2,11 @@
 """R1Pro (ROS2 + Odometry + CompressedImage) data-processing helpers.
 
 All R1Pro-specific code that used to be scattered across
-``build_database_3d.py`` and ``vpr_preprocess.py`` lives here so that:
+``eval/build_database_3d.py`` and ``vpr_preprocess.py`` lives here so that:
 
-* the live pipeline (``vpr_preprocess.py``) and the legacy
-  database-builder (``build_database_3d.py``) share one implementation;
+* the live pipeline (``vpr_preprocess.py``) and the legacy (evaluation)
+  database-builder (``eval/build_database_3d.py``) share one
+  implementation;
 * worker functions used by :class:`concurrent.futures.ProcessPoolExecutor`
   have a stable, picklable module path (``r1pro_utils.<fn>``).
 
@@ -247,13 +248,13 @@ def extract_database_from_ros2_r1pro(args, sampler, db_dir, logger=None):
 
 
 # ---------------------------------------------------------------------------
-# DB + query extraction (called by build_database_3d.py legacy main())
+# DB + query extraction (called by eval/build_database_3d.py legacy main())
 # ---------------------------------------------------------------------------
 
 def extract_from_ros2_of_r1pro(args):
     """Extract images from a R1Pro ROS2 bag with Odometry and CompressedImage.
 
-    DB + query variant used by the legacy ``build_database_3d.py`` entry
+    DB + query variant used by the legacy ``eval/build_database_3d.py`` entry
     point. Self-contained: only depends on :mod:`extract_common` and the
     pinhole undistorter.
 
