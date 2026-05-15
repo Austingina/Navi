@@ -18,7 +18,8 @@ import os
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-from extract_common import (
+from .undistort import PolyFisheyeUndistorter
+from .utils_common import (
     DistanceSampler,
     make_output_dirs,
     print_progress,
@@ -27,7 +28,6 @@ from extract_common import (
     undistort_and_save,
     wait_for_futures,
 )
-from undistort import PolyFisheyeUndistorter
 
 
 # ---------------------------------------------------------------------------
@@ -207,7 +207,7 @@ def extract_from_ros1(args):
     """Extract images from a ROS1 bag with pose file (DB + query split).
 
     Legacy variant called by ``eval/build_database_3d.py``. Self-contained:
-    only depends on :mod:`extract_common` and the fisheye undistorter.
+    only depends on :mod:`utils.utils_common` and the fisheye undistorter.
     """
     from rosbags.rosbag1 import Reader
     from rosbags.typesys import Stores, get_typestore

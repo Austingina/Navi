@@ -79,7 +79,7 @@ def _ensure_preprocess_loaded() -> bool:
             import numpy as np  # type: ignore
             if _DEFAULT_VPR_DIR not in sys.path:
                 sys.path.insert(0, _DEFAULT_VPR_DIR)
-            from undistort2 import PinHoleUndistorter  # type: ignore
+            from utils.undistort2 import PinHoleUndistorter  # type: ignore
 
             _cv2 = cv2
             _np = np

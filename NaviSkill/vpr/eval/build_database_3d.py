@@ -9,15 +9,15 @@ database + query layout suitable for recall@K benchmarks via
 Supports three input sources, dispatched via ``--source``:
 
 * ``ros1``  -- SHARE SLAM S20 ROS1 bag + ImgPose.txt, optional fisheye
-  undistortion. Implementation lives in :mod:`s20_utils`.
+  undistortion. Implementation lives in :mod:`utils.utils_s20`.
 * ``ros2``  -- R1Pro ROS2 bag with ``nav_msgs/Odometry`` +
   ``sensor_msgs/CompressedImage``, always pinhole-undistorted.
-  Implementation lives in :mod:`r1pro_utils`.
+  Implementation lives in :mod:`utils.utils_r1pro`.
 * ``folder`` -- plain image folder + ``frame_pose.txt``.
 
-Platform-specific logic has been factored out into :mod:`s20_utils`
-and :mod:`r1pro_utils` (which live one level up, next to the live
-pipeline). This module retains:
+Platform-specific logic has been factored out into :mod:`utils.utils_s20`
+and :mod:`utils.utils_r1pro` (which live under ``vpr/utils/`` next to
+the live pipeline). This module retains:
 
 * the *generic* ROS2 path (Image + Path) and folder path;
 * the CLI entry point.
@@ -56,8 +56,8 @@ from concurrent.futures import ProcessPoolExecutor
 from glob import glob
 from pathlib import Path
 
-# Allow ``python eval/build_database_3d.py`` and ``python build_database_3d.py``
-# (cwd = eval/) to find the shared helpers that live in the parent ``vpr/``.
+# Allow ``python eval/build_database_3d.py`` (and ``python build_database_3d.py``
+# from eval/) to find the ``utils`` subpackage in the parent ``vpr/``.
 _PARENT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PARENT_DIR not in sys.path:
     sys.path.insert(0, _PARENT_DIR)
@@ -66,7 +66,8 @@ import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 from PIL import Image  # noqa: E402
 
-from extract_common import (  # noqa: E402
+from utils.undistort import PolyFisheyeUndistorter  # noqa: E402
+from utils.utils_common import (  # noqa: E402
     DistanceSampler,
     find_nearest_pose,
     load_poses_from_file,
@@ -76,12 +77,11 @@ from extract_common import (  # noqa: E402
     save_rgb_array,
     wait_for_futures,
 )
-from undistort import PolyFisheyeUndistorter  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
 # Source: generic ROS2 bag (Image msg + Path msg). NOT R1Pro --
-# R1Pro uses Odometry + CompressedImage and lives in r1pro_utils.
+# R1Pro uses Odometry + CompressedImage and lives in utils.utils_r1pro.
 # ---------------------------------------------------------------------------
 
 def extract_from_ros2(args):
@@ -307,13 +307,13 @@ def main():
     if args.source == "ros1":
         if not args.bag_path or not args.pose_file:
             parser.error("--source=ros1 requires --bag_path and --pose_file")
-        from s20_utils import extract_from_ros1
+        from utils.utils_s20 import extract_from_ros1
         extract_from_ros1(args)
 
     elif args.source == "ros2":
         if not args.bag_path:
             parser.error("--source=ros2 requires --bag_path")
-        from r1pro_utils import extract_from_ros2_of_r1pro
+        from utils.utils_r1pro import extract_from_ros2_of_r1pro
         extract_from_ros2_of_r1pro(args)
 
     elif args.source == "folder":

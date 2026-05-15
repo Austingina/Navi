@@ -78,14 +78,18 @@ NaviSkill/vpr/             # VPR module of NaviSkill (was vpr/vpr-pipeline-v1/)
 ├── vpr_preprocess.py      # ★ Live pipeline: build per-submap descriptor DB
 ├── vpr_detect.py          # ★ Live pipeline: query detector (--serve mode)
 ├── model_loader.py        # MegaLoc + SALAD-indoor model loading
-├── extract_common.py      # Shared image-extraction helpers
-├── s20_utils.py           # SHARE SLAM S20 (ROS1 bag) extraction
-├── r1pro_utils.py         # R1Pro (ROS2 bag) extraction
-├── undistort.py           # Fisheye undistortion (PolyFisheye)
-├── undistort2.py          # Pinhole undistortion (R1Pro)
-├── rerank.py              # SuperPoint + LightGlue re-ranking (eval-only)
-├── color_rerank.py        # HSV color histogram re-scoring (eval-only)
 ├── visualizations.py      # Prediction visualization (eval-only)
+│
+├── utils/                 # ★ Shared library code (no CLI / no main)
+│   ├── __init__.py
+│   ├── utils_common.py    #   Platform-agnostic helpers (DistanceSampler,
+│   │                      #   JPEG save/undistort, pose loaders, summaries)
+│   ├── utils_s20.py       #   SHARE SLAM S20 (ROS1 bag) extraction
+│   ├── utils_r1pro.py     #   R1Pro (ROS2 bag) extraction + worker init
+│   ├── undistort.py       #   Fisheye undistortion (PolyFisheye)
+│   ├── undistort2.py      #   Pinhole undistortion (R1Pro)
+│   ├── rerank.py          #   SuperPoint + LightGlue re-ranking (eval-only)
+│   └── color_rerank.py    #   HSV color histogram re-scoring (eval-only)
 │
 ├── eval/                  # ★ Offline evaluation / algorithm-feasibility code
 │   ├── build_database_3d.py  # Legacy CLI: build DB + queries split

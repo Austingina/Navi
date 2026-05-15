@@ -8,7 +8,7 @@ All R1Pro-specific code that used to be scattered across
   database-builder (``eval/build_database_3d.py``) share one
   implementation;
 * worker functions used by :class:`concurrent.futures.ProcessPoolExecutor`
-  have a stable, picklable module path (``r1pro_utils.<fn>``).
+  have a stable, picklable module path (``utils.utils_r1pro.<fn>``).
 
 Geometric pipeline (must match ``NaviSkill/vpr_bootstrap``):
     raw CompressedImage (JPEG)
@@ -26,14 +26,14 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from PIL import Image
 
-from extract_common import (
+from .undistort2 import PinHoleUndistorter
+from .utils_common import (
     DistanceSampler,
     make_output_dirs,
     print_progress,
     print_summary,
     undistort_and_save,
 )
-from undistort2 import PinHoleUndistorter
 
 
 # ---------------------------------------------------------------------------
@@ -255,7 +255,7 @@ def extract_from_ros2_of_r1pro(args):
     """Extract images from a R1Pro ROS2 bag with Odometry and CompressedImage.
 
     DB + query variant used by the legacy ``eval/build_database_3d.py`` entry
-    point. Self-contained: only depends on :mod:`extract_common` and the
+    point. Self-contained: only depends on :mod:`utils.utils_common` and the
     pinhole undistorter.
 
     Args:

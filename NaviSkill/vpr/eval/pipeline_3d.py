@@ -23,9 +23,10 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-# Allow ``python eval/pipeline_3d.py`` and ``python pipeline_3d.py`` (cwd =
-# eval/) to find ``model_loader`` / ``rerank`` / ``color_rerank`` /
-# ``visualizations`` that live in the parent ``vpr/``.
+# Allow ``python eval/pipeline_3d.py`` (and ``python pipeline_3d.py`` from
+# eval/) to find the ``utils`` subpackage (rerank / color_rerank), plus
+# the top-level ``model_loader`` / ``visualizations`` modules that live
+# in the parent ``vpr/``.
 _PARENT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PARENT_DIR not in sys.path:
     sys.path.insert(0, _PARENT_DIR)
@@ -149,7 +150,7 @@ def run_pipeline(args):
     # --- Stage 3: Geometric re-ranking (optional) ---
     rerank_scores = None
     if args.rerank:
-        from rerank import GeometricReranker
+        from utils.rerank import GeometricReranker
 
         logger.info(f"Stage 3: Re-ranking top-{args.rerank_top_k} with SuperPoint+LightGlue")
         reranker = GeometricReranker(device=args.device)
@@ -166,7 +167,7 @@ def run_pipeline(args):
 
     # --- Stage 4: Color histogram re-scoring (optional) ---
     if args.color_rerank:
-        from color_rerank import ColorReranker
+        from utils.color_rerank import ColorReranker
 
         logger.info(f"Stage 4: Color re-scoring with alpha={args.color_weight}")
         color_reranker = ColorReranker(alpha=args.color_weight)

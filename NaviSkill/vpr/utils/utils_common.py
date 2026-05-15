@@ -2,7 +2,8 @@
 """Common helpers shared by the platform-specific extraction modules.
 
 This module hosts the small, platform-agnostic utilities used by
-:mod:`s20_utils`, :mod:`r1pro_utils`, and :mod:`eval.build_database_3d`:
+:mod:`utils.utils_s20`, :mod:`utils.utils_r1pro`, and
+:mod:`eval.build_database_3d`:
 
 * :class:`DistanceSampler` -- DB+query distance sampler for the legacy
   ``eval/build_database_3d.py`` pipelines.
@@ -13,7 +14,7 @@ This module hosts the small, platform-agnostic utilities used by
 * Generic ``frame_pose.txt`` pose loader and binary-search nearest-pose
   helper used by the folder and generic-ROS2 paths.
 
-Keeping these here means ``s20_utils`` and ``r1pro_utils`` do not need to
+Keeping these here means ``utils_s20`` and ``utils_r1pro`` do not need to
 import from ``eval/build_database_3d.py`` (which is an evaluation entry
 script with a ``main()`` and ``if __name__ == "__main__"`` block).
 """
@@ -30,7 +31,7 @@ from PIL import Image
 
 # ---------------------------------------------------------------------------
 # Generic pose loading (frame_pose.txt). The S20 ``ImgPose.txt`` loader
-# lives in s20_utils.load_poses_from_imgpose_file.
+# lives in utils.utils_s20.load_poses_from_imgpose_file.
 # ---------------------------------------------------------------------------
 
 def load_poses_from_file(path):

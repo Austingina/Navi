@@ -76,8 +76,8 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 from model_loader import get_model
-from r1pro_utils import extract_database_from_ros2_r1pro
-from s20_utils import extract_database_from_ros1
+from utils.utils_r1pro import extract_database_from_ros2_r1pro
+from utils.utils_s20 import extract_database_from_ros1
 
 
 # ---------------------------------------------------------------------------
@@ -112,8 +112,8 @@ class DatabaseSampler:
 # Step 1a / 1a-bis: distance-sampled database image extraction
 # ---------------------------------------------------------------------------
 # Source-specific bag parsing + undistortion lives in:
-#   * s20_utils.extract_database_from_ros1       (ros1 / SHARE SLAM S20)
-#   * r1pro_utils.extract_database_from_ros2_r1pro (ros2 / R1Pro)
+#   * utils.utils_s20.extract_database_from_ros1       (ros1 / SHARE SLAM S20)
+#   * utils.utils_r1pro.extract_database_from_ros2_r1pro (ros2 / R1Pro)
 # Both accept the DB-only :class:`DatabaseSampler` defined above and the
 # loguru logger configured here.
 

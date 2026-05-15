@@ -50,7 +50,7 @@ from loguru import logger
 from PIL import Image
 
 from model_loader import get_model
-from undistort import PolyFisheyeUndistorter
+from utils.undistort import PolyFisheyeUndistorter
 
 
 ImageInput = Union[str, "os.PathLike[str]", Path, Image.Image, np.ndarray, bytes]
