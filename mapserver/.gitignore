@@ -1,0 +1,3 @@
+# ignore python cache
+__pycache__/
+*.egg-info/
