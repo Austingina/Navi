@@ -198,6 +198,11 @@ class VPRDetector:
         if not database_dirs:
             raise ValueError("At least one database directory is required.")
 
+        # 几何重排（SuperPoint + LightGlue）是惰性加载的：只有第一次收到
+        # rerank=True 的请求时才把模型搬到 GPU，避免不需要 rerank 的部署
+        # 多付一份显存 + 启动时间。
+        self._reranker = None  # type: Optional[Any]
+
         self.databases: List[DatabaseBundle] = [
             load_database(d) for d in database_dirs
         ]
@@ -454,6 +459,87 @@ class VPRDetector:
         desc = self.encode_raw_bytes(jpeg_bytes)
         return self._search(desc, top_k)
 
+    # ------------------------------------------------------------------
+    # Geometric re-ranking (SuperPoint + LightGlue, lazy)
+    # ------------------------------------------------------------------
+
+    def _ensure_reranker(self) -> bool:
+        """惰性加载 GeometricReranker。失败返回 False（保持 self._reranker=None）。"""
+        if self._reranker is not None:
+            return True
+        try:
+            from utils.rerank import GeometricReranker
+        except Exception as e:
+            logger.error(f"GeometricReranker 不可用（lightglue 未安装？）: {e}")
+            return False
+        try:
+            self._reranker = GeometricReranker(device=self.device)
+            logger.info(
+                "Geometric reranker (SuperPoint+LightGlue) loaded on %s",
+                self.device,
+            )
+            return True
+        except Exception as e:
+            logger.error(f"GeometricReranker 加载失败: {e}")
+            self._reranker = None
+            return False
+
+    def rerank_results(
+        self,
+        query_image_path: str,
+        results: List[dict],
+        rerank_top_k: int = 20,
+    ) -> List[dict]:
+        """对 FAISS 结果做几何重排，按 inlier 数降序返回。
+
+        - 仅对前 ``rerank_top_k`` 个候选做匹配（其余原序追加在尾部）。
+        - 每个候选会写回 ``rerank_inliers`` 字段；未参与重排的为 -1。
+        - 若 reranker 不可用，原序返回（保持向后兼容，调用方仍能拿到结果）。
+        """
+        if not results:
+            return results
+        if not self._ensure_reranker():
+            return results
+
+        reranker = self._reranker
+        top = results[: max(1, rerank_top_k)]
+        tail = results[len(top):]
+
+        try:
+            feats_q = reranker._extract(query_image_path)
+        except Exception as e:
+            logger.warning(f"Rerank: 提取查询特征失败 ({e})，跳过 rerank")
+            return results
+
+        inliers: List[int] = []
+        for cand in top:
+            cand_path = cand.get("image_path")
+            if not cand_path or not os.path.isfile(cand_path):
+                inliers.append(0)
+                continue
+            try:
+                feats_c = reranker._extract(cand_path)
+                inliers.append(reranker.count_inliers(feats_q, feats_c))
+            except Exception as e:
+                logger.warning(f"Rerank: 候选 {cand_path} 匹配失败 ({e})")
+                inliers.append(0)
+
+        order = sorted(range(len(top)), key=lambda i: -inliers[i])
+        reranked: List[dict] = []
+        for new_rank, old_idx in enumerate(order):
+            item = dict(top[old_idx])
+            item["rerank_inliers"] = int(inliers[old_idx])
+            item["rank"] = new_rank
+            reranked.append(item)
+
+        for offset, item in enumerate(tail):
+            it = dict(item)
+            it["rerank_inliers"] = -1
+            it["rank"] = len(reranked) + offset
+            reranked.append(it)
+
+        return reranked
+
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -543,12 +629,20 @@ def _serve_loop(detector: VPRDetector) -> None:
 
         {"id": "<opaque-string>",
          "image_path": "/tmp/live.jpg",       # raw camera JPEG bytes on disk
-         "top_k": 1}
+         "top_k": 1,
+         "rerank": false,                     # optional, default false
+         "rerank_top_k": 20}                  # optional, only when rerank=true
 
     Either ``image_path`` (raw JPEG bytes on disk; undistortion is applied
     if the databases were built with it) **or** ``image_processed_path``
     (already in the database's image space; undistortion is NOT applied)
     must be set.
+
+    When ``rerank`` is true, the detector first retrieves
+    ``max(top_k, rerank_top_k)`` candidates from FAISS, then re-orders them
+    with SuperPoint + LightGlue geometric matching, and returns the top
+    ``top_k`` after re-ranking. Each result gains a ``rerank_inliers`` field
+    (-1 if the candidate was past the rerank cutoff or rerank was skipped).
 
     Server -> client (per request)::
 
@@ -576,6 +670,8 @@ def _serve_loop(detector: VPRDetector) -> None:
             req = json.loads(line)
             req_id = req.get("id")
             top_k = int(req.get("top_k", 1))
+            rerank = bool(req.get("rerank", False))
+            rerank_top_k = int(req.get("rerank_top_k", 20))
             image_path = req.get("image_path")
             processed_path = req.get("image_processed_path")
             if not image_path and not processed_path:
@@ -584,19 +680,38 @@ def _serve_loop(detector: VPRDetector) -> None:
                     "'image_processed_path' (already in database space)"
                 )
 
+            # 开启 rerank 时先多召回一些候选给 rerank 重排，再截到 top_k
+            search_k = max(top_k, rerank_top_k) if rerank else top_k
+
             t0 = time.time()
             if image_path:
                 with open(image_path, "rb") as f:
                     jpeg = f.read()
-                results = detector.query_raw_bytes(jpeg, top_k=top_k)
+                results = detector.query_raw_bytes(jpeg, top_k=search_k)
             else:
-                results = detector.query(processed_path, top_k=top_k)
-            elapsed_ms = (time.time() - t0) * 1000.0
+                results = detector.query(processed_path, top_k=search_k)
+            faiss_ms = (time.time() - t0) * 1000.0
+
+            rerank_ms = 0.0
+            if rerank and results:
+                # query 路径优先使用 image_path（与离线建库相同的"原始字节"语义），
+                # 否则用 processed_path（已经在数据库空间里的预处理图）。
+                query_path_for_rerank = image_path or processed_path
+                tr0 = time.time()
+                results = detector.rerank_results(
+                    query_path_for_rerank, results, rerank_top_k=rerank_top_k,
+                )
+                rerank_ms = (time.time() - tr0) * 1000.0
+                results = results[:top_k]
+
+            elapsed_ms = faiss_ms + rerank_ms
 
             _emit({
                 "id": req_id,
                 "results": results,
                 "elapsed_ms": round(elapsed_ms, 2),
+                "faiss_ms": round(faiss_ms, 2),
+                "rerank_ms": round(rerank_ms, 2),
             })
         except Exception as e:
             _emit({

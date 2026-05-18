@@ -128,6 +128,8 @@ class NavigationToolManager:
         self,
         image_wait_sec: float,
         top_k: int = 3,
+        rerank: bool = False,
+        rerank_top_k: int = 20,
     ) -> Optional[Dict[str, Any]]:
         """抓取最新一帧相机图像并调用 VPR；返回 ``locate`` 结果或 None。"""
         if self.vpr_bootstrap is None or not self.vpr_bootstrap.available:
@@ -141,13 +143,111 @@ class NavigationToolManager:
             return None
         jpeg_bytes, _stamp_ns = img
         try:
-            return self.vpr_bootstrap.locate(jpeg_bytes, top_k=top_k)
+            return self.vpr_bootstrap.locate(
+                jpeg_bytes,
+                top_k=top_k,
+                rerank=rerank,
+                rerank_top_k=rerank_top_k,
+            )
         except VprBootstrapError as e:
             logging.error(f"VPR 查询失败: {e}")
             return None
         except Exception as e:
             logging.error(f"VPR 查询异常: {e}", exc_info=True)
             return None
+
+    # 共识重定位的可调参数（如需在线调节可改成 self._xxx 字段）
+    _VPR_CONSENSUS_FRAMES = 5         # 每轮采集多少帧
+    _VPR_FRAME_INTERVAL_SEC = 1.0     # 帧间隔（秒）
+    _VPR_MAX_ROUNDS = 3               # 最多重试多少轮（防止无限循环）
+    _VPR_RERANK_TOP_K = 20            # 几何重排候选数
+    _VPR_IMAGE_WAIT_SEC = 5.0         # 单帧等待相机的超时
+
+    def _vpr_collect_consensus(self, reason: str) -> Optional[str]:
+        """采集多帧图像 → 几何重排 → 投票，返回一致同意的 submap_id 或 None。
+
+        规则（与上层需求对齐）：
+
+        - 以 1s 为间隔依次取 ``_VPR_CONSENSUS_FRAMES`` 帧；每帧都开启几何重排
+          (SuperPoint + LightGlue) 后取 top-1 submap_id。
+        - 仅当 N 帧的 top-1 submap_id **完全一致**（且全部非空）才算成功。
+        - 不一致则进入下一轮（最多 ``_VPR_MAX_ROUNDS`` 轮）；超过则放弃，由
+          watchdog 在自己的 cooldown 之后再触发本方法。
+        - 任何一帧取图失败/locate 异常均视为该轮失败，立即终止该轮的剩余采集，
+          直接进入下一轮（避免无谓地等满 5 秒）。
+        """
+        if self.vpr_bootstrap is None or not self.vpr_bootstrap.available:
+            return None
+
+        for round_idx in range(self._VPR_MAX_ROUNDS):
+            logging.info(
+                "[VPR] 共识第 %d/%d 轮开始 (%s)：采集 %d 帧 / 间隔 %.1fs / rerank_top_k=%d",
+                round_idx + 1, self._VPR_MAX_ROUNDS, reason,
+                self._VPR_CONSENSUS_FRAMES, self._VPR_FRAME_INTERVAL_SEC,
+                self._VPR_RERANK_TOP_K,
+            )
+            votes: list = []
+            inliers_log: list = []
+            round_aborted = False
+
+            # CPU 模式下 SuperPoint+LightGlue 慢到不可用（~1-3s/对 × 20 候选 × 5 帧）
+            # 自动关闭 rerank，仅依赖 FAISS top-1 投票。GPU 模式才开 rerank。
+            use_rerank = getattr(self.vpr_bootstrap, "device", "cpu") == "cuda"
+
+            for frame_idx in range(self._VPR_CONSENSUS_FRAMES):
+                if frame_idx > 0:
+                    time.sleep(self._VPR_FRAME_INTERVAL_SEC)
+                t0 = time.monotonic()
+                result = self._vpr_query_latest_image(
+                    image_wait_sec=self._VPR_IMAGE_WAIT_SEC,
+                    top_k=1,
+                    rerank=use_rerank,
+                    rerank_top_k=self._VPR_RERANK_TOP_K,
+                )
+                dt_ms = (time.monotonic() - t0) * 1000.0
+                if result is None:
+                    logging.warning(
+                        "[VPR] 第 %d/%d 帧 locate 失败（%.0fms），放弃本轮",
+                        frame_idx + 1, self._VPR_CONSENSUS_FRAMES, dt_ms,
+                    )
+                    round_aborted = True
+                    break
+
+                submap_id = result.get("submap_id")
+                inliers = result.get("rerank_inliers")
+                votes.append(submap_id)
+                inliers_log.append(inliers)
+                logging.info(
+                    "[VPR] 第 %d/%d 帧 → submap='%s' (rerank_inliers=%s, "
+                    "dist=%.4f, %.0fms)",
+                    frame_idx + 1, self._VPR_CONSENSUS_FRAMES,
+                    submap_id, inliers,
+                    float(result.get("distance") or 0.0), dt_ms,
+                )
+
+            if round_aborted:
+                continue
+
+            unique = set(votes)
+            if len(unique) == 1 and None not in unique:
+                chosen = next(iter(unique))
+                logging.info(
+                    "[VPR] 共识达成: submap='%s' (votes=%s, inliers=%s)",
+                    chosen, votes, inliers_log,
+                )
+                return chosen
+
+            logging.warning(
+                "[VPR] 共识失败 (round %d/%d): votes=%s inliers=%s，"
+                "进入下一轮",
+                round_idx + 1, self._VPR_MAX_ROUNDS, votes, inliers_log,
+            )
+
+        logging.warning(
+            "[VPR] %d 轮共识全部失败，放弃本次重定位 (%s)",
+            self._VPR_MAX_ROUNDS, reason,
+        )
+        return None
 
     def _vpr_pick_initial_submap(self) -> None:
         """启动时未指定 submap：用 VPR 识别一个并触发完整 change_map。"""
@@ -173,22 +273,24 @@ class NavigationToolManager:
             )
 
     def _vpr_relocate_and_change_map(self, reason: str) -> bool:
-        """运行 VPR → 拿到目标 submap → change_map。供 watchdog 调用。
+        """多帧共识 VPR → 拿到目标 submap → change_map。供 watchdog 调用。
 
-        :return: 成功识别到 submap 且与当前一致（已就位）或 change_map 成功时返回 True。
+        与上一版的区别：
+        - 不再只查询单帧 VPR；改为 ``_vpr_collect_consensus`` 采集多帧并要求
+          几何重排后 top-1 submap_id 完全一致才认为识别成功。
+        - 共识失败直接返回 False，由调用方（watchdog）自行决定何时再触发。
+
+        :return: 共识达成且 change_map 成功（或当前就在目标 submap）时为 True。
         """
         logging.warning("[VPR] 触发重定位 (%s) ...", reason)
-        result = self._vpr_query_latest_image(image_wait_sec=5.0, top_k=3)
-        if result is None:
-            logging.warning("[VPR] 重定位失败：未识别到 submap")
+        target_submap = self._vpr_collect_consensus(reason)
+        if target_submap is None:
             return False
 
-        target_submap = result["submap_id"]
         current = self.map_manager.get_current_submap()
         logging.info(
-            "[VPR] 识别 submap='%s' (distance=%.4f, xyz=(%.2f, %.2f, %.2f), 当前='%s')",
-            target_submap, result["distance"],
-            result["x"], result["y"], result["z"], current,
+            "[VPR] 共识 submap='%s' (当前='%s')，开始换图",
+            target_submap, current,
         )
         cm = self._change_map(target_submap)
         if not cm.get("success"):
@@ -358,20 +460,29 @@ class NavigationToolManager:
         return result
 
     async def _tf_localization_watchdog(self) -> None:
-        """后台监视 ``tf_ready``：定位丢失 grace 秒后触发一次 VPR 重定位。"""
+        """后台监视 ``tf_ready``：定位丢失 grace 秒后触发一次 VPR 共识重定位。
+
+        三种 cooldown 并存（重要，互相不可替代）：
+        - ``grace_sec``           失定位至少持续这么久才认为是真的丢失
+        - ``fail_cooldown_sec``   两次 VPR **尝试**之间的最小间隔（无论成败）
+        - ``success_cooldown_sec`` VPR **成功**后即使 tf_ready 仍为 False，也
+                                    在本静默期内不再触发 VPR（按需求点 4）
+        """
         if self.vpr_bootstrap is None or not self.vpr_bootstrap.available:
             logging.info("[VPR-watchdog] VPR 不可用，跳过 tf_ready 监视")
             return
 
-        grace_sec = 10.0          # 失定位至少持续这么久才认为是真的丢失
-        cooldown_sec = 30.0       # 两次 VPR 重定位尝试之间的最小间隔
+        grace_sec = 10.0
+        fail_cooldown_sec = 30.0
+        success_cooldown_sec = 60.0
         check_interval_sec = 2.0
         loss_since: Optional[float] = None
         last_attempt_t = 0.0
+        last_success_t = 0.0
 
         logging.info(
-            "[VPR-watchdog] 已启动 (grace=%.0fs, cooldown=%.0fs, interval=%.1fs)",
-            grace_sec, cooldown_sec, check_interval_sec,
+            "[VPR-watchdog] 已启动 (grace=%.0fs, fail_cd=%.0fs, success_cd=%.0fs, interval=%.1fs)",
+            grace_sec, fail_cooldown_sec, success_cooldown_sec, check_interval_sec,
         )
 
         while not self._shutdown:
@@ -383,6 +494,20 @@ class NavigationToolManager:
                     loss_since = None
                     continue
                 now = time.monotonic()
+
+                # 需求点 4：VPR 成功后 success_cooldown_sec 内静默
+                if last_success_t > 0.0 and now - last_success_t < success_cooldown_sec:
+                    remaining = success_cooldown_sec - (now - last_success_t)
+                    # 只在第一次进入静默或长间隔时打日志，避免刷屏
+                    if loss_since is None:
+                        logging.info(
+                            "[VPR-watchdog] tf_ready=False，但距上次 VPR 成功仅 "
+                            "%.1fs，静默期剩余 %.1fs",
+                            now - last_success_t, remaining,
+                        )
+                    loss_since = now  # 复用 loss_since 抑制重复日志
+                    continue
+
                 if loss_since is None:
                     loss_since = now
                     logging.warning(
@@ -392,15 +517,21 @@ class NavigationToolManager:
                     continue
                 if now - loss_since < grace_sec:
                     continue
-                if now - last_attempt_t < cooldown_sec:
+                if now - last_attempt_t < fail_cooldown_sec:
                     continue
                 last_attempt_t = now
                 lost_for = now - loss_since
-                # change_map / VPR 调用是同步阻塞的，丢到线程池避免卡 asyncio
-                await asyncio.to_thread(
+                # change_map / VPR 调用是同步阻塞的（含多帧采集），丢到线程池避免卡 asyncio
+                success = await asyncio.to_thread(
                     self._vpr_relocate_and_change_map,
                     f"tf_ready=False 已 {lost_for:.1f}s",
                 )
+                if success:
+                    last_success_t = time.monotonic()
+                    logging.info(
+                        "[VPR-watchdog] VPR 重定位成功，未来 %.0fs 内即使未定位也不再触发",
+                        success_cooldown_sec,
+                    )
             except asyncio.CancelledError:
                 break
             except Exception as e:

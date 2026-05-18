@@ -177,6 +177,8 @@ class VprBootstrap:
 
     READY_TIMEOUT_DEFAULT = 60.0
     QUERY_TIMEOUT_DEFAULT = 30.0
+    # 子进程 stderr 的环形缓冲长度——用于在子进程未 ready 就退出时回显
+    _STDERR_TAIL_MAX = 80
 
     def __init__(
         self,
@@ -198,6 +200,8 @@ class VprBootstrap:
         self._lock = threading.Lock()  # serialize stdin writes + stdout reads
         self._tmpdir: Optional[tempfile.TemporaryDirectory] = None
         self._stderr_thread: Optional[threading.Thread] = None
+        # 子进程 stderr 的最近若干行，方便 _wait_for_ready 失败时回显
+        self._stderr_tail: List[str] = []
 
         # 数据库路径 → submap_id
         self._db_to_submap: Dict[str, str] = {}
@@ -257,6 +261,39 @@ class VprBootstrap:
     def submap_ids(self) -> List[str]:
         return [self._db_to_submap[d] for d in self._db_dirs]
 
+    def _resolve_device(self) -> str:
+        """启动前探测 venv 里的 torch.cuda 是否真的可用；不可用则降级到 cpu。
+
+        典型故障：``uv sync`` 把 Jetson 专用的 CUDA torch wheel 覆盖成了 PyPI
+        的标准 CPU wheel（``torch==X.Y+cpu``），导致子进程 ``.to("cuda")``
+        抛 ``AssertionError: Torch not compiled with CUDA enabled``。
+        我们宁可让 VPR 慢点跑 CPU，也别让整个 watchdog 完全失效。
+        """
+        if self.device == "cpu":
+            return "cpu"
+        try:
+            probe = subprocess.run(
+                [
+                    self.python_executable, "-c",
+                    "import torch,sys; "
+                    "sys.stdout.write('1' if torch.cuda.is_available() else '0')",
+                ],
+                capture_output=True, text=True, timeout=15,
+            )
+            ok = probe.returncode == 0 and probe.stdout.strip() == "1"
+        except Exception as e:
+            logger.warning(f"VprBootstrap: 探测 CUDA 失败 ({e})，降级到 cpu")
+            return "cpu"
+        if not ok:
+            logger.error(
+                "VprBootstrap: vpr venv 里的 torch 不支持 CUDA（probe stdout=%r, "
+                "stderr=%r），自动降级到 device=cpu；如需 GPU 加速，请按 "
+                "install_jetson.sh 重新安装 NVIDIA 的 Jetson torch wheel。",
+                probe.stdout.strip() if probe else "", probe.stderr.strip() if probe else "",
+            )
+            return "cpu"
+        return "cuda"
+
     def start(self) -> bool:
         """Spawn the vpr_detect.py --serve subprocess and wait for ready.
 
@@ -272,6 +309,9 @@ class VprBootstrap:
                 f"请先按 install_jetson.sh 配置 vpr 的 .venv"
             )
             return False
+
+        # 探测后可能从 cuda 降级到 cpu；以最终值为准启动子进程
+        self.device = self._resolve_device()
 
         script_path = os.path.join(self.vpr_dir, "vpr_detect.py")
         cmd = [
@@ -378,8 +418,17 @@ class VprBootstrap:
         try:
             for line in proc.stderr:
                 line = line.rstrip()
-                if line:
-                    logger.info("[vpr_detect] %s", line)
+                if not line:
+                    continue
+                # 兼顾两点：
+                # 1) 让默认日志级别（WARNING）下也能看到 Python traceback /
+                #    子进程的错误信息，方便定位 "ready 之前就退出" 这类故障。
+                # 2) 保留最近若干行作为 ring buffer，便于在 ``stop()`` /
+                #    ready-timeout 时一次性回显给上层日志。
+                self._stderr_tail.append(line)
+                if len(self._stderr_tail) > self._STDERR_TAIL_MAX:
+                    self._stderr_tail.pop(0)
+                logger.warning("[vpr_detect] %s", line)
         except Exception as e:
             logger.debug("VprBootstrap: stderr 抽取退出: %s", e)
 
@@ -394,6 +443,14 @@ class VprBootstrap:
                     "VprBootstrap: 子进程在 ready 之前退出 (code=%s)",
                     proc.returncode,
                 )
+                # 给 stderr pumping 线程一点时间把最后几行 flush 出来
+                time.sleep(0.3)
+                if self._stderr_tail:
+                    logger.error(
+                        "VprBootstrap: 子进程 stderr 最后 %d 行：\n%s",
+                        len(self._stderr_tail),
+                        "\n".join(self._stderr_tail),
+                    )
                 return False
             # readline 会阻塞直到一行可用或 stdout 关闭
             line = proc.stdout.readline()
@@ -472,12 +529,23 @@ class VprBootstrap:
         jpeg_bytes: bytes,
         top_k: int = 1,
         timeout_sec: float = QUERY_TIMEOUT_DEFAULT,
+        rerank: bool = False,
+        rerank_top_k: int = 20,
     ) -> Optional[dict]:
         """Match a raw camera JPEG against all submap databases.
 
+        :param rerank: If True, after FAISS retrieval the detector subprocess
+                       runs SuperPoint+LightGlue geometric re-ranking on the
+                       top candidates and returns the best one after rerank.
+                       Significantly improves robustness to perceptual
+                       aliasing at the cost of latency (~0.5-2s per query
+                       depending on rerank_top_k and device).
+        :param rerank_top_k: Number of candidates to feed into the geometric
+                             reranker. Only effective when rerank=True.
         :return: dict with keys ``submap_id``, ``distance``, ``x``, ``y``,
                  ``z``, ``database``, ``image_rel``, ``image_path``,
-                 ``elapsed_ms`` -- or ``None`` if VPR is unavailable or no
+                 ``elapsed_ms`` (and ``rerank_inliers`` for top-1 if
+                 rerank=True) -- or ``None`` if VPR is unavailable or no
                  result was returned. Raises ``VprBootstrapError`` on
                  transport-level failures.
         """
@@ -496,10 +564,11 @@ class VprBootstrap:
         with open(path, "wb") as f:
             f.write(processed_bytes)
         logger.warning(f"write image to tmp file: {path}")
-        resp = self._send_request(
-            {"image_path": path, "top_k": top_k},
-            timeout_sec=timeout_sec,
-        )
+        req = {"image_path": path, "top_k": top_k}
+        if rerank:
+            req["rerank"] = True
+            req["rerank_top_k"] = int(rerank_top_k)
+        resp = self._send_request(req, timeout_sec=timeout_sec)
 
         if "error" in resp:
             raise VprBootstrapError(resp["error"])
@@ -527,6 +596,9 @@ class VprBootstrap:
             "database": best.get("database"),
             "image_rel": best.get("image_rel"),
             "image_path": best.get("image_path"),
+            "rerank_inliers": best.get("rerank_inliers"),
             "elapsed_ms": resp.get("elapsed_ms"),
+            "faiss_ms": resp.get("faiss_ms"),
+            "rerank_ms": resp.get("rerank_ms"),
             "top_k_results": results,
         }
