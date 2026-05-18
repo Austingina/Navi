@@ -149,6 +149,125 @@ def _undistort_and_center_crop(
         return jpeg_bytes
 
 
+def save_consensus_collage(
+    items: List[tuple],
+    save_path: str,
+    *,
+    tile_w: int = 400,
+    tile_h: int = 300,
+    pad: int = 8,
+    title: Optional[str] = None,
+) -> bool:
+    """把若干 (query_image_path, locate_result) 配对拼成 2 行 N 列大图保存。
+
+    顶行：依次为 query 图（标 Q1..QN）。
+    底行：依次为 locate 结果的 top-1 候选图（标 submap_id / inliers / dist）。
+
+    任一项 query 缺失或 result 为 None 时会在对应格子里放 "MISSING"/"FAIL" 占位。
+
+    :param items: 每帧的 ``(query_image_path: str|None, result: dict|None)``。
+                  ``result`` 期望含 ``image_path``、``submap_id``、
+                  可选 ``rerank_inliers`` / ``distance``。
+    :param save_path: 输出 JPEG 路径（一般放 ``/tmp/...``）。
+    :param title: 可选的总标题（写在顶部一条额外条带里）。
+    :return: True 写盘成功；False 失败（cv2 不可用 / 写入异常）。
+    """
+    if not _ensure_preprocess_loaded():
+        logger.warning("save_consensus_collage: cv2/numpy 不可用，跳过保存")
+        return False
+    cv2 = _cv2
+    np = _np
+
+    n = len(items)
+    if n == 0:
+        return False
+
+    label_h = 28
+    title_h = 32 if title else 0
+    canvas_w = n * tile_w + (n + 1) * pad
+    canvas_h = title_h + 2 * (tile_h + label_h) + 3 * pad
+    canvas = np.full((canvas_h, canvas_w, 3), 245, dtype=np.uint8)
+
+    if title:
+        cv2.putText(
+            canvas, title, (pad, title_h - 8),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2,
+        )
+
+    def _load_tile(path: Optional[str], missing_label: str, color=(60, 60, 60)) -> "np.ndarray":
+        if not path or not os.path.isfile(path):
+            tile = np.full((tile_h, tile_w, 3), color, dtype=np.uint8)
+            cv2.putText(
+                tile, missing_label, (10, tile_h // 2),
+                cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2,
+            )
+            return tile
+        img = cv2.imread(path, cv2.IMREAD_COLOR)
+        if img is None:
+            return _load_tile(None, missing_label, color)
+        h, w = img.shape[:2]
+        scale = min(tile_w / w, tile_h / h)
+        new_w, new_h = max(1, int(w * scale)), max(1, int(h * scale))
+        resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        tile = np.zeros((tile_h, tile_w, 3), dtype=np.uint8)
+        x0 = (tile_w - new_w) // 2
+        y0 = (tile_h - new_h) // 2
+        tile[y0:y0 + new_h, x0:x0 + new_w] = resized
+        return tile
+
+    def _put_label(text: str, x0: int, y_top: int):
+        cv2.rectangle(
+            canvas, (x0, y_top), (x0 + tile_w, y_top + label_h),
+            (230, 230, 230), -1,
+        )
+        cv2.putText(
+            canvas, text, (x0 + 4, y_top + label_h - 8),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1,
+        )
+
+    y_q = title_h + pad
+    y_q_label = y_q + tile_h
+    y_m = y_q_label + label_h + pad
+    y_m_label = y_m + tile_h
+
+    for col, item in enumerate(items):
+        q_path, result = item if item is not None else (None, None)
+        x0 = pad + col * (tile_w + pad)
+
+        canvas[y_q:y_q + tile_h, x0:x0 + tile_w] = _load_tile(q_path, "MISSING")
+        _put_label(f"Q{col + 1}", x0, y_q_label)
+
+        if result and result.get("image_path"):
+            canvas[y_m:y_m + tile_h, x0:x0 + tile_w] = _load_tile(
+                result["image_path"], "MATCH MISSING",
+            )
+            sm = result.get("submap_id", "?")
+            inl = result.get("rerank_inliers")
+            dist = result.get("distance")
+            parts = [str(sm)]
+            if inl is not None and inl >= 0:
+                parts.append(f"inl={inl}")
+            if dist is not None:
+                try:
+                    parts.append(f"d={float(dist):.3f}")
+                except (TypeError, ValueError):
+                    pass
+            _put_label(" ".join(parts)[: 60], x0, y_m_label)
+        else:
+            canvas[y_m:y_m + tile_h, x0:x0 + tile_w] = _load_tile(
+                None, "FAIL", color=(20, 20, 80),
+            )
+            _put_label("no result", x0, y_m_label)
+
+    try:
+        os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)
+        ok = cv2.imwrite(save_path, canvas, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+    except Exception as e:
+        logger.warning(f"save_consensus_collage: 写盘失败 {save_path}: {e}")
+        return False
+    return bool(ok)
+
+
 class VprBootstrapError(RuntimeError):
     """Raised when the VPR helper cannot complete a request."""
 
@@ -601,4 +720,7 @@ class VprBootstrap:
             "faiss_ms": resp.get("faiss_ms"),
             "rerank_ms": resp.get("rerank_ms"),
             "top_k_results": results,
+            # 已经做过 undistort + center-crop 的 query 临时图（与子进程实际比对
+            # 的图一致），供上层做共识可视化等离线复核。
+            "query_image_path": path,
         }
