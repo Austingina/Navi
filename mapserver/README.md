@@ -38,16 +38,19 @@
     "default_submap": "2f",
     "default_route": "route262",
     "version": "1.2.3",
-    "build_no": 1747551234
+    "build_no": 20260518205930
   },
   ...
 }
 ```
 
+- **`version`**：人维护，从 `"1.0"` 开始，按需在 MapEditor 的"文件 → 修改版本号..."里改。
+- **`build_no`**：每次保存自动刷为本地时间 `YYYYMMDDHHMMSS`（如 `20260518205930` 表示 2026-05-18 20:59:30）。14 位整数，单调递增 + 一眼可读。
+
 可选的独立 `version.json`（仅当地图不由 MapEditor 编辑时使用）：
 
 ```json
-{ "version": "1.2.3", "build_no": 42 }
+{ "version": "1.2.3", "build_no": 20260518205930 }
 ```
 
 ## 部署服务端

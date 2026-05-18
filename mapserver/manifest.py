@@ -6,7 +6,7 @@ Manifest 是服务器和客户端之间的共享契约：
 {
   "map_id": "408",
   "version": "1.2.3",
-  "build_no": 42,
+  "build_no": 20260518205930,
   "generated_at": "2026-05-18T12:34:56Z",
   "files": [
     {"path": "408.json",                   "size": 46027,    "sha256": "ab...", "mtime": 1747551... },
@@ -17,6 +17,8 @@ Manifest 是服务器和客户端之间的共享契约：
 ```
 
 - ``version`` / ``build_no``：客户端判断"是否需要更新"的主要凭据。一致 → 无需同步。
+- ``build_no`` 格式约定：``YYYYMMDDHHMMSS``（14 位整数，本地时间），如
+  ``20260518205930`` 表示 2026-05-18 20:59:30。既单调递增、又人类可读。
 - ``files[*].sha256``：客户端判断"哪些文件要重传"的依据；不依赖 mtime（mtime 在
   rsync 等流程里可能被改写）。
 - 路径一律使用 ``posix`` 形式（``/`` 分隔），跨平台一致。
@@ -27,8 +29,9 @@ Manifest 是服务器和客户端之间的共享契约：
    —— **MapEditor 写出的位置**，单一信息源，地图数据本身和版本号天然耦合。
 2. ``<map_dir>/version.json`` 形如 ``{"version": "...", "build_no": N}``
    —— 向后兼容的备用入口。
-3. 都没有时自动回退：``version = "auto-<8位 sha>"``、``build_no = int(max(mtime))``。
-   保证 manifest 始终可用，但 build_no 不严格单调，仅适合开发环境。
+3. 都没有时自动回退：``version = "auto-<8位 sha>"``、
+   ``build_no = int(strftime("%Y%m%d%H%M%S", max(mtime)))``。
+   保证 manifest 始终可用，但 build_no 取决于文件 mtime，仅适合开发环境。
 """
 
 from __future__ import annotations
@@ -247,12 +250,15 @@ def build_manifest(
     if version_info is not None:
         version, build_no = version_info
     else:
-        # 自动派生：版本号取整体 sha8，build_no 取最新 mtime（秒）
+        # 自动派生：
+        # - version 取所有文件 sha256 的聚合短哈希
+        # - build_no 取最新 mtime 对应的 YYYYMMDDHHMMSS（与 MapEditor 写出的格式保持一致）
         agg = hashlib.sha256()
         for e in entries:
             agg.update(e.sha256.encode())
         version = "auto-" + agg.hexdigest()[:8]
-        build_no = int(max((int(e.mtime) for e in entries), default=int(time.time())))
+        latest_mtime = max((e.mtime for e in entries), default=time.time())
+        build_no = int(time.strftime("%Y%m%d%H%M%S", time.localtime(latest_mtime)))
 
     generated_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     return MapManifest(

@@ -338,9 +338,12 @@ bool MapProject::save(const QString& dirPath) {
     QString dirName = dir.dirName();
     QString jsonPath = dir.absoluteFilePath(dirName + ".json");
 
-    // 每次保存时把 build_no 更新为当前 epoch 秒。
-    // 这是 mapserver 端判断"是否有新版本"的主要依据，因此必须严格单调递增。
-    buildNo_ = QDateTime::currentSecsSinceEpoch();
+    // 每次保存时把 build_no 更新为 YYYYMMDDHHMMSS（本地时间，14 位整数）。
+    // - 既单调递增（供 mapserver 比对"是否有新版本"），又人类可读
+    // - 14 位最大 ~1e14 ≪ 2^63，qint64 范围充裕
+    buildNo_ = QDateTime::currentDateTime()
+                   .toString(QStringLiteral("yyyyMMddhhmmss"))
+                   .toLongLong();
 
     QJsonObject root;
 

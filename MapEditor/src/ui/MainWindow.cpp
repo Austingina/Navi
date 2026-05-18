@@ -375,11 +375,24 @@ void MainWindow::onSaveAs() {
 void MainWindow::onEditVersion() {
     const QString cur = project_.version();
     const qint64  bn  = project_.buildNo();
-    const QString bnText = (bn > 0)
-        ? QString("%1  (%2)")
-              .arg(bn)
-              .arg(QDateTime::fromSecsSinceEpoch(bn).toString("yyyy-MM-dd HH:mm:ss"))
-        : QStringLiteral("尚未保存");
+
+    // build_no 当前格式是 YYYYMMDDHHMMSS（14 位整数）。
+    // 兼容一下早期可能写过的 epoch 秒（10 位），便于打开历史文件时不显示得太突兀。
+    QString bnText;
+    if (bn <= 0) {
+        bnText = QStringLiteral("尚未保存");
+    } else {
+        const QString digits = QString::number(bn);
+        QDateTime dt;
+        if (digits.length() == 14) {
+            dt = QDateTime::fromString(digits, QStringLiteral("yyyyMMddhhmmss"));
+        } else if (bn >= 1'000'000'000LL && bn < 10'000'000'000LL) {
+            dt = QDateTime::fromSecsSinceEpoch(bn);
+        }
+        bnText = dt.isValid()
+                     ? QString("%1  (%2)").arg(bn).arg(dt.toString("yyyy-MM-dd HH:mm:ss"))
+                     : QString::number(bn);
+    }
 
     bool ok = false;
     QString newVer = QInputDialog::getText(
