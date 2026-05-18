@@ -6,6 +6,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QJsonValue>
+#include <QDateTime>
 #include <QDebug>
 #include <QRegularExpression>
 #include <QTextStream>
@@ -206,6 +208,13 @@ bool MapProject::load(const QString& dirPath) {
         auto global = root["global"].toObject();
         defaultSubmapId_ = global["default_submap"].toString("floor");
         defaultRouteId_ = global["default_route"].toString();
+        // version / build_no：旧文件缺失时回到默认值
+        version_ = global.value("version").toString("1.0");
+        // build_no 以整数存储，但 Qt JSON 把数字按 double 反序列化，统一走 toVariant
+        buildNo_ = global.value("build_no").toVariant().toLongLong();
+    } else {
+        version_ = "1.0";
+        buildNo_ = 0;
     }
 
     // ── submaps ──────────────────────────────────────────────────────
@@ -319,7 +328,7 @@ bool MapProject::load(const QString& dirPath) {
 //  保存: 到目录 dirPath/dirName.json + PCD
 // ═══════════════════════════════════════════════════════════════════════
 
-bool MapProject::save(const QString& dirPath) const {
+bool MapProject::save(const QString& dirPath) {
     QDir dir(dirPath);
     if (!dir.exists()) {
         QDir().mkpath(dirPath);
@@ -328,6 +337,10 @@ bool MapProject::save(const QString& dirPath) const {
     // JSON 文件名 = 目录名.json
     QString dirName = dir.dirName();
     QString jsonPath = dir.absoluteFilePath(dirName + ".json");
+
+    // 每次保存时把 build_no 更新为当前 epoch 秒。
+    // 这是 mapserver 端判断"是否有新版本"的主要依据，因此必须严格单调递增。
+    buildNo_ = QDateTime::currentSecsSinceEpoch();
 
     QJsonObject root;
 
@@ -338,10 +351,13 @@ bool MapProject::save(const QString& dirPath) const {
         if (!routes_.isEmpty())
             savedDefaultRoute = routes_.firstKey();
     }
-    root["global"] = QJsonObject{
-        {"default_submap", defaultSubmapId_},
-        {"default_route", savedDefaultRoute}
-    };
+    QJsonObject globalObj;
+    globalObj["default_submap"] = defaultSubmapId_;
+    globalObj["default_route"]  = savedDefaultRoute;
+    globalObj["version"]        = version_;
+    // 用 QJsonValue(qint64) 显式构造，避免被隐式转 double 后再科学计数
+    globalObj["build_no"]       = QJsonValue(static_cast<qint64>(buildNo_));
+    root["global"] = globalObj;
 
     // ── submaps ──────────────────────────────────────────────────────
     QJsonObject submapsObj;

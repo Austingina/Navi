@@ -21,11 +21,14 @@ Manifest 是服务器和客户端之间的共享契约：
   rsync 等流程里可能被改写）。
 - 路径一律使用 ``posix`` 形式（``/`` 分隔），跨平台一致。
 
-版本号来源：
-- 若 ``<map_dir>/version.json`` 存在并形如 ``{"version": "...", "build_no": N}``，
-  以其为准。
-- 否则自动回退：``version = "auto-<8位 sha>"``、``build_no = int(max(mtime))``。
-  保证 manifest 始终可用，但建议在 release 流程里手动维护 version.json。
+版本号来源（按优先级）：
+
+1. ``<map_dir>/<map_id>.json`` 中 ``global.version`` 与 ``global.build_no``
+   —— **MapEditor 写出的位置**，单一信息源，地图数据本身和版本号天然耦合。
+2. ``<map_dir>/version.json`` 形如 ``{"version": "...", "build_no": N}``
+   —— 向后兼容的备用入口。
+3. 都没有时自动回退：``version = "auto-<8位 sha>"``、``build_no = int(max(mtime))``。
+   保证 manifest 始终可用，但 build_no 不严格单调，仅适合开发环境。
 """
 
 from __future__ import annotations
@@ -152,8 +155,36 @@ def _iter_files(
             yield abs_path
 
 
-def _read_version_file(map_dir: Path) -> Optional[Tuple[str, int]]:
-    """从 ``<map_dir>/version.json`` 读取 ``(version, build_no)``；缺失或不合法返回 None。"""
+def _read_version_from_main_json(map_dir: Path, map_id: str) -> Optional[Tuple[str, int]]:
+    """从 ``<map_dir>/<map_id>.json`` 的 ``global.version`` / ``global.build_no`` 读取。
+
+    这是 MapEditor 保存时写入的位置，是首选信息源。
+    缺字段或文件不存在时返回 None。
+    """
+    main_json = map_dir / f"{map_id}.json"
+    if not main_json.is_file():
+        return None
+    try:
+        data = json.loads(main_json.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    global_obj = data.get("global")
+    if not isinstance(global_obj, dict):
+        return None
+    if "version" not in global_obj and "build_no" not in global_obj:
+        return None
+    try:
+        version = str(global_obj.get("version", "1.0"))
+        build_no = int(global_obj.get("build_no", 0))
+    except (TypeError, ValueError):
+        return None
+    return version, build_no
+
+
+def _read_version_sidecar(map_dir: Path) -> Optional[Tuple[str, int]]:
+    """Fallback：从独立的 ``<map_dir>/version.json`` 读取。"""
     vfile = map_dir / "version.json"
     if not vfile.is_file():
         return None
@@ -164,6 +195,19 @@ def _read_version_file(map_dir: Path) -> Optional[Tuple[str, int]]:
         return version, build_no
     except (OSError, KeyError, ValueError, TypeError, json.JSONDecodeError):
         return None
+
+
+def _resolve_version_info(map_dir: Path, map_id: str) -> Optional[Tuple[str, int]]:
+    """按优先级返回 (version, build_no)：
+
+    1. ``<map_id>.json/global``（MapEditor 写出）
+    2. ``version.json``（兼容旧约定）
+    3. 都没有 → None，由调用方决定 fallback
+    """
+    info = _read_version_from_main_json(map_dir, map_id)
+    if info is not None:
+        return info
+    return _read_version_sidecar(map_dir)
 
 
 def build_manifest(
@@ -197,8 +241,9 @@ def build_manifest(
     # 按 path 排序，让 manifest 顺序稳定（便于人读 + diff）
     entries.sort(key=lambda e: e.path)
 
-    # 版本号优先用 version.json，否则自动派生
-    version_info = _read_version_file(map_dir)
+    # 版本号：先 <map_id>.json 的 global，再 version.json，最后自动派生
+    effective_map_id = map_id or map_dir.name
+    version_info = _resolve_version_info(map_dir, effective_map_id)
     if version_info is not None:
         version, build_no = version_info
     else:

@@ -30,6 +30,7 @@ private slots:
     void onOpen();
     void onSave();
     void onSaveAs();
+    void onEditVersion();
     void onResetView();
 
     // ── Submap 面板事件 ──────────────────────────────────────────────

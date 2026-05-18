@@ -7,8 +7,9 @@
 
 - **接口**：`GET http://ip:port/mapserver/<map_id>` 返回 manifest（JSON）。
 - **增量更新**：客户端按 manifest 中每个文件的 `sha256` 比对，只重传变更或缺失的文件。
-- **版本号**：`<map_dir>/version.json`（可选，手维护）作为权威 `version` + `build_no`；
-  缺失时由服务端按文件 mtime 自动派生。
+- **版本号**：优先读 `<map_dir>/<map_id>.json` 中 `global.version` 与 `global.build_no`
+  —— 这是 **MapEditor 保存时写入的位置**（保存时 `build_no` 自动刷新为当前 epoch 秒）。
+  备选：独立的 `<map_dir>/version.json`（兼容旧布局）；都没有时由服务端按 mtime 自动派生。
 - **断点续传**：服务端支持 HTTP `Range`；客户端写 `*.partial` → 校验 sha256 → 原子 `os.replace`。
 - **崩溃可续**：客户端每下完一个文件就持久化一次本地 manifest，下次重启不会重传已下完的部分。
 - **路径遍历防护**：所有相对路径 `..`、绝对路径、转义字符都会被服务端拒绝。
@@ -19,17 +20,31 @@
 ```
 /home/nvidia/Navi/maps/
 ├── 408/                 ← map_id="408"
-│   ├── 408.json
+│   ├── 408.json         ← global.version / global.build_no 即权威版本号
 │   ├── 1f.pcd
 │   ├── 2f.pcd
 │   ├── vpr/2f/...
-│   ├── version.json     ← 可选，手维护
+│   ├── version.json     ← (可选) 兼容旧布局，独立维护版本号
 │   └── .mapserver_manifest.json  ← 客户端自动生成（同步状态）
 └── multifloor/
     └── ...
 ```
 
-`version.json` 示例：
+`408.json` 顶部（MapEditor 写出）：
+
+```json
+{
+  "global": {
+    "default_submap": "2f",
+    "default_route": "route262",
+    "version": "1.2.3",
+    "build_no": 1747551234
+  },
+  ...
+}
+```
+
+可选的独立 `version.json`（仅当地图不由 MapEditor 编辑时使用）：
 
 ```json
 { "version": "1.2.3", "build_no": 42 }

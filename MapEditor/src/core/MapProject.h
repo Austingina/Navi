@@ -19,8 +19,16 @@ public:
     // ── 加载 / 保存 ─────────────────────────────────────────────────
     /// 从目录加载: dirPath/dirName.json + PCD 文件
     bool load(const QString& dirPath);
-    /// 保存到目录: dirPath/dirName.json + PCD 文件
-    bool save(const QString& dirPath) const;
+    /// 保存到目录: dirPath/dirName.json + PCD 文件。
+    /// 注意：保存时会把 ``buildNo_`` 自动更新为当前 epoch 秒（因此非 const）。
+    bool save(const QString& dirPath);
+
+    // ── 版本号 / 构建号 ──────────────────────────────────────────────
+    /// 工程语义版本号，默认 "1.0"，由用户在 MapEditor 中显式修改。
+    QString version() const { return version_; }
+    void setVersion(const QString& v) { version_ = v; }
+    /// 构建号 = 最近一次保存时刻的 Unix epoch 秒；首次创建未保存时为 0。
+    qint64 buildNo() const { return buildNo_; }
 
     // ── Submap 管理 ──────────────────────────────────────────────────
     QString defaultSubmapId() const { return defaultSubmapId_; }
@@ -81,6 +89,8 @@ private:
     QString  projectDir_;
     QString  defaultSubmapId_;
     QString  defaultRouteId_;
+    QString  version_ = "1.0";   // 新工程默认 "1.0"
+    qint64   buildNo_ = 0;       // 由 save() 在每次保存时自动更新
     bool     dirty_ = false;
 
     // 使用 ordered map 保持插入顺序

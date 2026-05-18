@@ -16,6 +16,7 @@
 #include <QDialog>
 #include <QPushButton>
 #include <QCloseEvent>
+#include <QDateTime>
 #include <QDir>
 
 #include <Eigen/Geometry>
@@ -170,6 +171,8 @@ void MainWindow::setupMenuBar() {
     fileMenu->addAction("打开 multifloor.json...", this, &MainWindow::onOpen, QKeySequence::Open);
     fileMenu->addAction("保存", this, &MainWindow::onSave, QKeySequence::Save);
     fileMenu->addAction("另存为...", this, &MainWindow::onSaveAs, QKeySequence("Ctrl+Shift+S"));
+    fileMenu->addSeparator();
+    fileMenu->addAction("修改版本号...", this, &MainWindow::onEditVersion);
     fileMenu->addSeparator();
     fileMenu->addAction("退出", this, &QMainWindow::close, QKeySequence::Quit);
 
@@ -367,6 +370,36 @@ void MainWindow::onSaveAs() {
     currentProjectDir_ = path;
     updateWindowTitle();
     onSave();
+}
+
+void MainWindow::onEditVersion() {
+    const QString cur = project_.version();
+    const qint64  bn  = project_.buildNo();
+    const QString bnText = (bn > 0)
+        ? QString("%1  (%2)")
+              .arg(bn)
+              .arg(QDateTime::fromSecsSinceEpoch(bn).toString("yyyy-MM-dd HH:mm:ss"))
+        : QStringLiteral("尚未保存");
+
+    bool ok = false;
+    QString newVer = QInputDialog::getText(
+        this, "修改版本号",
+        QString("当前版本号: %1\nBuild No:    %2\n\n请输入新的版本号 (如 1.0、1.2.3):")
+            .arg(cur)
+            .arg(bnText),
+        QLineEdit::Normal, cur, &ok);
+    if (!ok) return;
+    newVer = newVer.trimmed();
+    if (newVer.isEmpty()) {
+        QMessageBox::warning(this, "提示", "版本号不能为空");
+        return;
+    }
+    if (newVer == cur) return;
+    project_.setVersion(newVer);
+    markDirty();
+    statusLabel_->setText(
+        QString("版本号已修改为: %1（保存后写入 global.version，并刷新 build_no）")
+            .arg(newVer));
 }
 
 void MainWindow::onResetView() {
