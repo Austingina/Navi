@@ -490,6 +490,41 @@
                     "submap": "2f"
                 }
             ]
+        },
+        "route2f231": {
+            "description": "",
+            "waypoints": [
+                {
+                    "semantic_point": "charging point",
+                    "submap": "2f231"
+                },
+                {
+                    "semantic_point": "231_door_exit",
+                    "submap": "2f231"
+                },
+                {
+                    "route": "elevatorF_f2"
+                },
+                {
+                    "semantic_point": "charge point",
+                    "submap": "5f"
+                },
+                {
+                    "route": "elevatorF_f5"
+                },
+                {
+                    "semantic_point": "elevator_hall",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "231_door_entrance",
+                    "submap": "2f231"
+                },
+                {
+                    "semantic_point": "charging point",
+                    "submap": "2f231"
+                }
+            ]
         }
     },
     "submaps": {
@@ -941,6 +976,60 @@
                 {
                     "portal": "elevator_out",
                     "submap": "5f"
+                },
+                {
+                    "portal": "d_elevator_wait",
+                    "submap": "2f231"
+                }
+            ],
+            "transform": {
+                "rotation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
+                "translation": { "x": 0.0, "y": 0.0, "z": 0.0}
+            }
+        },
+        "2f231": {
+            "description": "",
+            "map_file": "2f-231.pcd",
+            "name": "2楼231办公室",
+            "parent_submap": "2f",
+            "semantic_points": {
+                "231_door_entrance": {
+                    "need_inspect": true,
+                    "pose": {
+                        "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
+                        "position": { "x": 46.5, "y": -5.2, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "231_door_exit": {
+                    "need_inspect": true,
+                    "pose": {
+                        "orientation": { "w": 0.0, "x": 0.0, "y": 0.0, "z": 1.0},
+                        "position": { "x": 49.0, "y": -5.2, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "charging point": {
+                    "need_inspect": true,
+                    "pose": {
+                        "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
+                        "position": { "x": 53.5455, "y": -5.551, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "elevator_hall": {
+                    "need_inspect": true,
+                    "pose": {
+                        "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
+                        "position": { "x": 1.7871, "y": -2.7574, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                }
+            },
+            "submap_portals": [
+                {
+                    "portal": "elevator_hall",
+                    "submap": "2f"
                 }
             ],
             "transform": {
