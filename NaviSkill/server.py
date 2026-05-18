@@ -12,11 +12,7 @@ import numpy as np  # 数值计算库
 from wgs84 import WGS84Converter 
 from nav_node import NavNode  # 导入导航节点类
 from map_manager import MapManager  # 导入多楼层地图管理器
-from vpr_bootstrap import (  # VPR 引导 / 重定位
-    VprBootstrap,
-    VprBootstrapError,
-    save_consensus_collage,
-)
+from vpr_bootstrap import VprBootstrap, VprRelocator  # VPR 子进程 / 共识重定位
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import uvicorn
 # 导入ROS相关的库
@@ -65,8 +61,11 @@ class NavigationToolManager:
         self.wgs84_converter.initialize()
         # 标记用户是否显式指定 submap：影响启动时是否触发 VPR 引导
         self._submap_specified = submap_specified
-        # VPR 引导/重定位（独立子进程，使用 vpr 自己的 .venv）
+        # VPR 子进程（独立 venv，按需懒启动）
         self.vpr_bootstrap: Optional[VprBootstrap] = None
+        # VPR 高层共识 + 重定位编排器（依赖 ros_node / map_manager / _change_map，
+        # 在 ROS 节点起来之后再构造）
+        self.vpr_relocator: Optional[VprRelocator] = None
         if map_manager is not None:
             try:
                 self.vpr_bootstrap = VprBootstrap(map_manager, device=vpr_device)
@@ -98,14 +97,24 @@ class NavigationToolManager:
             if self.vpr_bootstrap is not None and self.vpr_bootstrap.has_databases:
                 self.vpr_bootstrap.start()
 
-            # 启动时若未指定 submap：先用 VPR 识别一个 submap，再让 _sync_map_state
-            # 完成 change_map
+            # 子进程 ready 后再构造 relocator —— 它需要 ros_node + _change_map 都
+            # 可用。无论 VPR 是否真的 available，都创建实例：内部会自检并安全降级。
+            if self.vpr_bootstrap is not None:
+                self.vpr_relocator = VprRelocator(
+                    vpr_bootstrap=self.vpr_bootstrap,
+                    ros_node=self.ros_node,
+                    map_manager=self.map_manager,
+                    change_map_fn=self._change_map,
+                )
+
+            # 启动时若未指定 submap：让 relocator 做多帧共识识别 submap，
+            # 再让 _sync_map_state 完成 change_map。
             if (
                 not self._submap_specified
-                and self.vpr_bootstrap is not None
-                and self.vpr_bootstrap.available
+                and self.vpr_relocator is not None
+                and self.vpr_relocator.available
             ):
-                self._vpr_pick_initial_submap()
+                self.vpr_relocator.pick_initial_submap()
             elif (
                 not self._submap_specified
                 and map_manager is not None
@@ -123,278 +132,6 @@ class NavigationToolManager:
 
         # 注册MCP工具函数
         self.register_tools()
-
-    # ------------------------------------------------------------------
-    # VPR 引导 / 重定位
-    # ------------------------------------------------------------------
-
-    def _vpr_query_latest_image(
-        self,
-        image_wait_sec: float,
-        top_k: int = 3,
-        rerank: bool = False,
-        rerank_top_k: int = 20,
-    ) -> Optional[Dict[str, Any]]:
-        """抓取最新一帧相机图像并调用 VPR；返回 ``locate`` 结果或 None。"""
-        if self.vpr_bootstrap is None or not self.vpr_bootstrap.available:
-            return None
-        img = self.ros_node.get_latest_image_bytes(timeout_sec=image_wait_sec)
-        if img is None:
-            logging.warning(
-                "VPR: 在 %.1fs 内未收到相机图像（topic=%s）",
-                image_wait_sec, self.ros_node.camera_image_topic,
-            )
-            return None
-        jpeg_bytes, _stamp_ns = img
-        try:
-            return self.vpr_bootstrap.locate(
-                jpeg_bytes,
-                top_k=top_k,
-                rerank=rerank,
-                rerank_top_k=rerank_top_k,
-            )
-        except VprBootstrapError as e:
-            logging.error(f"VPR 查询失败: {e}")
-            return None
-        except Exception as e:
-            logging.error(f"VPR 查询异常: {e}", exc_info=True)
-            return None
-
-    # 共识重定位的可调参数（如需在线调节可改成 self._xxx 字段）
-    _VPR_CONSENSUS_FRAMES = 5         # 每轮采集多少帧
-    _VPR_FRAME_INTERVAL_SEC = 1.0     # 帧间隔（秒）
-    _VPR_MAX_ROUNDS = 3               # 最多重试多少轮（防止无限循环）
-    _VPR_RERANK_TOP_K = 20            # 几何重排候选数
-    _VPR_IMAGE_WAIT_SEC = 5.0         # 单帧等待相机的超时
-    _VPR_DEBUG_DIR = "/tmp/vpr_debug" # 共识可视化保存目录（每轮一张大图）
-
-    def _vpr_collect_consensus(
-        self,
-        reason: str,
-        *,
-        image_wait_sec: Optional[float] = None,
-    ) -> Optional[str]:
-        """采集多帧图像 → 几何重排 → 投票，返回一致同意的 submap_id 或 None。
-
-        规则（与上层需求对齐）：
-
-        - 以 1s 为间隔依次取 ``_VPR_CONSENSUS_FRAMES`` 帧；每帧都开启几何重排
-          (SuperPoint + LightGlue) 后取 top-1 submap_id。
-        - 仅当 N 帧的 top-1 submap_id **完全一致**（且全部非空）才算成功。
-        - 不一致则进入下一轮（最多 ``_VPR_MAX_ROUNDS`` 轮）；超过则放弃，由
-          调用方（watchdog / 启动引导）自行决定后续。
-        - 任何一帧取图失败/locate 异常均视为该轮失败，立即终止该轮的剩余采集，
-          直接进入下一轮（避免无谓地等满 5 秒）。
-
-        :param image_wait_sec: 每帧等待相机出图的超时，覆盖 ``_VPR_IMAGE_WAIT_SEC``
-                                默认值。启动引导场景相机可能尚未起来，建议传 10s
-                                左右；watchdog 场景已在跑，用默认 5s 即可。
-        """
-        if self.vpr_bootstrap is None or not self.vpr_bootstrap.available:
-            return None
-        eff_image_wait = (
-            float(image_wait_sec) if image_wait_sec is not None
-            else self._VPR_IMAGE_WAIT_SEC
-        )
-
-        for round_idx in range(self._VPR_MAX_ROUNDS):
-            logging.info(
-                "[VPR] 共识第 %d/%d 轮开始 (%s)：采集 %d 帧 / 间隔 %.1fs / rerank_top_k=%d",
-                round_idx + 1, self._VPR_MAX_ROUNDS, reason,
-                self._VPR_CONSENSUS_FRAMES, self._VPR_FRAME_INTERVAL_SEC,
-                self._VPR_RERANK_TOP_K,
-            )
-            votes: list = []
-            inliers_log: list = []
-            round_aborted = False
-
-            # CPU 模式下 SuperPoint+LightGlue 慢到不可用（~1-3s/对 × 20 候选 × 5 帧）
-            # 自动关闭 rerank，仅依赖 FAISS top-1 投票。GPU 模式才开 rerank。
-            use_rerank = getattr(self.vpr_bootstrap, "device", "cpu") == "cuda"
-
-            # 每帧采到的 (query_path, locate_result) — 用于事后拼成调试大图
-            collage_items: list = []
-
-            for frame_idx in range(self._VPR_CONSENSUS_FRAMES):
-                if frame_idx > 0:
-                    time.sleep(self._VPR_FRAME_INTERVAL_SEC)
-                t0 = time.monotonic()
-                result = self._vpr_query_latest_image(
-                    image_wait_sec=eff_image_wait,
-                    top_k=1,
-                    rerank=use_rerank,
-                    rerank_top_k=self._VPR_RERANK_TOP_K,
-                )
-                dt_ms = (time.monotonic() - t0) * 1000.0
-                if result is None:
-                    logging.warning(
-                        "[VPR] 第 %d/%d 帧 locate 失败（%.0fms），放弃本轮",
-                        frame_idx + 1, self._VPR_CONSENSUS_FRAMES, dt_ms,
-                    )
-                    collage_items.append((None, None))
-                    round_aborted = True
-                    break
-
-                submap_id = result.get("submap_id")
-                inliers = result.get("rerank_inliers")
-                votes.append(submap_id)
-                inliers_log.append(inliers)
-                collage_items.append((result.get("query_image_path"), result))
-                logging.info(
-                    "[VPR] 第 %d/%d 帧 → submap='%s' (rerank_inliers=%s, "
-                    "dist=%.4f, %.0fms)",
-                    frame_idx + 1, self._VPR_CONSENSUS_FRAMES,
-                    submap_id, inliers,
-                    float(result.get("distance") or 0.0), dt_ms,
-                )
-
-            # 判定结果（仅当本轮 5 帧都收到了 locate 结果时）
-            consensus_ok = (
-                not round_aborted
-                and len(votes) == self._VPR_CONSENSUS_FRAMES
-                and len(set(votes)) == 1
-                and None not in votes
-            )
-
-            # 不论成败：写一张调试大图到 /tmp/vpr_debug
-            self._save_consensus_debug_image(
-                round_idx=round_idx,
-                reason=reason,
-                items=collage_items,
-                votes=votes,
-                inliers_log=inliers_log,
-                round_aborted=round_aborted,
-                consensus_ok=consensus_ok,
-            )
-
-            if consensus_ok:
-                chosen = votes[0]
-                logging.info(
-                    "[VPR] 共识达成: submap='%s' (votes=%s, inliers=%s)",
-                    chosen, votes, inliers_log,
-                )
-                return chosen
-
-            if round_aborted:
-                continue
-
-            logging.warning(
-                "[VPR] 共识失败 (round %d/%d): votes=%s inliers=%s，"
-                "进入下一轮",
-                round_idx + 1, self._VPR_MAX_ROUNDS, votes, inliers_log,
-            )
-
-        logging.warning(
-            "[VPR] %d 轮共识全部失败，放弃本次重定位 (%s)",
-            self._VPR_MAX_ROUNDS, reason,
-        )
-        return None
-
-    def _save_consensus_debug_image(
-        self,
-        *,
-        round_idx: int,
-        reason: str,
-        items: list,
-        votes: list,
-        inliers_log: list,
-        round_aborted: bool,
-        consensus_ok: bool,
-    ) -> None:
-        """每轮共识结束时把 5 帧 query+match 拼成一张大图存到 ``_VPR_DEBUG_DIR``。
-
-        文件名格式：
-            ``vpr_<YYYYmmdd_HHMMSS>_round<N>_<status>_<submap>.jpg``
-
-        status:
-            - ``ok``           5 帧 top-1 全一致
-            - ``noconsensus``  5 帧投票不一致
-            - ``framefail``    某帧 locate 直接失败（图像 / 子进程异常）
-
-        失败/异常不会向上抛——可视化只是调试辅助，绝不能拖垮主流程。
-        """
-        try:
-            import datetime
-            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            if consensus_ok:
-                status = "ok"
-                chosen = votes[0] if votes else "-"
-            elif round_aborted:
-                status = "framefail"
-                chosen = "-"
-            else:
-                status = "noconsensus"
-                chosen = "-"
-            safe_chosen = str(chosen).replace("/", "_").replace(" ", "_")
-            fname = (
-                f"vpr_{ts}_round{round_idx + 1}_{status}_{safe_chosen}.jpg"
-            )
-            save_path = os.path.join(self._VPR_DEBUG_DIR, fname)
-            title = (
-                f"{ts}  round {round_idx + 1}/{self._VPR_MAX_ROUNDS}  "
-                f"{status}  votes={votes}  inliers={inliers_log}  ({reason})"
-            )
-            ok = save_consensus_collage(items, save_path, title=title)
-            if ok:
-                logging.info("[VPR] 共识可视化已保存: %s", save_path)
-            else:
-                logging.warning("[VPR] 共识可视化未写入: %s", save_path)
-        except Exception as e:
-            logging.warning(f"[VPR] 保存共识可视化异常: {e}")
-
-    def _vpr_pick_initial_submap(self) -> None:
-        """启动时未指定 submap：用 VPR 多帧共识识别一个并触发完整 change_map。
-
-        与 watchdog 触发的重定位共用 ``_vpr_collect_consensus``：5 帧（1s 间
-        隔）的 top-1 submap_id 完全一致才认为识别成功，否则回退到 MapManager
-        当前缓存的 submap。第一帧给 10s 等待，避免启动瞬间相机话题尚未发布。
-        """
-        logging.info(
-            "启动时未指定 submap：通过 VPR 多帧共识 (%d 帧 × 间隔 %.1fs × 最多 %d 轮) 自动识别 ...",
-            self._VPR_CONSENSUS_FRAMES, self._VPR_FRAME_INTERVAL_SEC, self._VPR_MAX_ROUNDS,
-        )
-        submap_id = self._vpr_collect_consensus(
-            "startup bootstrap",
-            image_wait_sec=10.0,
-        )
-        if submap_id is None:
-            logging.warning(
-                "VPR 引导未能达成共识，将回退到 MapManager 当前 submap: %s",
-                self.map_manager.get_current_submap(),
-            )
-            return
-        logging.info("VPR 引导共识 submap='%s'，开始换图", submap_id)
-        cm = self._change_map(submap_id)
-        if not cm.get("success"):
-            logging.error(
-                "VPR 引导 _change_map 失败: %s", cm.get("msg"),
-            )
-
-    def _vpr_relocate_and_change_map(self, reason: str) -> bool:
-        """多帧共识 VPR → 拿到目标 submap → change_map。供 watchdog 调用。
-
-        与上一版的区别：
-        - 不再只查询单帧 VPR；改为 ``_vpr_collect_consensus`` 采集多帧并要求
-          几何重排后 top-1 submap_id 完全一致才认为识别成功。
-        - 共识失败直接返回 False，由调用方（watchdog）自行决定何时再触发。
-
-        :return: 共识达成且 change_map 成功（或当前就在目标 submap）时为 True。
-        """
-        logging.warning("[VPR] 触发重定位 (%s) ...", reason)
-        target_submap = self._vpr_collect_consensus(reason)
-        if target_submap is None:
-            return False
-
-        current = self.map_manager.get_current_submap()
-        logging.info(
-            "[VPR] 共识 submap='%s' (当前='%s')，开始换图",
-            target_submap, current,
-        )
-        cm = self._change_map(target_submap)
-        if not cm.get("success"):
-            logging.error("[VPR] _change_map 失败: %s", cm.get("msg"))
-            return False
-        return True
 
     def _change_map(
         self,
@@ -566,7 +303,7 @@ class NavigationToolManager:
         - ``success_cooldown_sec`` VPR **成功**后即使 tf_ready 仍为 False，也
                                     在本静默期内不再触发 VPR（按需求点 4）
         """
-        if self.vpr_bootstrap is None or not self.vpr_bootstrap.available:
+        if self.vpr_relocator is None or not self.vpr_relocator.available:
             logging.info("[VPR-watchdog] VPR 不可用，跳过 tf_ready 监视")
             return
 
@@ -621,7 +358,7 @@ class NavigationToolManager:
                 lost_for = now - loss_since
                 # change_map / VPR 调用是同步阻塞的（含多帧采集），丢到线程池避免卡 asyncio
                 success = await asyncio.to_thread(
-                    self._vpr_relocate_and_change_map,
+                    self.vpr_relocator.relocate_and_change_map,
                     f"tf_ready=False 已 {lost_for:.1f}s",
                 )
                 if success:
@@ -1681,7 +1418,7 @@ class NavigationToolManager:
         print(f"FastAPI WebSocket: ws://0.0.0.0:{port}/ws  |  GET /health")
 
         # 在 uvicorn 同一事件循环里启动 VPR tf_ready 监视协程
-        if self.vpr_bootstrap is not None and self.vpr_bootstrap.available:
+        if self.vpr_relocator is not None and self.vpr_relocator.available:
             self._tf_watchdog_task = asyncio.create_task(
                 self._tf_localization_watchdog(),
                 name="vpr-tf-watchdog",
