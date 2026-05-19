@@ -6,13 +6,20 @@ import asyncio  # 异步IO库
 import logging  # 日志记录库
 import json  # JSON数据处理库
 import os  # 操作系统接口库
+import sys
 import threading  # 线程处理库
+from pathlib import Path
 import numpy as np  # 数值计算库
+# 让仓库根 (/home/nvidia/Navi) 进入 sys.path，方便 import mapserver
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 # 导入自定义模块
 from wgs84 import WGS84Converter 
 from nav_node import NavNode  # 导入导航节点类
 from map_manager import MapManager  # 导入多楼层地图管理器
 from vpr_bootstrap import VprBootstrap, VprRelocator  # VPR 子进程 / 共识重定位
+from mapserver.client import resolve_map_source  # -m URL / 本地路径双模式解析
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import uvicorn
 # 导入ROS相关的库
@@ -1477,7 +1484,11 @@ async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-t', '--test', action='store_true', help='测试环境')
     parser.add_argument('-m', '--map', type=str, default=None,
-                        help='多楼层地图配置文件路径 (multifloor.json)')
+                        help='多楼层地图来源；可填两种形式：'
+                             '1) 本地路径，如 /home/nvidia/Navi/maps/408/408.json；'
+                             '2) mapserver URL，如 http://10.239.18.181:8080/mapserver/408 '
+                             '（首次启动会下载到 <repo>/maps/<map_id>/，之后做增量同步；'
+                             '网络失败但本地有缓存时降级到本地）')
     parser.add_argument('-s', '--submap', type=str, default=None,
                         help='初始 submap ID；省略则使用 VPR 自动识别，VPR 不可用时回退到 default_submap')
     parser.add_argument('--image_topic', type=str, default=None,
@@ -1494,8 +1505,13 @@ async def main():
     map_manager = None
     if args.map:
         try:
-            map_manager = MapManager(args.map)
-            logging.info(f"已加载多楼层地图: {args.map}")
+            # 解析 -m：可能是本地路径，也可能是 mapserver URL。
+            # URL 情况下 resolve_map_source 会负责"本地缓存 / 增量同步 / 网络降级"，
+            # 并把最终的本地 <map_id>.json 路径返回给 MapManager。
+            cache_root = _REPO_ROOT / "mapdata"
+            map_json_path = resolve_map_source(args.map, cache_root=cache_root)
+            map_manager = MapManager(str(map_json_path))
+            logging.info(f"已加载多楼层地图: {map_json_path}  (来源: {args.map})")
             if args.submap:
                 if map_manager.set_current_submap(args.submap):
                     logging.info(f"已指定初始 submap: {args.submap}")

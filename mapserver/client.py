@@ -41,6 +41,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib import error as urlerror
 from urllib import parse as urlparse
 from urllib import request as urlrequest
+from urllib.parse import urlparse as _urlparse
 
 # 允许直接 ``python mapserver/client.py`` 跑
 if __package__ in (None, ""):
@@ -341,6 +342,135 @@ def sync_map(
 
     result.elapsed_sec = time.time() - t0
     return result
+
+
+# ---------------------------------------------------------------------------
+# 高层入口：把 "本地路径 OR mapserver URL" 解析为本地 multifloor.json 路径
+# ---------------------------------------------------------------------------
+
+def _looks_like_url(s: str) -> bool:
+    try:
+        p = _urlparse(s)
+    except (TypeError, ValueError):
+        return False
+    return p.scheme in ("http", "https") and bool(p.netloc)
+
+
+def parse_mapserver_url(url: str) -> Tuple[str, str]:
+    """``http://host:port/mapserver/<map_id>[/...]`` → ``(base_url, map_id)``。
+
+    末尾允许带斜杠或额外路径（如 ``/manifest``），都会被截断。
+    """
+    p = _urlparse(url)
+    if p.scheme not in ("http", "https") or not p.netloc:
+        raise ValueError(f"不是合法的 http(s) URL: {url}")
+    parts = [s for s in p.path.split("/") if s]
+    if len(parts) < 2 or parts[0] != "mapserver":
+        raise ValueError(
+            f"URL 不符合 .../mapserver/<map_id> 形式: {url}"
+        )
+    base_url = f"{p.scheme}://{p.netloc}"
+    map_id = parts[1]
+    return base_url, map_id
+
+
+def resolve_map_source(
+    arg: str,
+    *,
+    cache_root: str | os.PathLike,
+    network_required: bool = False,
+    request_timeout: float = 30.0,
+    download_timeout: float = 600.0,
+) -> Path:
+    """把 ``-m`` 参数解析为可直接喂给 ``MapManager`` 的本地 ``<map_id>.json`` 路径。
+
+    ``arg`` 接受两种形式：
+
+    1. **本地路径**（绝对/相对，且存在）→ 原样返回 ``Path(arg).resolve()``。
+    2. **mapserver URL** ``http(s)://host:port/mapserver/<map_id>[/...]``：
+
+       a. 解析出 ``base_url`` 与 ``map_id``
+       b. 在 ``cache_root/<map_id>/`` 调 :func:`sync_map` 做增量同步：
+
+          - 本地已有最新版（``status == up_to_date``）→ 零下载，仅返回路径
+          - 缺文件或版本落后 → 仅拉取变更，写入本地后返回路径
+          - 全新（本地无 ``<map_id>.json``）→ 全量下载后返回路径
+       c. 同步失败时的降级策略：
+
+          - 若本地 ``<map_id>.json`` 已存在 → 打 WARNING，复用本地缓存
+          - 否则 → 抛 ``RuntimeError``
+
+    :param cache_root: 同步目标根目录。最终地图落到
+        ``cache_root/<map_id>/`` 下，与本地编辑共享同一目录约定。
+    :param network_required: 默认 False，允许网络失败时降级到本地缓存；
+        置 True 表示必须以服务器为准（失败即抛出）。
+    """
+    # ── 形态判定：先看是不是本地存在的路径 ─────────────────────────
+    p = Path(arg)
+    if p.exists():
+        return p.resolve()
+
+    if not _looks_like_url(arg):
+        raise FileNotFoundError(
+            f"地图参数既不是已存在的本地路径，也不是合法 URL: {arg}"
+        )
+
+    # ── URL 分支：同步 → 返回本地 json ─────────────────────────────
+    base_url, map_id = parse_mapserver_url(arg)
+    local_dir = Path(cache_root) / map_id
+    json_path = local_dir / f"{map_id}.json"
+    have_cache = json_path.is_file()
+
+    logger.info(
+        "[mapsource] resolving map: url=%s -> local=%s (cache=%s)",
+        arg, local_dir, "hit" if have_cache else "miss",
+    )
+
+    try:
+        result = sync_map(
+            base_url, map_id, local_dir,
+            request_timeout=request_timeout,
+            download_timeout=download_timeout,
+        )
+    except Exception as e:  # 网络异常、URL 错、服务器 5xx 等
+        if have_cache and not network_required:
+            logger.warning(
+                "[mapsource] sync failed (%s); falling back to local cache: %s",
+                e, json_path,
+            )
+            return json_path.resolve()
+        raise RuntimeError(
+            f"无法从 {arg} 同步地图且本地无可用缓存: {e}"
+        ) from e
+
+    logger.info(
+        "[mapsource] sync %s: server=(%s, %s) local=(%s, %s) "
+        "downloaded=%d files (%.1f MiB) failed=%d elapsed=%.1fs",
+        result.status,
+        result.server_version, result.server_build_no,
+        result.local_version, result.local_build_no,
+        len(result.downloaded), result.bytes_downloaded / (1 << 20),
+        len(result.failed), result.elapsed_sec,
+    )
+
+    if result.status == SyncStatus.FAILED:
+        # 部分文件失败；若本地原本就有可用 json，可以尝试继续
+        if json_path.is_file() and not network_required:
+            logger.warning(
+                "[mapsource] sync had %d failed files; using current local copy: %s",
+                len(result.failed), json_path,
+            )
+            return json_path.resolve()
+        raise RuntimeError(
+            f"同步 {arg} 失败的文件: {result.failed}"
+        )
+
+    if not json_path.is_file():
+        raise FileNotFoundError(
+            f"同步完成但未在本地找到 {json_path}，请检查服务器上是否存在 "
+            f"{map_id}/{map_id}.json"
+        )
+    return json_path.resolve()
 
 
 # ---------------------------------------------------------------------------

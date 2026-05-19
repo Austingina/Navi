@@ -5,7 +5,11 @@ cd $NAVI_ROOT_DIR/NaviSkill
 
 # 所有参数原样透传给 server.py（见 server.py main() 中的 argparse 定义）：
 #   -t, --test                    测试环境
-#   -m, --map <path>              多楼层地图配置文件路径 (multifloor.json)
+#   -m, --map <src>               多楼层地图来源，支持两种形式：
+#                                   * 本地路径，如 /home/nvidia/Navi/maps/408/408.json
+#                                   * mapserver URL，如 http://10.239.18.181:8080/mapserver/408
+#                                     （首次会下载到 $NAVI_ROOT_DIR/maps/<id>/，之后增量同步；
+#                                     网络失败但本地已有缓存时自动降级使用本地版本）
 #   -s, --submap <id>             初始 submap ID
 #       --image_topic <topic>     VPR 使用的 CompressedImage 话题
 #       --vpr_device <cuda|cpu>   VPR 子进程使用的设备

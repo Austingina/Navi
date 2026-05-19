@@ -16,6 +16,13 @@ from .manifest import (
     load_local_manifest,
     save_local_manifest,
 )
+from .client import (
+    SyncResult,
+    SyncStatus,
+    parse_mapserver_url,
+    resolve_map_source,
+    sync_map,
+)
 
 __all__ = [
     "FileEntry",
@@ -24,4 +31,9 @@ __all__ = [
     "diff_manifest",
     "load_local_manifest",
     "save_local_manifest",
+    "SyncResult",
+    "SyncStatus",
+    "sync_map",
+    "resolve_map_source",
+    "parse_mapserver_url",
 ]
