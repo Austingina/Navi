@@ -15,7 +15,7 @@ windows:
           - bash $NAVI_SCRIPT_DIR/start_localization.bash
       - shell_command:
           - sleep 30
-          - bash $NAVI_SCRIPT_DIR/start_mcp.sh -m $NAVI_ROOT_DIR/maps/408/408.json
+          - bash $NAVI_SCRIPT_DIR/start_mcp.sh -m http://10.239.18.181:8080/mapserver/408
       - shell_command:
           - sleep 40
           - bash $NAVI_SCRIPT_DIR/start_navigation.bash
