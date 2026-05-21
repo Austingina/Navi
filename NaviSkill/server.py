@@ -1499,10 +1499,12 @@ async def main():
                         help='VPR 子进程使用的设备')
     parser.add_argument('-v', '--viz', action='store_true',
                         help='启动 rerun 可视化（依赖 rerun-sdk）。展示：'
-                             '多 submap 点云对齐总图、机器人位姿、/livox/lidar 实时点云、'
+                             '多 submap 点云对齐总图、机器人位姿、实时雷达点云、'
                              '所有 routes、栅格地图 /map 与 /plan')
-    parser.add_argument('--viz_lidar_topic', type=str, default='/livox/lidar',
-                        help='可视化使用的 LiDAR 话题；支持 PointCloud2 或 Livox CustomMsg')
+    parser.add_argument('--viz_lidar_topic', type=str, default='/cloud_registered',
+                        help='可视化使用的 LiDAR 话题；默认 /cloud_registered（FAST_LIO '
+                             '已去畸变+world 系输出，直接 log 不做外参变换）；'
+                             '也可设为 /livox/lidar（原始 sensor 系，需要 lidar→base_link 外参）')
     parser.add_argument('--viz_mode', type=str, default='spawn',
                         choices=['spawn', 'connect', 'serve', 'save'],
                         help='rerun viewer 连接方式：'

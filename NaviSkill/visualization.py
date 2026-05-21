@@ -4,7 +4,8 @@
 
   1. 加载所有 submap 的点云，按 ``MapManager.get_submap_transform`` 对齐到 root 系
   2. 实时机器人位姿（``nav_node.current_pose`` × ``current_submap → root``）
-  3. 实时雷达点云（``/livox/lidar``，PointCloud2 或 Livox CustomMsg 均自动识别）
+  3. 实时雷达点云（默认 ``/cloud_registered``，FAST_LIO 输出的已去畸变+已在 world/odom
+     系的 PointCloud2；也可用 ``--viz_lidar_topic /livox/lidar`` 切到原始传感器系点云）
   4. 所有 routes 的 waypoint 折线（高亮 default_route）；可调 ``highlight_route(name)``
   5. 2D 栅格地图 ``/map`` + Nav2 全局路径 ``/plan`` + 当前机器人位置
 
@@ -283,7 +284,7 @@ class NaviRerunViz:
         serve_addr: str = "0.0.0.0:9876",
         save_path: Optional[str] = None,
         recording_id: Optional[str] = None,
-        lidar_topic: str = "/livox/lidar",
+        lidar_topic: str = "/cloud_registered",
         update_hz: float = 10.0,
         lidar_hz: float = 5.0,
         map_hz: float = 1.0,
@@ -585,7 +586,6 @@ class NaviRerunViz:
                 continue
             wps = full.get("waypoints", [])
             world_pts: List[np.ndarray] = []
-            labels: List[str] = []
             for wp in wps:
                 sub_id = wp.get("submap")
                 pt_name = wp.get("semantic_point")
@@ -595,7 +595,6 @@ class NaviRerunViz:
                 if p is None:
                     continue
                 world_pts.append(p)
-                labels.append(f"{sub_id}/{pt_name}")
             if len(world_pts) < 1:
                 continue
             world_pts = np.stack(world_pts, axis=0)
@@ -631,8 +630,7 @@ class NaviRerunViz:
                 )
             rr.log(
                 f"{entity}/waypoints",
-                rr.Points3D(positions=world_pts, colors=[rgba], radii=pt_radius,
-                            labels=labels),
+                rr.Points3D(positions=world_pts, colors=[rgba], radii=pt_radius),
                 static=True,
             )
             self._route_meta[name] = {
@@ -751,12 +749,54 @@ class NaviRerunViz:
 
     # ── 雷达（PointCloud2 / Livox CustomMsg） ──────────────────────
 
+    # z 彩虹 LUT（低→高: 蓝→青→绿→黄→红），用于让实时雷达点云"跳出"
+    # 浅色的静态 submap 背景；4 ms / 80k 点。
+    _LIDAR_Z_STOPS = np.array(
+        [
+            (40,  80, 255),   # 蓝
+            (60, 200, 230),   # 青
+            (120, 230, 100),  # 绿
+            (255, 220, 80),   # 黄
+            (255,  80, 60),   # 红
+        ],
+        dtype=np.float32,
+    )
+
+    @classmethod
+    def _color_by_z(cls, xyz: np.ndarray) -> np.ndarray:
+        """按 z 高度做 5-stop 渐变，返回 (N,3) uint8。"""
+        z = xyz[:, 2]
+        # 用 2/98 分位避免单个离群点把色阶拉死
+        z_lo = float(np.percentile(z, 2.0))
+        z_hi = float(np.percentile(z, 98.0))
+        denom = max(1e-6, z_hi - z_lo)
+        t = np.clip((z - z_lo) / denom, 0.0, 1.0)
+        stops = cls._LIDAR_Z_STOPS
+        seg = t * (len(stops) - 1)
+        i0 = np.clip(seg.astype(np.int32), 0, len(stops) - 2)
+        f = (seg - i0).reshape(-1, 1)
+        return (stops[i0] * (1.0 - f) + stops[i0 + 1] * f).astype(np.uint8)
+
+    # 已在 world/odom 系下的点云 topic 关键字（不做 lidar→base_link 外参变换，
+    # 不挂在机器人 Transform3D 下，否则会被位姿再变换一次造成双重抖动）
+    _WORLD_FRAME_TOPIC_HINTS = (
+        "/cloud_registered",      # FAST_LIO 输出（去畸变 + 已在 world/odom）
+        "/cloud_registered_body", # FAST_LIO 同帧 body frame 版本（也已是 world？看版本，保险按 world 处理）
+        "/lio_sam/mapping/cloud_registered",
+        "/Laser_map",
+        "/map_points",
+    )
+
+    @classmethod
+    def _topic_is_world_frame(cls, topic: str) -> bool:
+        topic = (topic or "").rstrip("/")
+        return any(topic.endswith(h) or h in topic for h in cls._WORLD_FRAME_TOPIC_HINTS)
+
     def _publish_lidar(self) -> None:
         rr = self._rr
         if not hasattr(self._nav_node, "get_latest_lidar_xyz"):
             return
         ret = self._nav_node.get_latest_lidar_xyz()
-        # 兼容新旧签名（新: 4 元组含 seq；旧: 3 元组）
         if len(ret) == 4:
             xyz, frame_id, stamp_ns, seq = ret
         else:
@@ -764,7 +804,6 @@ class NaviRerunViz:
             seq = -1
         if xyz is None or len(xyz) == 0:
             return
-        # 同 seq 的帧不重复发，节省传输
         if seq >= 0 and seq == self._last_lidar_seq:
             return
         self._last_lidar_seq = seq
@@ -774,42 +813,50 @@ class NaviRerunViz:
             rng = np.random.default_rng()
             xyz = xyz[rng.choice(len(xyz), self._max_lidar_pts, replace=False)]
 
-        # lidar→base_link 外参 lazy lookup（每 5s 重试一次直到拿到）
-        if self._lidar_base_tf is None:
-            now = time.monotonic()
-            if now - self._lidar_base_tf_tried_mono > 5.0 and frame_id:
-                self._lidar_base_tf_tried_mono = now
-                if hasattr(self._nav_node, "lookup_static_transform"):
-                    self._lidar_base_tf = self._nav_node.lookup_static_transform(
-                        "base_link", frame_id, timeout_sec=0.3
-                    )
-                    if self._lidar_base_tf is not None:
-                        logger.info(
-                            "viz: 已 cache lidar→base_link 外参 (frame=%s, t=%s)",
-                            frame_id, self._lidar_base_tf["translation"],
+        is_world = self._topic_is_world_frame(self._lidar_topic)
+        if not is_world:
+            # ─ 传感器系点云（如 /livox/lidar）：做 lidar→base_link，再挂到 robot 节点下
+            if self._lidar_base_tf is None:
+                now = time.monotonic()
+                if now - self._lidar_base_tf_tried_mono > 5.0 and frame_id:
+                    self._lidar_base_tf_tried_mono = now
+                    if hasattr(self._nav_node, "lookup_static_transform"):
+                        self._lidar_base_tf = self._nav_node.lookup_static_transform(
+                            "base_link", frame_id, timeout_sec=0.3
                         )
-                    else:
-                        logger.warning(
-                            "viz: 暂时拿不到 base_link←%s 的 TF；雷达点云先按"
-                            " lidar 即 base_link 假设挂载，后续重试",
-                            frame_id,
-                        )
-
-        if self._lidar_base_tf is not None:
-            xyz = _apply_tf(
-                self._lidar_base_tf["translation"],
-                self._lidar_base_tf["rotation"],
-                xyz,
-            )
+                        if self._lidar_base_tf is not None:
+                            logger.info(
+                                "viz: 已 cache lidar→base_link 外参 (frame=%s, t=%s)",
+                                frame_id, self._lidar_base_tf["translation"],
+                            )
+                        else:
+                            logger.warning(
+                                "viz: 暂时拿不到 base_link←%s 的 TF；雷达点云先按"
+                                " lidar 即 base_link 假设挂载，后续重试",
+                                frame_id,
+                            )
+            if self._lidar_base_tf is not None:
+                xyz = _apply_tf(
+                    self._lidar_base_tf["translation"],
+                    self._lidar_base_tf["rotation"],
+                    xyz,
+                )
+            entity = "/world/robot/lidar"
+        else:
+            # ─ 世界系点云（如 /cloud_registered）：已是 world/odom，直接 log
+            entity = "/world/lidar"
 
         if stamp_ns > 0:
             try:
                 rr.set_time_nanos("ros_time", stamp_ns)
             except Exception:
                 pass
+
+        # 醒目化：每点按 z 染色 + 加大点径，与浅色 submap 形成强对比
+        colors = self._color_by_z(xyz)
         rr.log(
-            "/world/robot/lidar",
-            rr.Points3D(positions=xyz, colors=[[60, 200, 255]], radii=0.03),
+            entity,
+            rr.Points3D(positions=xyz, colors=colors, radii=0.06),
         )
 
     # ── 栅格地图 + 全局路径 + 机器人在 2D 视图上的位置 ─────────────

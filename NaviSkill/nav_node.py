@@ -211,8 +211,9 @@ class NavNode(Node):
             self.get_logger().error(f"ROS节点初始化失败: {e}")
             raise
 
-    # ─── 可视化辅助：按需订阅 /livox/lidar （PointCloud2 / Livox CustomMsg 均支持） ───
-    def enable_lidar_subscription_for_viz(self, topic: str = "/livox/lidar") -> bool:
+    # ─── 可视化辅助：按需订阅 LiDAR topic（PointCloud2 / Livox CustomMsg 均支持）
+    # 推荐用 FAST_LIO 的 /cloud_registered（已在 world/odom 系），也支持原始 /livox/lidar
+    def enable_lidar_subscription_for_viz(self, topic: str = "/cloud_registered") -> bool:
         """启用一个 LiDAR 订阅，仅缓存最新一帧用于可视化。
 
         自动识别话题类型：
