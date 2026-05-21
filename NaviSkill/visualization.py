@@ -416,9 +416,10 @@ class NaviRerunViz:
         rr.log("/world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
         self._log_global_axes()
 
-        # Blueprint：把 3D view 的 origin 锚到 /world/robot，
-        # viewer 端旋转/缩放的 pivot 会跟随机器人当前位姿
-        self._send_robot_centered_blueprint()
+        # NOTE: 不再通过 Blueprint API 把 view origin 设为 /world/robot。
+        # 实测 rerun-sdk 0.21 在 origin=子entity + contents=广域 时，
+        # 渲染会出现一片漆黑（不同祖先子树的 transform 反向解算不一致）。
+        # 替代方案：在 viewer 端手动设 view origin（详见 README/启动日志）。
 
         # 静态层
         try:
@@ -453,44 +454,6 @@ class NaviRerunViz:
         if self._worker:
             self._worker.join(timeout=2.0)
         # rerun 自身的资源由 atexit 处理
-
-    # ── Blueprint：机器人为中心的 3D 视图 ───────────────────────────
-    def _send_robot_centered_blueprint(self) -> None:
-        """把默认 3D View 的 origin 设为 /world/robot。
-
-        rerun viewer 会用 origin entity 的 Transform3D 作为该 view 的参考系：
-          - 旋转/缩放的 pivot 永远在机器人当前位姿；
-          - 机器人始终居中显示；
-          - 地图、雷达、routes 等仍然全部可见（contents=/world/**）。
-
-        Blueprint 仅在 start() 时发送一次：viewer 连接后会自动 apply；
-        用户也可以在 viewer 里手动改 view origin，不会被覆盖。
-        """
-        rr = self._rr
-        try:
-            from rerun import blueprint as rb
-        except Exception as e:
-            logger.warning("viz: blueprint 模块不可用（rerun-sdk 版本太老？）：%s", e)
-            return
-        if not hasattr(rr, "send_blueprint") or not hasattr(rb, "Blueprint") \
-                or not hasattr(rb, "Spatial3DView"):
-            logger.warning("viz: 当前 rerun-sdk 不支持 Blueprint API，跳过机器人中心化")
-            return
-        try:
-            bp = rb.Blueprint(
-                rb.Spatial3DView(
-                    origin="/world/robot",
-                    contents="/world/**",
-                    name="Robot-centered",
-                ),
-                # 让 viewer 自动补出 2D image view（栅格地图）等剩余视图
-                auto_layout=True,
-                auto_views=True,
-            )
-            rr.send_blueprint(bp)
-            logger.info("viz: 已发送 robot-centered Blueprint（3D 视图 pivot 锚到 /world/robot）")
-        except Exception as e:
-            logger.warning("viz: 发送 Blueprint 失败（继续运行，仅缺机器人中心化）：%s", e)
 
     # ── 公共 API ─────────────────────────────────────────────────────
 
