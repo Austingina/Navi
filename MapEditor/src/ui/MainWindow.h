@@ -4,15 +4,19 @@
 // ═══════════════════════════════════════════════════════════════════════
 
 #include "core/MapProject.h"
+#include "core/VprDatabaseData.h"
 #include "ui/PointCloudViewer.h"
 #include "ui/SubmapPanel.h"
 #include "ui/PropertiesPanel.h"
 #include "ui/BuildVprDatabaseDialog.h"
 #include <QMainWindow>
 #include <QMap>
+#include <QSet>
+#include <QPair>
 #include <QStatusBar>
 #include <QLabel>
 #include <QDoubleSpinBox>
+#include <memory>
 
 namespace me {
 
@@ -63,6 +67,12 @@ private slots:
     void onAlignSubmap(const QString& smId);
     void onBuildVprDatabase(const QString& smId);
     void onViewVprDatabase(const QString& smId);
+
+    // ── VPR 视觉特征点（紫色点）─────────────────────────────────────
+    void onShowVprFeaturesChanged(const QString& smId, bool show);
+    void onVprPointClicked(const QString& smId, int index);
+    void onVprSelectionChanged(const QSet<QPair<QString, int>>& selected);
+    void onDeleteSelectedVprFeaturesRequested(const QString& smId);
     void onSetDefaultSubmap(const QString& id);
     void onSetParentSubmap(const QString& submapId, const QString& parentId);
     void onShowTfTree();
@@ -128,6 +138,17 @@ private:
 
     // 记忆每个 submap 上次填的 VPR 构建参数（仅本次运行内有效）
     QMap<QString, BuildVprParams> lastBuildVprParams_;
+
+    // VPR 数据库内存缓存（按需 load）+ 当前选中集合（由 PointCloudViewer 维护，
+    // 这里只是同步一份用于"删除"操作时知道删哪些）
+    QMap<QString, std::shared_ptr<VprDatabaseData>> vprDbs_;
+    QSet<QPair<QString, int>>                       vprSelection_;
+    /// 找出/加载某 submap 的 VPR 数据库；找不到返回 nullptr
+    std::shared_ptr<VprDatabaseData> ensureVprDatabase(const QString& smId);
+    /// 把内存中的 VprDatabaseData push 给 PointCloudViewer（不改 visible）
+    void pushVprPointsToViewer(const QString& smId);
+    /// 计算某 submap 用于 VPR 点的世界变换（与点云一致）
+    Eigen::Matrix4d vprWorldTransform(const QString& smId) const;
 
     // 拖拽撤销（最多一次）
     void undoMarkerDrag();

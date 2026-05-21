@@ -1,4 +1,5 @@
 #include "ui/SubmapPanel.h"
+#include "core/VprDatabaseData.h"
 
 #include <QVBoxLayout>
 #include <QHeaderView>
@@ -8,6 +9,7 @@
 #include <QDataStream>
 #include <QCheckBox>
 #include <QFile>
+#include <QDir>
 
 namespace me {
 
@@ -299,6 +301,31 @@ QTreeWidgetItem* SubmapPanel::makeSubmapItem(const QString& id, SubMap* sm) {
     }
     item->addChild(ptFolder);
 
+    // VPR 视觉特征：默认关闭；未构建数据库时禁用 checkbox
+    QString vprDir;
+    bool hasVprDb = false;
+    if (project_ && !project_->projectDir().isEmpty()) {
+        vprDir = QDir(project_->projectDir()).absoluteFilePath("vpr/" + id);
+        hasVprDb = VprDatabaseData::dirHasDatabase(vprDir);
+    }
+    auto* vprItem = new QTreeWidgetItem({hasVprDb ? QStringLiteral("🧠 VPR 视觉特征")
+                                                  : QStringLiteral("🧠 VPR 视觉特征 (未构建)")});
+    vprItem->setData(0, RoleType, TypeVprFeatures);
+    vprItem->setData(0, RoleSubmapId, id);
+    // 默认未勾选；未构建时禁用整行
+    vprItem->setCheckState(1, Qt::Unchecked);
+    if (!hasVprDb) {
+        vprItem->setFlags(vprItem->flags() & ~Qt::ItemIsEnabled);
+        vprItem->setToolTip(0,
+            QStringLiteral("尚未构建 VPR 数据库。\n右键 Submap 节点选择「构建 VPR 数据库...」后即可启用。"));
+    } else {
+        vprItem->setToolTip(0,
+            QStringLiteral("勾选以在 3D 视图中显示该 submap 的 VPR 视觉特征点（紫色）。\n"
+                           "点击单点查看对应图片；按住 Shift+左键拖框可批量选中；\n"
+                           "右键此节点可删除已选中的特征点（同步更新磁盘文件）。"));
+    }
+    item->addChild(vprItem);
+
     return item;
 }
 
@@ -353,7 +380,9 @@ void SubmapPanel::onItemClicked(QTreeWidgetItem* item, int /*column*/) {
     }
 
     // 如果是子项的变化，更新父项（submap）复选框为 全选/部分选/不选
-    if (type == TypeMapCloud || type == TypeSemPointsFolder || type == TypePortalsFolder) {
+    // 仅统计"已启用"的子项（未构建 VPR 节点是 disabled，不算入分母）
+    if (type == TypeMapCloud || type == TypeSemPointsFolder
+        || type == TypePortalsFolder || type == TypeVprFeatures) {
         auto* parent = item->parent();
         if (parent && parent->data(0, RoleType).toInt() == TypeSubmap) {
             int total = 0;
@@ -362,14 +391,16 @@ void SubmapPanel::onItemClicked(QTreeWidgetItem* item, int /*column*/) {
                 auto* c = parent->child(i);
                 if (!c) continue;
                 int ct = c->data(0, RoleType).toInt();
-                if (ct == TypeMapCloud || ct == TypeSemPointsFolder || ct == TypePortalsFolder) {
+                if (ct == TypeMapCloud || ct == TypeSemPointsFolder
+                    || ct == TypePortalsFolder || ct == TypeVprFeatures) {
+                    if (!(c->flags() & Qt::ItemIsEnabled)) continue;
                     total++;
                     if (c->checkState(1) == Qt::Checked) checked++;
                 }
             }
             Qt::CheckState state = Qt::PartiallyChecked;
-            if (checked == 0) state = Qt::Unchecked;
-            else if (checked == total) state = Qt::Checked;
+            if (total == 0 || checked == 0) state = Qt::Unchecked;
+            else if (checked == total)      state = Qt::Checked;
 
             tree_->blockSignals(true);
             parent->setCheckState(1, state);
@@ -387,15 +418,19 @@ void SubmapPanel::onItemChanged(QTreeWidgetItem* item, int column) {
 
     switch (type) {
     case TypeSubmap: {
-        // 主开关：同时控制地图点云、语义点位和传送门
-        // 先更新子项的复选框（防止递归 signal）
+        // 主开关：同时控制地图点云、语义点位、传送门、VPR 视觉特征
+        // 先更新已启用的子项 checkbox（防止递归 signal）
         tree_->blockSignals(true);
+        bool vprAffected = false;
         for (int i = 0; i < item->childCount(); ++i) {
             auto* c = item->child(i);
             if (!c) continue;
             int ct = c->data(0, RoleType).toInt();
-            if (ct == TypeMapCloud || ct == TypeSemPointsFolder || ct == TypePortalsFolder) {
+            if (ct == TypeMapCloud || ct == TypeSemPointsFolder
+                || ct == TypePortalsFolder || ct == TypeVprFeatures) {
+                if (!(c->flags() & Qt::ItemIsEnabled)) continue;  // 未构建 VPR 不动
                 c->setCheckState(1, checked ? Qt::Checked : Qt::Unchecked);
+                if (ct == TypeVprFeatures) vprAffected = true;
             }
         }
         tree_->blockSignals(false);
@@ -403,6 +438,7 @@ void SubmapPanel::onItemChanged(QTreeWidgetItem* item, int column) {
         emit submapVisibilityChanged(smId, checked);
         emit showSemanticPointsChanged(smId, checked);
         emit showPortalsChanged(smId, checked);
+        if (vprAffected) emit showVprFeaturesChanged(smId, checked);
         break;
     }
     case TypeMapCloud:
@@ -414,6 +450,9 @@ void SubmapPanel::onItemChanged(QTreeWidgetItem* item, int column) {
         break;
     case TypePortalsFolder:
         emit showPortalsChanged(smId, checked);
+        break;
+    case TypeVprFeatures:
+        emit showVprFeaturesChanged(smId, checked);
         break;
     case TypeRoute:
         emit routeVisibilityChanged(item->data(0, RoleRouteName).toString(), checked);
@@ -512,6 +551,12 @@ void SubmapPanel::onContextMenu(const QPoint& pos) {
         menu.addAction("🚪 添加传送门", [this, smId]() {
             emit addPortalRequested(smId);
         });
+        break;
+    case TypeVprFeatures:
+        menu.addAction(QStringLiteral("🗑️ 删除选中 VPR 视觉特征"),
+                       [this, smId]() {
+                           emit deleteSelectedVprFeaturesRequested(smId);
+                       });
         break;
     case TypeRoutesRoot:
         menu.addAction("🛤️ 添加路线", [this]() {

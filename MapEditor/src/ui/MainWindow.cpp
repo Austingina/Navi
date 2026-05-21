@@ -4,6 +4,7 @@
 #include "ui/BuildVprDatabaseDialog.h"
 #include "ui/PortalEditorDialog.h"
 #include "ui/VprDatabaseInfoDialog.h"
+#include "ui/VprImageViewer.h"
 
 #include <QMenuBar>
 #include <QToolBar>
@@ -267,6 +268,16 @@ void MainWindow::connectSignals() {
             this, &MainWindow::onBuildVprDatabase);
     connect(submapPanel_, &SubmapPanel::viewVprDatabaseRequested,
             this, &MainWindow::onViewVprDatabase);
+
+    // VPR 视觉特征相关
+    connect(submapPanel_, &SubmapPanel::showVprFeaturesChanged,
+            this, &MainWindow::onShowVprFeaturesChanged);
+    connect(submapPanel_, &SubmapPanel::deleteSelectedVprFeaturesRequested,
+            this, &MainWindow::onDeleteSelectedVprFeaturesRequested);
+    connect(viewer_, &PointCloudViewer::vprPointClicked,
+            this, &MainWindow::onVprPointClicked);
+    connect(viewer_, &PointCloudViewer::vprSelectionChanged,
+            this, &MainWindow::onVprSelectionChanged);
         connect(submapPanel_, &SubmapPanel::setDefaultSubmapRequested,
             this, &MainWindow::onSetDefaultSubmap);
     connect(submapPanel_, &SubmapPanel::setParentSubmapRequested,
@@ -318,6 +329,14 @@ void MainWindow::onOpen() {
     colorIndex_ = 0;
     selectedSemanticSmId_.clear();
     selectedSemanticPtName_.clear();
+
+    // 切工程：清空 VPR 缓存 & 视图里的紫色点 & 选中集合
+    {
+        QStringList loadedSubmaps = vprDbs_.keys();
+        vprDbs_.clear();
+        vprSelection_.clear();
+        for (const auto& sm : loadedSubmaps) viewer_->removeVprPoints(sm);
+    }
 
     // 为每个 submap 分配颜色
     for (const auto& id : project_.submapIds()) {
@@ -438,6 +457,12 @@ void MainWindow::refreshSubmap(const QString& id) {
         project_.submapToRootMatrix(id),
         sm->displayOptions().color,
         sm->displayOptions().pointSize);
+
+    // 若该 submap 的 VPR 紫色点已加载，同步把世界变换跟上（对齐 transform
+    // 改变后 VPR 点应跟着点云一起动）
+    if (vprDbs_.contains(id)) {
+        viewer_->setVprTransform(id, vprWorldTransform(id));
+    }
 }
 
 void MainWindow::refreshMarkers() {
@@ -1238,6 +1263,13 @@ void MainWindow::onBuildVprDatabase(const QString& smId) {
 
     if (dlg.ranSuccessfully()) {
         statusLabel_->setText(QString("VPR 数据库已生成: %1").arg(outputDir));
+        // 数据库变了：清缓存 + 清紫色点 + 清选中。下次勾选 VPR 视觉特征时重新加载
+        vprDbs_.remove(smId);
+        viewer_->removeVprPoints(smId);
+        for (auto it = vprSelection_.begin(); it != vprSelection_.end(); ) {
+            if (it->first == smId) it = vprSelection_.erase(it);
+            else ++it;
+        }
         submapPanel_->rebuild(&project_);  // 刷新菜单项 (构建 → 更新)
     }
 }
@@ -1256,6 +1288,125 @@ void MainWindow::onViewVprDatabase(const QString& smId) {
     }
     VprDatabaseInfoDialog dlg(smId, outputDir, this);
     dlg.exec();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  VPR 视觉特征点
+// ═══════════════════════════════════════════════════════════════════════
+
+Eigen::Matrix4d MainWindow::vprWorldTransform(const QString& smId) const {
+    // 与点云一致：submap -> root（默认 submap）的级联变换
+    return project_.submapToRootMatrix(smId);
+}
+
+std::shared_ptr<VprDatabaseData> MainWindow::ensureVprDatabase(const QString& smId) {
+    auto it = vprDbs_.find(smId);
+    if (it != vprDbs_.end()) return it.value();
+    if (currentProjectDir_.isEmpty()) return nullptr;
+    QString dbDir = QDir(currentProjectDir_).absoluteFilePath("vpr/" + smId);
+    if (!VprDatabaseData::dirHasDatabase(dbDir)) return nullptr;
+    auto db = std::make_shared<VprDatabaseData>();
+    QString err;
+    if (!db->load(dbDir, &err)) {
+        QMessageBox::warning(this, "VPR 数据库加载失败",
+                             QString("Submap「%1」: %2").arg(smId, err));
+        return nullptr;
+    }
+    vprDbs_[smId] = db;
+    return db;
+}
+
+void MainWindow::pushVprPointsToViewer(const QString& smId) {
+    auto db = vprDbs_.value(smId);
+    if (!db || !db->isLoaded()) return;
+    QVector<Eigen::Vector3d> pts;
+    pts.reserve(db->size());
+    for (const auto& e : db->entries()) pts.append(e.xyz);
+    viewer_->updateVprPoints(smId, pts, vprWorldTransform(smId));
+}
+
+void MainWindow::onShowVprFeaturesChanged(const QString& smId, bool show) {
+    if (show) {
+        auto db = ensureVprDatabase(smId);
+        if (!db) return;                       // 加载失败 / 无数据库
+        pushVprPointsToViewer(smId);
+        viewer_->setVprPointsVisible(smId, true);
+        statusLabel_->setText(QString("已显示 VPR 视觉特征: %1 (%2 点)")
+                                  .arg(smId).arg(db->size()));
+    } else {
+        viewer_->setVprPointsVisible(smId, false);
+    }
+}
+
+void MainWindow::onVprPointClicked(const QString& smId, int index) {
+    auto db = vprDbs_.value(smId);
+    if (!db || !db->isLoaded()) return;
+    if (index < 0 || index >= db->size()) return;
+    QString imgPath = db->resolveImagePath(index);
+    if (imgPath.isEmpty()) {
+        QMessageBox::information(this, "VPR",
+            QString("该点没有对应的图片路径（%1[%2]）").arg(smId).arg(index));
+        return;
+    }
+    if (!QFileInfo::exists(imgPath)) {
+        QMessageBox::warning(this, "VPR",
+            QString("图片文件不存在:\n%1").arg(imgPath));
+        return;
+    }
+    // 非模态、自删除：用户可同时打开多张比较
+    auto* dlg = new VprImageViewer(smId, index, imgPath, this);
+    dlg->show();
+}
+
+void MainWindow::onVprSelectionChanged(const QSet<QPair<QString, int>>& selected) {
+    vprSelection_ = selected;
+    statusLabel_->setText(
+        selected.isEmpty()
+            ? QStringLiteral("VPR 选择已清空")
+            : QString("已选中 %1 个 VPR 视觉特征").arg(selected.size()));
+}
+
+void MainWindow::onDeleteSelectedVprFeaturesRequested(const QString& smId) {
+    // 只删该 submap 中被选中的；用户右键的是某 submap 节点，跨 submap 选择
+    // 时仅处理该 submap 的部分
+    QVector<int> indices;
+    for (const auto& p : vprSelection_) {
+        if (p.first == smId) indices.append(p.second);
+    }
+    if (indices.isEmpty()) {
+        QMessageBox::information(this, "提示",
+            QString("Submap「%1」当前没有选中的 VPR 视觉特征。\n"
+                    "请先按住 Shift + 左键在 3D 视图中拖框选择。").arg(smId));
+        return;
+    }
+    auto db = ensureVprDatabase(smId);
+    if (!db) return;
+    if (indices.size() >= db->size()) {
+        QMessageBox::warning(this, "不允许",
+            QStringLiteral("不能一次性删除一个 submap 的全部 VPR 视觉特征；\n"
+                           "如需重置，请使用「构建 VPR 数据库」重新生成。"));
+        return;
+    }
+    auto ret = QMessageBox::question(
+        this, "确认删除",
+        QString("将从「%1」的 VPR 数据库中永久删除 %2 个特征点，\n"
+                "并同步更新磁盘上的 descriptors / poses / image_paths 三个文件。\n\n"
+                "继续？").arg(smId).arg(indices.size()),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (ret != QMessageBox::Yes) return;
+
+    QString err;
+    if (!db->removeIndices(indices, &err)) {
+        QMessageBox::critical(this, "删除失败", err);
+        return;
+    }
+    // 内存 + 视图同步
+    vprSelection_.clear();
+    pushVprPointsToViewer(smId);
+    viewer_->setVprPointsVisible(smId, true);
+    viewer_->clearVprSelection();
+    statusLabel_->setText(QString("已删除 %1 个 VPR 视觉特征，剩余 %2 个")
+                              .arg(indices.size()).arg(db->size()));
 }
 
 QVector<MarkerVertex> MainWindow::buildWireframeBox(

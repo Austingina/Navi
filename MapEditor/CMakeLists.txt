@@ -32,6 +32,7 @@ set(CORE_SOURCES
     src/core/Types.h
     src/core/SubMap.h          src/core/SubMap.cpp
     src/core/MapProject.h      src/core/MapProject.cpp
+    src/core/VprDatabaseData.h src/core/VprDatabaseData.cpp
 )
 
 set(UI_SOURCES
@@ -44,6 +45,7 @@ set(UI_SOURCES
     src/ui/PortalEditorDialog.h src/ui/PortalEditorDialog.cpp
     src/ui/BuildVprDatabaseDialog.h src/ui/BuildVprDatabaseDialog.cpp
     src/ui/VprDatabaseInfoDialog.h  src/ui/VprDatabaseInfoDialog.cpp
+    src/ui/VprImageViewer.h         src/ui/VprImageViewer.cpp
 )
 
 set(ALGO_SOURCES

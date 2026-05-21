@@ -12,6 +12,8 @@
 #include <QMatrix4x4>
 #include <QVector3D>
 #include <QMap>
+#include <QSet>
+#include <QPair>
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QTimer>
@@ -93,6 +95,22 @@ public:
     void removeCropBox(const QString& name);
     void clearCropBoxes();
 
+    // ── VPR 视觉特征点（紫色）─────────────────────────────────────────
+    /// 给某个 submap 设置 VPR 点；``localPoints`` 是 submap 局部坐标系下的位置，
+    /// ``transform`` 是该 submap 到世界系的 4x4。每次重传都会清空对应 submap
+    /// 的旧数据；同时清除掉 ``vprSelected_`` 中索引超出新数量的项。
+    void updateVprPoints(const QString& submapId,
+                         const QVector<Eigen::Vector3d>& localPoints,
+                         const Eigen::Matrix4d& transform);
+    void setVprPointsVisible(const QString& submapId, bool visible);
+    void removeVprPoints(const QString& submapId);
+    /// 仅替换某 submap 的世界变换（点云数据保持不变）
+    void setVprTransform(const QString& submapId, const Eigen::Matrix4d& transform);
+    /// 清空所有 VPR 点的选中集合（不影响显示开关）
+    void clearVprSelection();
+    /// 取当前所有被选中的 (submapId, index)
+    const QSet<QPair<QString, int>>& vprSelection() const { return vprSelected_; }
+
     // ── TF 树 overlay ─────────────────────────────────────────────────
     struct TfTreeNode {
         QString label;
@@ -120,6 +138,11 @@ public:
 signals:
     /// 用户在点云上拾取了一个 3D 点
     void pointPicked(const Eigen::Vector3d& position);
+
+    /// 用户单击了一个 VPR 紫色点（单次点击，命中且非框选模式）
+    void vprPointClicked(const QString& submapId, int index);
+    /// VPR 点的选中集合发生变化（Shift+左键框选后触发）
+    void vprSelectionChanged(const QSet<QPair<QString, int>>& selected);
 
 protected:
     void initializeGL() override;
@@ -195,6 +218,37 @@ private:
 
     // ── 裁剪框预览 ─────────────────────────────────────────────────
     QMap<QString, RouteGLData*> cropBoxGL_;
+
+    // ── VPR 视觉特征 ────────────────────────────────────────────────
+    struct VprPointsGLData {
+        QOpenGLVertexArrayObject vao;
+        QOpenGLBuffer            vbo{QOpenGLBuffer::VertexBuffer};
+        int                      vertexCount = 0;
+        QMatrix4x4               modelMatrix;
+        bool                     visible = true;
+        // submap 局部坐标（按行 = index），用于 hit test / 框选时 stable 索引
+        QVector<Eigen::Vector3d> cpuLocal;
+    };
+    QMap<QString, VprPointsGLData*> vprGL_;
+    QSet<QPair<QString, int>>       vprSelected_;
+    // 选中高亮：黄色大点画在紫色之上（世界坐标系直接喂数据）
+    QOpenGLVertexArrayObject vprSelVAO_;
+    QOpenGLBuffer            vprSelVBO_{QOpenGLBuffer::VertexBuffer};
+    int                      vprSelVertexCount_ = 0;
+    bool                     vprSelGlInit_ = false;
+    void uploadVprPointsGL(VprPointsGLData* d);
+    void uploadVprSelectionGL();
+    void pruneVprSelectionForSubmap(const QString& submapId, int newSize);
+    // 命中检测：返回最近的 (submapId, index)；未命中时 outSm 置空、返回 -1
+    int  hitTestVprPoints(const QPoint& screenPos, QString* outSm, float threshold = 12.0f) const;
+    // 框选：屏幕矩形内所有 visible VPR 点
+    QSet<QPair<QString, int>> boxSelectVprPoints(const QRect& screenRect) const;
+
+    // 框选交互状态（Shift + 左键）
+    bool   selectingBox_ = false;
+    QPoint selectBoxStart_;
+    QPoint selectBoxCur_;
+    bool   selectionWillEmit_ = false;
 
     // ── TF 树 overlay ────────────────────────────────────────────
     QVector<TfTreeNode> tfTreeNodes_;

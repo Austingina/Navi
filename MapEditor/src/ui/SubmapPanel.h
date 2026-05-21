@@ -66,7 +66,11 @@ signals:
     void submapVisibilityChanged(const QString& submapId, bool visible);
     void showSemanticPointsChanged(const QString& submapId, bool show);
     void showPortalsChanged(const QString& submapId, bool show);
+    void showVprFeaturesChanged(const QString& submapId, bool show);
     void routeVisibilityChanged(const QString& routeName, bool visible);
+
+    /// 用户在 VPR 节点上选了"删除选中 VPR 视觉特征"
+    void deleteSelectedVprFeaturesRequested(const QString& submapId);
 
     /// 右键菜单：将视角轨道中心设到该语义点
     void orbitCenterAtSemanticRequested(const QString& submapId, const QString& pointName);
@@ -117,7 +121,8 @@ private:
     // 记录 item 类型和数据
     enum ItemRole { RoleType = Qt::UserRole, RoleSubmapId, RolePointName, RolePortalIdx, RoleRouteName };
     enum ItemType { TypeSubmapRoot, TypeSubmap, TypeMapCloud, TypeSemPointsFolder, TypeSemPoint,
-                    TypePortalsFolder, TypePortal, TypeRoutesRoot, TypeRoute, TypeRouteWaypoint };
+                    TypePortalsFolder, TypePortal, TypeVprFeatures,
+                    TypeRoutesRoot, TypeRoute, TypeRouteWaypoint };
 
     MapProject* project_ = nullptr;
 

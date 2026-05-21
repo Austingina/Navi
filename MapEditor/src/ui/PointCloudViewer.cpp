@@ -61,6 +61,15 @@ PointCloudViewer::~PointCloudViewer() {
         cb->vbo.destroy();
         delete cb;
     }
+    for (auto* v : vprGL_) {
+        v->vao.destroy();
+        v->vbo.destroy();
+        delete v;
+    }
+    if (vprSelGlInit_) {
+        vprSelVAO_.destroy();
+        vprSelVBO_.destroy();
+    }
     markerVAO_.destroy();
     markerVBO_.destroy();
     markerEmphasisVAO_.destroy();
@@ -250,6 +259,31 @@ void PointCloudViewer::paintGL() {
         glLineWidth(1.0f);
     }
 
+    // ── VPR 视觉特征点（紫色）：每 submap 一组，按 modelMatrix 变换到世界 ─
+    for (auto it = vprGL_.begin(); it != vprGL_.end(); ++it) {
+        auto* v = it.value();
+        if (!v->visible || v->vertexCount == 0) continue;
+        QMatrix4x4 mvp = proj * view * v->modelMatrix;
+        cloudShader_->setUniformValue("uMVP", mvp);
+        cloudShader_->setUniformValue("uDrawMode", 1);
+        glPointSize(7.0f);
+        v->vao.bind();
+        glDrawArrays(GL_POINTS, 0, v->vertexCount);
+        v->vao.release();
+    }
+
+    // ── VPR 选中高亮：黄色大点覆盖在紫色之上 ────────────────────────
+    if (vprSelGlInit_ && vprSelVertexCount_ > 0) {
+        QMatrix4x4 mvp = proj * view;
+        cloudShader_->setUniformValue("uMVP", mvp);
+        cloudShader_->setUniformValue("uDrawMode", 1);
+        glPointSize(16.0f);
+        vprSelVAO_.bind();
+        glDrawArrays(GL_POINTS, 0, vprSelVertexCount_);
+        vprSelVAO_.release();
+        glPointSize(1.0f);
+    }
+
     // TF 树 overlay — GL_LINES 部分（屏幕像素坐标 + 正交投影）
     if (showTfTree_ && tfTreeLineVertCount_ > 0) {
         glDisable(GL_DEPTH_TEST);
@@ -330,6 +364,17 @@ void PointCloudViewer::paintGL() {
             painter.setPen(Qt::white);
             painter.drawText(QRect(bx, by, bw, bh), Qt::AlignCenter, n.label);
         }
+    }
+
+    // ── VPR 框选交互矩形（Shift+左键拖动）────────────────────────
+    if (selectingBox_) {
+        QPen pen(QColor(255, 220, 60));
+        pen.setStyle(Qt::DashLine);
+        pen.setWidth(2);
+        painter.setPen(pen);
+        painter.setBrush(QColor(255, 220, 60, 40));
+        QRect r(selectBoxStart_, selectBoxCur_);
+        painter.drawRect(r.normalized());
     }
 
     painter.end();
@@ -787,12 +832,21 @@ void PointCloudViewer::mousePressEvent(QMouseEvent* e) {
     lastMousePos_ = e->pos();
     if (e->button() == Qt::LeftButton) {
         leftPressed_ = true;
-        // 检测是否点击到标记点，若点击则准备长按拖拽
+
+        // Shift + 左键 → 进入 VPR 框选模式（覆盖旋转/拾取/拖拽）
+        if (e->modifiers() & Qt::ShiftModifier) {
+            selectingBox_   = true;
+            selectBoxStart_ = e->pos();
+            selectBoxCur_   = e->pos();
+            update();
+            return;
+        }
+
+        // 优先：点击语义 marker，进入"准备长按拖拽"
         auto hits = hitTestMarkers(e->pos());
         if (!hits.isEmpty()) {
             potentialDragIndex_ = hits.first();
             pressPos_ = e->pos();
-            // 启动长按定时器（单次）
             QTimer::singleShot(longPressMs_, this, [this]() {
                 if (leftPressed_ && potentialDragIndex_ >= 0) {
                     dragging_ = true;
@@ -802,7 +856,18 @@ void PointCloudViewer::mousePressEvent(QMouseEvent* e) {
             });
             return;
         }
-        // 若未点击到标记点，则进入旋转模式
+
+        // 次：单击 VPR 紫色点 → 直接 emit，不进入旋转
+        {
+            QString smId;
+            int idx = hitTestVprPoints(e->pos(), &smId);
+            if (idx >= 0) {
+                emit vprPointClicked(smId, idx);
+                return;
+            }
+        }
+
+        // 都没命中：进入旋转模式
         rotating_ = true;
     }
 
@@ -817,6 +882,13 @@ void PointCloudViewer::mousePressEvent(QMouseEvent* e) {
 void PointCloudViewer::mouseMoveEvent(QMouseEvent* e) {
     QPoint delta = e->pos() - lastMousePos_;
     lastMousePos_ = e->pos();
+
+    // 框选模式下只更新矩形，不旋转/不悬停
+    if (selectingBox_) {
+        selectBoxCur_ = e->pos();
+        update();
+        return;
+    }
 
     if (rotating_) {
         cameraAzimuth_   -= delta.x() * 0.3f;
@@ -894,6 +966,28 @@ void PointCloudViewer::mouseMoveEvent(QMouseEvent* e) {
 void PointCloudViewer::mouseReleaseEvent(QMouseEvent* e) {
     if (e->button() == Qt::LeftButton) {
         leftPressed_ = false;
+
+        // 完成 VPR 框选
+        if (selectingBox_) {
+            QRect r(selectBoxStart_, selectBoxCur_);
+            r = r.normalized();
+            selectingBox_ = false;
+            // 几乎是点（误触）→ 视为清空选中
+            if (r.width() < 4 && r.height() < 4) {
+                if (!vprSelected_.isEmpty()) {
+                    vprSelected_.clear();
+                    uploadVprSelectionGL();
+                    emit vprSelectionChanged(vprSelected_);
+                }
+            } else {
+                vprSelected_ = boxSelectVprPoints(r);  // 替换式
+                uploadVprSelectionGL();
+                emit vprSelectionChanged(vprSelected_);
+            }
+            update();
+            return;
+        }
+
         rotating_ = false;
         // 如果处在拖拽结束，发出信号并清理状态
         if (dragging_ && dragIndex_ >= 0 && dragIndex_ < markerCount_) {
@@ -1031,6 +1125,261 @@ void PointCloudViewer::resetCamera() {
 void PointCloudViewer::lookAt(const QVector3D& center) {
     cameraTarget_ = center;
     update();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  VPR 视觉特征点（紫色）
+// ═══════════════════════════════════════════════════════════════════════
+
+// 紫色 = (199, 102, 255) → 归一化 (0.78, 0.40, 1.0)
+static constexpr float kVprColorR = 0.78f;
+static constexpr float kVprColorG = 0.40f;
+static constexpr float kVprColorB = 1.00f;
+
+void PointCloudViewer::uploadVprPointsGL(VprPointsGLData* d) {
+    QVector<MarkerVertex> verts;
+    verts.reserve(d->cpuLocal.size());
+    for (const auto& p : d->cpuLocal) {
+        verts.append(MarkerVertex{
+            float(p.x()), float(p.y()), float(p.z()),
+            kVprColorR, kVprColorG, kVprColorB,
+        });
+    }
+    if (!d->vao.isCreated()) d->vao.create();
+    if (!d->vbo.isCreated()) d->vbo.create();
+    d->vao.bind();
+    d->vbo.bind();
+    d->vbo.allocate(verts.constData(), verts.size() * sizeof(MarkerVertex));
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(MarkerVertex),
+                          (void*)offsetof(MarkerVertex, x));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(MarkerVertex),
+                          (void*)offsetof(MarkerVertex, r));
+    d->vbo.release();
+    d->vao.release();
+    d->vertexCount = verts.size();
+}
+
+void PointCloudViewer::uploadVprSelectionGL() {
+    // 把当前选中集合转换为世界坐标，重传到选中高亮 VBO
+    QVector<MarkerVertex> verts;
+    verts.reserve(vprSelected_.size());
+    for (auto it = vprSelected_.constBegin(); it != vprSelected_.constEnd(); ++it) {
+        const QString& sm = it->first;
+        int idx = it->second;
+        auto itGL = vprGL_.constFind(sm);
+        if (itGL == vprGL_.constEnd()) continue;
+        const auto* d = itGL.value();
+        if (!d || !d->visible) continue;
+        if (idx < 0 || idx >= d->cpuLocal.size()) continue;
+        const auto& p = d->cpuLocal[idx];
+        QVector4D w = d->modelMatrix * QVector4D(float(p.x()), float(p.y()), float(p.z()), 1.0f);
+        // 选中色 = 亮黄 (255, 220, 60)
+        verts.append(MarkerVertex{w.x(), w.y(), w.z(), 1.0f, 0.86f, 0.23f});
+    }
+    if (!vprSelGlInit_) {
+        vprSelVAO_.create();
+        vprSelVBO_.create();
+        vprSelGlInit_ = true;
+    }
+    vprSelVAO_.bind();
+    vprSelVBO_.bind();
+    vprSelVBO_.allocate(verts.constData(), verts.size() * sizeof(MarkerVertex));
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(MarkerVertex),
+                          (void*)offsetof(MarkerVertex, x));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(MarkerVertex),
+                          (void*)offsetof(MarkerVertex, r));
+    vprSelVBO_.release();
+    vprSelVAO_.release();
+    vprSelVertexCount_ = verts.size();
+}
+
+void PointCloudViewer::pruneVprSelectionForSubmap(const QString& submapId, int newSize) {
+    bool changed = false;
+    auto it = vprSelected_.begin();
+    while (it != vprSelected_.end()) {
+        if (it->first == submapId && it->second >= newSize) {
+            it = vprSelected_.erase(it);
+            changed = true;
+        } else {
+            ++it;
+        }
+    }
+    if (changed) {
+        // 调用方负责在合适时机 emit 信号 + uploadVprSelectionGL；本函数仅 prune
+    }
+}
+
+void PointCloudViewer::updateVprPoints(const QString& submapId,
+                                       const QVector<Eigen::Vector3d>& localPoints,
+                                       const Eigen::Matrix4d& transform) {
+    makeCurrent();
+    VprPointsGLData* d = nullptr;
+    auto it = vprGL_.find(submapId);
+    if (it == vprGL_.end()) {
+        d = new VprPointsGLData();
+        d->visible = false;  // 默认隐藏，由 setVprPointsVisible 显式打开
+        vprGL_[submapId] = d;
+    } else {
+        d = it.value();
+    }
+    d->cpuLocal = localPoints;
+
+    QMatrix4x4 m;
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c)
+            m(r, c) = float(transform(r, c));
+    d->modelMatrix = m;
+
+    uploadVprPointsGL(d);
+
+    // 索引可能越界（比如数据库变小了），剪掉
+    pruneVprSelectionForSubmap(submapId, d->cpuLocal.size());
+    uploadVprSelectionGL();
+
+    doneCurrent();
+    update();
+}
+
+void PointCloudViewer::setVprPointsVisible(const QString& submapId, bool visible) {
+    auto it = vprGL_.find(submapId);
+    if (it == vprGL_.end()) return;
+    if (it.value()->visible == visible) return;
+    it.value()->visible = visible;
+    // 隐藏时，把该 submap 的选中项也丢弃（用户看不到的不该被选中）
+    if (!visible) {
+        bool changed = false;
+        auto sit = vprSelected_.begin();
+        while (sit != vprSelected_.end()) {
+            if (sit->first == submapId) {
+                sit = vprSelected_.erase(sit);
+                changed = true;
+            } else {
+                ++sit;
+            }
+        }
+        if (changed) {
+            makeCurrent();
+            uploadVprSelectionGL();
+            doneCurrent();
+            emit vprSelectionChanged(vprSelected_);
+        }
+    }
+    update();
+}
+
+void PointCloudViewer::removeVprPoints(const QString& submapId) {
+    auto it = vprGL_.find(submapId);
+    if (it == vprGL_.end()) return;
+    makeCurrent();
+    it.value()->vao.destroy();
+    it.value()->vbo.destroy();
+    delete it.value();
+    vprGL_.erase(it);
+    // 清理选中
+    bool changed = false;
+    auto sit = vprSelected_.begin();
+    while (sit != vprSelected_.end()) {
+        if (sit->first == submapId) { sit = vprSelected_.erase(sit); changed = true; }
+        else ++sit;
+    }
+    if (changed) {
+        uploadVprSelectionGL();
+        emit vprSelectionChanged(vprSelected_);
+    }
+    doneCurrent();
+    update();
+}
+
+void PointCloudViewer::setVprTransform(const QString& submapId, const Eigen::Matrix4d& transform) {
+    auto it = vprGL_.find(submapId);
+    if (it == vprGL_.end()) return;
+    QMatrix4x4 m;
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c)
+            m(r, c) = float(transform(r, c));
+    it.value()->modelMatrix = m;
+    if (!vprSelected_.isEmpty()) {
+        makeCurrent();
+        uploadVprSelectionGL();
+        doneCurrent();
+    }
+    update();
+}
+
+void PointCloudViewer::clearVprSelection() {
+    if (vprSelected_.isEmpty()) return;
+    vprSelected_.clear();
+    makeCurrent();
+    uploadVprSelectionGL();
+    doneCurrent();
+    update();
+    emit vprSelectionChanged(vprSelected_);
+}
+
+int PointCloudViewer::hitTestVprPoints(const QPoint& screenPos, QString* outSm,
+                                       float threshold) const {
+    if (outSm) outSm->clear();
+    if (vprGL_.isEmpty()) return -1;
+
+    QMatrix4x4 vp = projMatrix() * viewMatrix();
+    int    bestIdx   = -1;
+    QString bestSm;
+    float   bestDist = threshold;
+
+    for (auto it = vprGL_.constBegin(); it != vprGL_.constEnd(); ++it) {
+        const auto* d = it.value();
+        if (!d->visible || d->cpuLocal.isEmpty()) continue;
+        for (int i = 0; i < d->cpuLocal.size(); ++i) {
+            const auto& p = d->cpuLocal[i];
+            QVector4D world = d->modelMatrix
+                              * QVector4D(float(p.x()), float(p.y()), float(p.z()), 1.0f);
+            QVector4D clip = vp * world;
+            if (clip.w() <= 0.0f) continue;
+            float ndcX = clip.x() / clip.w();
+            float ndcY = clip.y() / clip.w();
+            float sx = (ndcX * 0.5f + 0.5f) * width();
+            float sy = (1.0f - (ndcY * 0.5f + 0.5f)) * height();
+            float dx = sx - screenPos.x();
+            float dy = sy - screenPos.y();
+            float dist = std::sqrt(dx * dx + dy * dy);
+            if (dist < bestDist) {
+                bestDist = dist;
+                bestIdx  = i;
+                bestSm   = it.key();
+            }
+        }
+    }
+    if (bestIdx >= 0 && outSm) *outSm = bestSm;
+    return bestIdx;
+}
+
+QSet<QPair<QString, int>> PointCloudViewer::boxSelectVprPoints(const QRect& screenRect) const {
+    QSet<QPair<QString, int>> out;
+    if (vprGL_.isEmpty()) return out;
+    QMatrix4x4 vp = projMatrix() * viewMatrix();
+    for (auto it = vprGL_.constBegin(); it != vprGL_.constEnd(); ++it) {
+        const auto* d = it.value();
+        if (!d->visible || d->cpuLocal.isEmpty()) continue;
+        for (int i = 0; i < d->cpuLocal.size(); ++i) {
+            const auto& p = d->cpuLocal[i];
+            QVector4D world = d->modelMatrix
+                              * QVector4D(float(p.x()), float(p.y()), float(p.z()), 1.0f);
+            QVector4D clip = vp * world;
+            if (clip.w() <= 0.0f) continue;
+            float ndcX = clip.x() / clip.w();
+            float ndcY = clip.y() / clip.w();
+            int sx = int((ndcX * 0.5f + 0.5f) * width());
+            int sy = int((1.0f - (ndcY * 0.5f + 0.5f)) * height());
+            if (screenRect.contains(sx, sy)) {
+                out.insert({it.key(), i});
+            }
+        }
+    }
+    return out;
 }
 
 } // namespace me
