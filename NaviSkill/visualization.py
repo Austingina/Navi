@@ -457,16 +457,22 @@ class NaviRerunViz:
 
     # ── 公共 API ─────────────────────────────────────────────────────
 
-    def highlight_route(self, route_name: Optional[str]) -> None:
-        """将某条 route 设为高亮（粗线 + 满色）；传 None 则取消高亮。"""
+    def set_active_route(self, route_name: Optional[str]) -> None:
+        """设置当前正在导航的 route。
+
+        - ``route_name`` 非空 → 在 viz 里画这条 route 的折线 + waypoints
+        - ``route_name`` 为 ``None`` 或 ``""`` → 清掉所有 route 显示（无导航状态）
+        """
         if self._rr is None:
             return
-        self._active_route = route_name
-        # 重新 log 所有 routes 以更新颜色/线宽
+        self._active_route = route_name or None
         try:
             self._log_routes()
         except Exception:
-            logger.exception("viz: 高亮 route 时重 log 失败")
+            logger.exception("viz: 切换 active route 时重 log 失败")
+
+    # 向后兼容：旧调用方仍可使用 highlight_route(name)
+    highlight_route = set_active_route
 
     def trigger_reload_static(self) -> None:
         """供外部在地图重载后调用：清空已 log 标记并重灌静态层。"""
@@ -492,9 +498,9 @@ class NaviRerunViz:
 
     # ── 颜色策略 ────────────────────────────────────────────────────
     # 当前 submap：深紫蓝 + 半透明（让实时雷达点云在它前面更"跳出"）
-    _SUBMAP_COLOR_CURRENT = (60, 70, 130, 110)
+    _SUBMAP_COLOR_CURRENT = (200, 200, 200, 20)
     # 其他 submap：统一浅灰，不透明
-    _SUBMAP_COLOR_OTHER = (200, 200, 200, 255)
+    _SUBMAP_COLOR_OTHER = (200, 200, 200, 80)
 
     def _log_submap_clouds(self) -> None:
         rr = self._rr
@@ -609,14 +615,8 @@ class NaviRerunViz:
         rr = self._rr
         if self._map_manager is None:
             return
-        try:
-            routes = self._map_manager.get_route_list() or []
-            default_name = self._map_manager.get_default_route()
-        except Exception:
-            routes = []
-            default_name = None
 
-        # 先把之前 log 过的 routes "清掉"（避免上次 highlight 后残留颜色）
+        # 先把之前 log 过的 routes 全部清掉
         for name in list(self._route_meta.keys()):
             try:
                 rr.log(f"/world/routes/{name}", rr.Clear(recursive=True))
@@ -624,70 +624,56 @@ class NaviRerunViz:
                 pass
         self._route_meta.clear()
 
-        for i, r in enumerate(routes):
-            name = r.get("name")
-            if not name:
-                continue
-            full = self._map_manager.get_route_by_name(name)
-            if not full:
-                continue
-            wps = full.get("waypoints", [])
-            world_pts: List[np.ndarray] = []
-            for wp in wps:
-                sub_id = wp.get("submap")
-                pt_name = wp.get("semantic_point")
-                if not sub_id or not pt_name:
-                    continue
-                p = self._resolve_waypoint_world(sub_id, pt_name)
-                if p is None:
-                    continue
-                world_pts.append(p)
-            if len(world_pts) < 1:
-                continue
-            world_pts = np.stack(world_pts, axis=0)
+        # 没有"激活"的 route → 什么都不画
+        active = self._active_route
+        if not active:
+            return
 
-            base_color = _ROUTE_PALETTE[i % len(_ROUTE_PALETTE)]
-            is_active = (self._active_route == name)
-            is_default = (default_name == name)
-            # 高亮：active > default > 普通
-            if is_active:
-                color = tuple(min(255, int(c * 1.2)) for c in base_color)
-                line_radius = 0.10
-                pt_radius = 0.22
-                alpha = 255
-            elif is_default:
-                color = base_color
-                line_radius = 0.07
-                pt_radius = 0.18
-                alpha = 255
-            else:
-                color = base_color
-                line_radius = 0.04
-                pt_radius = 0.13
-                alpha = 150
-            rgba = (*color, alpha)
+        full = None
+        try:
+            full = self._map_manager.get_route_by_name(active)
+        except Exception:
+            full = None
+        if not full:
+            logger.warning("viz: active route '%s' 在 map_manager 中找不到", active)
+            return
 
-            entity = f"/world/routes/{name}"
-            if len(world_pts) >= 2:
-                rr.log(
-                    f"{entity}/line",
-                    rr.LineStrips3D(strips=[world_pts.tolist()],
-                                    colors=[rgba], radii=line_radius),
-                    static=True,
-                )
+        wps = full.get("waypoints", [])
+        world_pts: List[np.ndarray] = []
+        for wp in wps:
+            sub_id = wp.get("submap")
+            pt_name = wp.get("semantic_point")
+            if not sub_id or not pt_name:
+                continue
+            p = self._resolve_waypoint_world(sub_id, pt_name)
+            if p is None:
+                continue
+            world_pts.append(p)
+        if len(world_pts) < 1:
+            logger.warning("viz: active route '%s' 没有可解析的 waypoint", active)
+            return
+        world_pts = np.stack(world_pts, axis=0)
+
+        # 单条 active route → 用一个稳定醒目的色（亮黄）
+        rgba = (255, 220, 60, 255)
+        line_radius = 0.10
+        pt_radius = 0.22
+
+        entity = f"/world/routes/{active}"
+        if len(world_pts) >= 2:
             rr.log(
-                f"{entity}/waypoints",
-                rr.Points3D(positions=world_pts, colors=[rgba], radii=pt_radius),
+                f"{entity}/line",
+                rr.LineStrips3D(strips=[world_pts.tolist()],
+                                colors=[rgba], radii=line_radius),
                 static=True,
             )
-            self._route_meta[name] = {
-                "active": is_active, "default": is_default, "count": len(world_pts),
-            }
-        if routes:
-            logger.info(
-                "viz: routes 已加载 %d 条 (default=%s, active=%s)",
-                len(routes), default_name, self._active_route,
-            )
+        rr.log(
+            f"{entity}/waypoints",
+            rr.Points3D(positions=world_pts, colors=[rgba], radii=pt_radius),
+            static=True,
+        )
+        self._route_meta[active] = {"active": True, "count": len(world_pts)}
+        logger.info("viz: 已显示当前导航 route '%s' (%d waypoints)", active, len(world_pts))
 
     # ── 动态层 (worker) ─────────────────────────────────────────────
 
