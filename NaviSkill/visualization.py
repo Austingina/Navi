@@ -322,6 +322,10 @@ class NaviRerunViz:
 
         # 缓存：上次已 log 过点云的 submap 集合（避免无谓重传）
         self._submap_clouds_logged: set = set()
+        # 解码后的 submap 点云缓存（用于切换"当前 submap"时按需重新染色）
+        self._submap_pts_cache: Dict[str, np.ndarray] = {}
+        # 上一次染色用的"当前 submap"（用于检测切换并避免无谓重 log）
+        self._last_current_submap: Optional[str] = None
         # 机器人外观（box / heading / axes）只 log 一次
         self._robot_visual_logged: bool = False
         # lidar→base_link 外参 cache
@@ -412,6 +416,10 @@ class NaviRerunViz:
         rr.log("/world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
         self._log_global_axes()
 
+        # Blueprint：把 3D view 的 origin 锚到 /world/robot，
+        # viewer 端旋转/缩放的 pivot 会跟随机器人当前位姿
+        self._send_robot_centered_blueprint()
+
         # 静态层
         try:
             self._log_submap_clouds()
@@ -446,6 +454,44 @@ class NaviRerunViz:
             self._worker.join(timeout=2.0)
         # rerun 自身的资源由 atexit 处理
 
+    # ── Blueprint：机器人为中心的 3D 视图 ───────────────────────────
+    def _send_robot_centered_blueprint(self) -> None:
+        """把默认 3D View 的 origin 设为 /world/robot。
+
+        rerun viewer 会用 origin entity 的 Transform3D 作为该 view 的参考系：
+          - 旋转/缩放的 pivot 永远在机器人当前位姿；
+          - 机器人始终居中显示；
+          - 地图、雷达、routes 等仍然全部可见（contents=/world/**）。
+
+        Blueprint 仅在 start() 时发送一次：viewer 连接后会自动 apply；
+        用户也可以在 viewer 里手动改 view origin，不会被覆盖。
+        """
+        rr = self._rr
+        try:
+            from rerun import blueprint as rb
+        except Exception as e:
+            logger.warning("viz: blueprint 模块不可用（rerun-sdk 版本太老？）：%s", e)
+            return
+        if not hasattr(rr, "send_blueprint") or not hasattr(rb, "Blueprint") \
+                or not hasattr(rb, "Spatial3DView"):
+            logger.warning("viz: 当前 rerun-sdk 不支持 Blueprint API，跳过机器人中心化")
+            return
+        try:
+            bp = rb.Blueprint(
+                rb.Spatial3DView(
+                    origin="/world/robot",
+                    contents="/world/**",
+                    name="Robot-centered",
+                ),
+                # 让 viewer 自动补出 2D image view（栅格地图）等剩余视图
+                auto_layout=True,
+                auto_views=True,
+            )
+            rr.send_blueprint(bp)
+            logger.info("viz: 已发送 robot-centered Blueprint（3D 视图 pivot 锚到 /world/robot）")
+        except Exception as e:
+            logger.warning("viz: 发送 Blueprint 失败（继续运行，仅缺机器人中心化）：%s", e)
+
     # ── 公共 API ─────────────────────────────────────────────────────
 
     def highlight_route(self, route_name: Optional[str]) -> None:
@@ -462,6 +508,8 @@ class NaviRerunViz:
     def trigger_reload_static(self) -> None:
         """供外部在地图重载后调用：清空已 log 标记并重灌静态层。"""
         self._submap_clouds_logged.clear()
+        self._submap_pts_cache.clear()
+        self._last_current_submap = None
         self._log_submap_clouds()
         self._log_routes()
 
@@ -479,12 +527,19 @@ class NaviRerunViz:
             static=True,
         )
 
+    # ── 颜色策略 ────────────────────────────────────────────────────
+    # 当前 submap：深紫蓝 + 半透明（让实时雷达点云在它前面更"跳出"）
+    _SUBMAP_COLOR_CURRENT = (60, 70, 130, 110)
+    # 其他 submap：统一浅灰，不透明
+    _SUBMAP_COLOR_OTHER = (200, 200, 200, 255)
+
     def _log_submap_clouds(self) -> None:
         rr = self._rr
         if self._map_manager is None:
             return
 
-        for idx, sm_id in enumerate(self._map_manager.get_submap_list()):
+        any_new = False
+        for sm_id in self._map_manager.get_submap_list():
             if sm_id in self._submap_clouds_logged:
                 continue
             try:
@@ -505,6 +560,9 @@ class NaviRerunViz:
                 idx_keep = rng.choice(n0, size=self._max_pts, replace=False)
                 pts = pts[idx_keep]
 
+            # 缓存解码后的点云，后续切"当前 submap"重新染色不用再读盘
+            self._submap_pts_cache[sm_id] = pts
+
             tf = self._map_manager.get_submap_transform(sm_id) or {}
             t = tf.get("translation", {"x": 0.0, "y": 0.0, "z": 0.0})
             r = tf.get("rotation", {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0})
@@ -517,12 +575,6 @@ class NaviRerunViz:
                 ),
                 static=True,
             )
-            color = _SUBMAP_PALETTE[idx % len(_SUBMAP_PALETTE)]
-            rr.log(
-                f"{entity}/points",
-                rr.Points3D(positions=pts, colors=[color], radii=0.02),
-                static=True,
-            )
             # 局部三轴：每个 submap 原点 0.5 m
             rr.log(
                 f"{entity}/axes",
@@ -532,10 +584,42 @@ class NaviRerunViz:
                 ),
                 static=True,
             )
+            # 颜色由 _refresh_submap_colors 统一管
             self._submap_clouds_logged.add(sm_id)
+            any_new = True
             logger.info(
                 f"viz: 已加载 submap {sm_id}: 原始 {n0} 点 → 渲染 {len(pts)} 点  ({pcd_path})"
             )
+
+        if any_new:
+            self._refresh_submap_colors(force=True)
+
+    def _refresh_submap_colors(self, force: bool = False) -> None:
+        """根据 ``map_manager.current_submap`` 给已加载 submap 的点云重新上色。
+
+        - 当前 submap → 深紫蓝半透明（不抢实时雷达点云的视觉焦点）
+        - 其他 submap → 统一浅灰不透明
+        rerun 里同 entity 的 static log 后写会覆盖前一份，所以可以反复重发。
+        """
+        rr = self._rr
+        if self._map_manager is None or not self._submap_pts_cache:
+            return
+        try:
+            cur = self._map_manager.get_current_submap()
+        except Exception:
+            cur = None
+        if not force and cur == self._last_current_submap:
+            return
+        self._last_current_submap = cur
+        for sm_id, pts in self._submap_pts_cache.items():
+            color = self._SUBMAP_COLOR_CURRENT if sm_id == cur else self._SUBMAP_COLOR_OTHER
+            rr.log(
+                f"/world/submaps/{sm_id}/points",
+                rr.Points3D(positions=pts, colors=[color], radii=0.02),
+                static=True,
+            )
+        if cur:
+            logger.info("viz: 当前 submap 切换为 %s（点云重新上色）", cur)
 
     def _resolve_waypoint_world(self, sub_id: str, pt_name: str) -> Optional[np.ndarray]:
         """waypoint → root 系 (3,) float32；查不到返回 None。"""
@@ -646,6 +730,7 @@ class NaviRerunViz:
 
     def _loop(self) -> None:
         next_map = 0.0
+        next_submap_check = 0.0
         while not self._stop.is_set():
             t0 = time.monotonic()
             try:
@@ -668,6 +753,14 @@ class NaviRerunViz:
                 except Exception:
                     logger.exception("viz: 发布栅格地图失败")
                 next_map = t0 + self._map_interval
+
+            # 1Hz 检查"当前 submap"是否切换（vpr 重定位换图远低于此频率）
+            if t0 >= next_submap_check:
+                try:
+                    self._refresh_submap_colors(force=False)
+                except Exception:
+                    logger.exception("viz: 重刷 submap 颜色失败")
+                next_submap_check = t0 + 1.0
 
             elapsed = time.monotonic() - t0
             sleep = self._update_interval - elapsed
