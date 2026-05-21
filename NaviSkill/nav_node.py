@@ -13,7 +13,7 @@ from action_msgs.msg import GoalStatus, GoalStatusArray  # Action状态消息
 import logging  # 日志记录库
 import threading  # 线程处理库
 from collections import deque
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 import time
 import math  # 数学库
 import os  # 文件路径处理
@@ -192,9 +192,166 @@ class NavNode(Node):
             self._call_queue_lock = threading.Lock()
             # timer running in ROS thread will flush the queue
             self._queue_timer = self.create_timer(0.02, self._process_call_queue)
+
+            # ── 可视化相关的按需订阅（仅在 server.py -v 启动时由 visualization.py 触发）
+            # 关键：回调里只缓存 raw msg + 元数据（O(1)），不在 rclpy 线程里做
+            # Python 层的逐点 numpy 化——MID360 单帧 24k 点用 for-loop 会占数十毫秒
+            # GIL，把 update_robot_pose 的 timer 拖到几秒后才能跑，导致 TF 时间戳
+            # 持续落后。Python→numpy 解码由 viz worker 线程在 get_latest_lidar_xyz()
+            # 里完成，慢一点最多只影响 viz 帧率，不会反过来影响定位。
+            self._lidar_lock = threading.Lock()
+            self._lidar_msg: Optional[Any] = None         # 最近一帧原始 ROS msg
+            self._lidar_msg_kind: str = ""                 # "pc2" / "livox_custom"
+            self._lidar_frame_id: str = ""
+            self._lidar_stamp_ns: int = 0
+            self._lidar_seq: int = 0                       # viz 用来判断是否有新帧
+            self._lidar_sub = None
+            self._lidar_topic: Optional[str] = None
         except Exception as e:
             self.get_logger().error(f"ROS节点初始化失败: {e}")
             raise
+
+    # ─── 可视化辅助：按需订阅 /livox/lidar （PointCloud2 / Livox CustomMsg 均支持） ───
+    def enable_lidar_subscription_for_viz(self, topic: str = "/livox/lidar") -> bool:
+        """启用一个 LiDAR 订阅，仅缓存最新一帧用于可视化。
+
+        自动识别话题类型：
+          - sensor_msgs/PointCloud2           （xfer_format=0 时）
+          - livox_ros_driver2_msgs/CustomMsg  （xfer_format=1 时；驱动 ROS2 包名）
+          - livox_ros_driver2/CustomMsg       （某些发行版下的旧包名）
+
+        返回 True 表示订阅成功；False 表示找不到话题/消息类型导入失败。
+        """
+        import numpy as np
+        if self._lidar_sub is not None:
+            return True  # 已经订阅
+        # 查找话题实际类型（topic 可能尚未发布时返回空）
+        try:
+            type_pairs = self.get_topic_names_and_types()
+        except Exception as e:
+            self.get_logger().warning(f"enable_lidar_subscription_for_viz: 查询话题失败: {e}")
+            type_pairs = []
+        msg_type_name = None
+        for t, types in type_pairs:
+            if t == topic and types:
+                msg_type_name = types[0]
+                break
+        # 找不到也允许：用户可能晚一点才启动 livox 驱动；先按 PointCloud2 预订阅
+        if msg_type_name is None:
+            self.get_logger().warning(
+                f"viz: 话题 {topic} 当前未发布，先按 PointCloud2 兜底订阅；"
+                f"如果驱动用 xfer_format=1 (CustomMsg)，请改 launch 或调 enable_lidar_subscription_for_viz 之前先启动驱动。"
+            )
+            msg_type_name = "sensor_msgs/msg/PointCloud2"
+
+        def _store(msg, kind: str) -> None:
+            stamp_ns = int(msg.header.stamp.sec) * 1_000_000_000 + int(msg.header.stamp.nanosec)
+            with self._lidar_lock:
+                self._lidar_msg = msg
+                self._lidar_msg_kind = kind
+                self._lidar_frame_id = msg.header.frame_id or ""
+                self._lidar_stamp_ns = stamp_ns
+                self._lidar_seq += 1
+
+        # PointCloud2 路径
+        if msg_type_name.endswith("/PointCloud2"):
+            from sensor_msgs.msg import PointCloud2
+
+            def _cb(msg: PointCloud2):
+                # 仅缓存 raw msg，不在此处做 numpy 化（避免占用 rclpy 线程 GIL）
+                _store(msg, "pc2")
+
+            self._lidar_sub = self.create_subscription(PointCloud2, topic, _cb, 5)
+            self._lidar_topic = topic
+            self.get_logger().info(f"viz: 已订阅 {topic} 作为 PointCloud2")
+            return True
+
+        # Livox CustomMsg 路径
+        if "CustomMsg" in msg_type_name:
+            CustomMsg = None
+            for pkg in ("livox_ros_driver2", "livox_ros_driver"):
+                try:
+                    mod = __import__(f"{pkg}.msg", fromlist=["CustomMsg"])
+                    CustomMsg = getattr(mod, "CustomMsg")
+                    break
+                except Exception:
+                    continue
+            if CustomMsg is None:
+                self.get_logger().error(
+                    f"viz: 话题 {topic} 是 CustomMsg，但无法 import livox_ros_driver2.msg。\n"
+                    "  请确认已 source ros2_ws/install/setup.bash 并安装了 livox_ros_driver2 Python 接口。\n"
+                    "  也可以把 Livox launch 的 xfer_format 改成 0 以发 PointCloud2。"
+                )
+                return False
+
+            def _cb(msg):
+                _store(msg, "livox_custom")
+
+            self._lidar_sub = self.create_subscription(CustomMsg, topic, _cb, 5)
+            self._lidar_topic = topic
+            self.get_logger().info(f"viz: 已订阅 {topic} 作为 livox CustomMsg")
+            return True
+
+        self.get_logger().error(f"viz: 暂不支持的消息类型 {msg_type_name} (topic={topic})")
+        return False
+
+    def get_latest_lidar_xyz(self) -> Tuple[Optional["np.ndarray"], str, int, int]:
+        """供 visualization 拉取：返回 (xyz Nx3 或 None, frame_id, stamp_ns, seq)。
+
+        在调用线程中完成 ROS msg → numpy 解码（不再阻塞 rclpy executor）。
+        ``seq`` 是递增计数器，调用方可以用来判断"自上次以来有没有新帧"以做跳采。
+        """
+        import numpy as np
+        with self._lidar_lock:
+            msg = self._lidar_msg
+            kind = self._lidar_msg_kind
+            frame_id = self._lidar_frame_id
+            stamp_ns = self._lidar_stamp_ns
+            seq = self._lidar_seq
+        if msg is None:
+            return (None, frame_id, stamp_ns, seq)
+        try:
+            if kind == "pc2":
+                from sensor_msgs_py import point_cloud2 as pc2
+                arr = pc2.read_points_numpy(msg, field_names=("x", "y", "z"), skip_nans=True)
+                if arr.size == 0:
+                    return (None, frame_id, stamp_ns, seq)
+                return (np.asarray(arr, dtype=np.float32).reshape(-1, 3), frame_id, stamp_ns, seq)
+            if kind == "livox_custom":
+                pts = msg.points
+                n = len(pts)
+                if n == 0:
+                    return (None, frame_id, stamp_ns, seq)
+                # list-comprehension + np.array 比逐元素赋值快 3-5 倍
+                xyz = np.array([(p.x, p.y, p.z) for p in pts], dtype=np.float32)
+                return (xyz, frame_id, stamp_ns, seq)
+        except Exception as e:
+            self.get_logger().warning(f"get_latest_lidar_xyz 解码失败: {e}")
+        return (None, frame_id, stamp_ns, seq)
+
+    def lookup_static_transform(self, target_frame: str, source_frame: str,
+                                timeout_sec: float = 0.5) -> Optional[dict]:
+        """单次 tf 查询（用于 viz 拿 base_link→lidar 等静态外参，cache 在调用方）。"""
+        try:
+            tf = self.tf_buffer.lookup_transform(
+                target_frame, source_frame, rclpy.time.Time(),
+                timeout=rclpy.duration.Duration(seconds=timeout_sec),
+            )
+            return {
+                "translation": {
+                    "x": float(tf.transform.translation.x),
+                    "y": float(tf.transform.translation.y),
+                    "z": float(tf.transform.translation.z),
+                },
+                "rotation": {
+                    "x": float(tf.transform.rotation.x),
+                    "y": float(tf.transform.rotation.y),
+                    "z": float(tf.transform.rotation.z),
+                    "w": float(tf.transform.rotation.w),
+                },
+            }
+        except Exception:
+            return None
 
     def _process_call_queue(self):
         """Process pending callables queued from other threads. Runs in ROS executor thread."""

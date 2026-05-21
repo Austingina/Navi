@@ -1497,7 +1497,31 @@ async def main():
                              '(/hdas/camera_head/left_raw/image_raw_color/compressed)')
     parser.add_argument('--vpr_device', type=str, default='cuda', choices=['cuda', 'cpu'],
                         help='VPR 子进程使用的设备')
+    parser.add_argument('-v', '--viz', action='store_true',
+                        help='启动 rerun 可视化（依赖 rerun-sdk）。展示：'
+                             '多 submap 点云对齐总图、机器人位姿、/livox/lidar 实时点云、'
+                             '所有 routes、栅格地图 /map 与 /plan')
+    parser.add_argument('--viz_lidar_topic', type=str, default='/livox/lidar',
+                        help='可视化使用的 LiDAR 话题；支持 PointCloud2 或 Livox CustomMsg')
+    parser.add_argument('--viz_mode', type=str, default='spawn',
+                        choices=['spawn', 'connect', 'serve', 'save'],
+                        help='rerun viewer 连接方式：'
+                             'spawn=本机起 viewer 子进程（需 X11/Wayland）；'
+                             'connect=连接已开的 viewer (--viz_addr 指定)；'
+                             'serve=不画窗口，启 SDK TCP server 等远端连接 (--viz_addr 指定监听 bind)；'
+                             'save=不联网，全部写入 .rrd 文件 (--viz_save_path)')
+    parser.add_argument('--viz_addr', type=str, default=None,
+                        help='viz_mode=connect 时 viewer 地址 (默认 127.0.0.1:9876)；'
+                             'viz_mode=serve 时 bind 地址 (默认 0.0.0.0:9876)')
+    parser.add_argument('--viz_save_path', type=str, default=None,
+                        help='viz_mode=save 时 .rrd 文件保存路径，默认 /tmp/navi_rerun.rrd')
+    parser.add_argument('--viz_no_spawn', action='store_true',
+                        help='(已废弃，等价于 --viz_mode serve) 不 spawn viewer，仅起 TCP server')
     args = parser.parse_args()
+
+    # 兼容旧参数
+    if args.viz_no_spawn and args.viz_mode == 'spawn':
+        args.viz_mode = 'serve'
 
     port = 9999 if args.test else 9000
 
@@ -1521,6 +1545,7 @@ async def main():
             logging.error(f"加载地图配置失败: {e}")
 
     mgr = None
+    viz = None
     try:
         # 创建导航工具管理器
         mgr = NavigationToolManager(
@@ -1529,6 +1554,30 @@ async def main():
             vpr_device=args.vpr_device,
             camera_image_topic=args.image_topic,
         )
+
+        # 可选：启动 rerun 可视化（-v）
+        if args.viz:
+            try:
+                from visualization import NaviRerunViz
+                # bind / connect 地址默认值依赖 mode
+                if args.viz_addr is None:
+                    addr_default = "0.0.0.0:9876" if args.viz_mode == "serve" else "127.0.0.1:9876"
+                else:
+                    addr_default = args.viz_addr
+                viz = NaviRerunViz(
+                    nav_node=mgr.ros_node,
+                    map_manager=mgr.map_manager,
+                    lidar_topic=args.viz_lidar_topic,
+                    mode=args.viz_mode,
+                    connect_addr=addr_default,
+                    serve_addr=addr_default,
+                    save_path=args.viz_save_path,
+                )
+                viz.start()
+            except Exception as e:
+                logging.error(f"启动可视化失败（继续运行 server）: {e}", exc_info=True)
+                viz = None
+
         # 启动 FastAPI WebSocket 服务
         await mgr.start(port=port)
     except KeyboardInterrupt:
@@ -1539,6 +1588,11 @@ async def main():
         logging.error(f"程序运行出错: {e}")
     finally:
         # 确保资源被正确清理
+        if viz:
+            try:
+                viz.stop()
+            except Exception:
+                pass
         if mgr:
             mgr.cleanup()
 
