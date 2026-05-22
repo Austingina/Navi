@@ -326,6 +326,8 @@ class NaviRerunViz:
         self._submap_pts_cache: Dict[str, np.ndarray] = {}
         # 上一次染色用的"当前 submap"（用于检测切换并避免无谓重 log）
         self._last_current_submap: Optional[str] = None
+        # 上一次 lidar 点云挂载的 entity path（用于切楼层时 Clear 旧路径）
+        self._last_lidar_entity: Optional[str] = None
         # 机器人外观（box / heading / axes）只 log 一次
         self._robot_visual_logged: bool = False
         # lidar→base_link 外参 cache
@@ -857,7 +859,8 @@ class NaviRerunViz:
 
         is_world = self._topic_is_world_frame(self._lidar_topic)
         if not is_world:
-            # ─ 传感器系点云（如 /livox/lidar）：做 lidar→base_link，再挂到 robot 节点下
+            # ─ 传感器系点云（如 /livox/lidar）：做 lidar→base_link，再挂到 robot 节点下。
+            # robot 的 Transform3D 已表达 base_link→root，所以 xyz 在 base_link 系即可。
             if self._lidar_base_tf is None:
                 now = time.monotonic()
                 if now - self._lidar_base_tf_tried_mono > 5.0 and frame_id:
@@ -885,8 +888,30 @@ class NaviRerunViz:
                 )
             entity = "/world/robot/lidar"
         else:
-            # ─ 世界系点云（如 /cloud_registered）：已是 world/odom，直接 log
-            entity = "/world/lidar"
+            # ─ submap-local world 系点云（如 /cloud_registered）：FAST_LIO 输出的
+            # "world" 是 *当前 submap 的 map frame*，跟 viz 的 root 系差一个
+            # submap_transform。挂到 /world/submaps/<cur>/lidar 让 rerun 自动用
+            # submap entity 的 Transform3D 把点云渲染到 root；换楼层只需切 entity
+            # 路径，旧路径主动 Clear。
+            cur_submap = (
+                self._map_manager.get_current_submap()
+                if self._map_manager is not None else None
+            )
+            if cur_submap:
+                entity = f"/world/submaps/{cur_submap}/lidar"
+            else:
+                entity = "/world/lidar"  # 没有 current submap 的 degenerate fallback
+            # 切换楼层 → 把旧 submap 下的 lidar 残影清掉
+            if self._last_lidar_entity is not None and self._last_lidar_entity != entity:
+                try:
+                    rr.log(self._last_lidar_entity, rr.Clear(recursive=True))
+                except Exception:
+                    pass
+                logger.info(
+                    "viz: lidar entity 由 %s 切到 %s（楼层切换）",
+                    self._last_lidar_entity, entity,
+                )
+            self._last_lidar_entity = entity
 
         if stamp_ns > 0:
             try:
