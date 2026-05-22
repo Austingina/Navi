@@ -29,9 +29,10 @@ void main() {
     vBaseColor = aColor;
     vDistToCamera = length(uCameraPos - wp.xyz);
     gl_Position = uMVP * vec4(aPos, 1.0);
-    // 按 1/dist 调整 point size（远点更小）
+    // 按 1/dist 调整 point size（远点更小）。
+    // 上限 256：给"物理大小"的发光体（机器人光球等）足够近距离表现。
     float sz = uPointSize / max(1.0, vDistToCamera * uPointSizeFalloff);
-    gl_PointSize = clamp(sz, 1.0, 64.0);
+    gl_PointSize = clamp(sz, 1.0, 256.0);
 }
 """
 

@@ -140,7 +140,8 @@ class GLPointCloudWidget(QtWidgets.QWidget):
         self.enable_bloom = bool(enable_bloom)
         self.circular_points = True
         self.point_size = 4.0
-        self.bg_color = (0.04, 0.05, 0.08)
+        # 背景色（也是雾色）：跟 MapEditor 一致的深灰蓝，给点云高对比度
+        self.bg_color = (0.15, 0.15, 0.18)
 
         self._last_mouse = None
         self._last_button = None
@@ -351,17 +352,25 @@ class GLPointCloudWidget(QtWidgets.QWidget):
         GL.glClear(GL.GL_COLOR_BUFFER_BIT | GL.GL_DEPTH_BUFFER_BIT)
         GL.glEnable(GL.GL_DEPTH_TEST)
 
+        # ── 静态点云走"unlit"路径，跟 MapEditor 等效：顶点颜色直出 ──
+        #   uEmissive=1.0  → emissive = vBaseColor（完整高度彩虹色直接显示）
+        #   uLightColor=0  → baseLit、spec 都 = 0（没有点光照贡献）
+        #   uAmbientStrength=0 → 无环境光叠加
+        #   uFogStart/End 推到极远 → fogT 永远=0，不做雾化
+        # 这样不管距离、有没有机器人，所有点都能完整显示自己的颜色。
+        # （lidar 和机器人 glow 等需要"光晕/发光"的元素，在后面会
+        #  自己重 set uniforms 切回 lit 路径。）
         GL.glUseProgram(self._prog_cloud)
         _set_vec3(self._prog_cloud, "uLightPos", light_pos)
-        _set_vec3(self._prog_cloud, "uLightColor", (1.30, 1.10, 0.85))
-        _set_float(self._prog_cloud, "uLightRadius", 6.0)
-        _set_vec3(self._prog_cloud, "uAmbient", (0.55, 0.65, 0.85))
-        _set_float(self._prog_cloud, "uAmbientStrength", 0.25)
+        _set_vec3(self._prog_cloud, "uLightColor", (0.0, 0.0, 0.0))
+        _set_float(self._prog_cloud, "uLightRadius", 50.0)
+        _set_vec3(self._prog_cloud, "uAmbient", (0.0, 0.0, 0.0))
+        _set_float(self._prog_cloud, "uAmbientStrength", 0.0)
         _set_vec3(self._prog_cloud, "uFogColor", self.bg_color)
-        _set_float(self._prog_cloud, "uFogStart", 12.0)
-        _set_float(self._prog_cloud, "uFogEnd", 50.0)
+        _set_float(self._prog_cloud, "uFogStart", 10_000.0)
+        _set_float(self._prog_cloud, "uFogEnd", 20_000.0)
         _set_float(self._prog_cloud, "uExposure", 1.0)
-        _set_float(self._prog_cloud, "uEmissive", 0.18)
+        _set_float(self._prog_cloud, "uEmissive", 1.0)
         _set_vec3(self._prog_cloud, "uCameraPos", cam_eye)
 
         _set_bool(self._prog_cloud, "uCircular", self.circular_points)
@@ -375,20 +384,43 @@ class GLPointCloudWidget(QtWidgets.QWidget):
             GL.glBindVertexArray(vao)
             GL.glDrawArrays(GL.GL_POINTS, 0, len(geom.xyz))
 
-        # lidar
+        # lidar —— 突出显示策略：
+        #   1) 关闭深度测试   → 永远画在静态点云之上，不被墙壁遮挡
+        #   2) 加性混合       → 颜色累加到背景上，自带"穿透发光"感
+        #   3) 强自发光        → 不依赖光照（HDR 颜色，配合 bloom 自发光晕）
+        #   4) 关闭深度写入   → 后续 robot 等还能按真实深度排序
         lidar = self._bridge.get_latest_lidar() if self._bridge else None
         if lidar is not None and lidar.interleaved is not None and len(lidar.interleaved) > 0:
             sm = self._scene.submaps.get(lidar.submap_id)
             if sm is not None:
                 self._upload_lidar(lidar.interleaved, lidar.seq)
+
+                # 状态切换
+                GL.glDisable(GL.GL_DEPTH_TEST)
+                GL.glDepthMask(GL.GL_FALSE)
+                GL.glBlendFunc(GL.GL_SRC_ALPHA, GL.GL_ONE)   # additive
+
                 mvp = proj @ view @ sm.model_mat
                 _set_mat4(self._prog_cloud, "uMVP", mvp)
                 _set_mat4(self._prog_cloud, "uModel", sm.model_mat)
                 _set_bool(self._prog_cloud, "uCircular", self.circular_points)
-                _set_float(self._prog_cloud, "uPointSize", 6.0)
+                _set_float(self._prog_cloud, "uPointSize", 7.0)
                 _set_float(self._prog_cloud, "uPointSizeFalloff", 0.0)
+                # lidar 自发光：阴天下不需要太高（避免过白），靠加性混合 +
+                # 鲜艳的 z-彩虹色已经足够醒目，且永不被墙挡。
+                _set_float(self._prog_cloud, "uEmissive", 1.5)
+                _set_float(self._prog_cloud, "uAmbientStrength", 0.0)
                 GL.glBindVertexArray(self._lidar_vao)
                 GL.glDrawArrays(GL.GL_POINTS, 0, self._lidar_count)
+
+                # 恢复状态（给下面机器人 box 用）
+                GL.glBlendFunc(GL.GL_SRC_ALPHA, GL.GL_ONE_MINUS_SRC_ALPHA)
+                GL.glDepthMask(GL.GL_TRUE)
+                GL.glEnable(GL.GL_DEPTH_TEST)
+                # 把 emissive / ambient 恢复到静态点云 unlit 默认
+                # （机器人 glow 那段会自己再 set 成发光配置）
+                _set_float(self._prog_cloud, "uEmissive", 1.0)
+                _set_float(self._prog_cloud, "uAmbientStrength", 0.0)
 
         # 机器人外框 + 发光核心
         if robot is not None:
@@ -402,19 +434,25 @@ class GLPointCloudWidget(QtWidgets.QWidget):
                 _set_float(self._prog_simple, "uAlpha", 1.0)
                 GL.glBindVertexArray(self._robot_vao)
                 GL.glDrawArrays(GL.GL_LINES, 0, self._robot_count)
-                # 发光核心
+                # 发光核心：1 米物理大小的圆形 splat（按距离自动缩放）
                 self._upload_robot_glow(world)
                 GL.glUseProgram(self._prog_cloud)
                 _set_vec3(self._prog_cloud, "uLightPos", world)
-                _set_float(self._prog_cloud, "uLightRadius", 6.0)
+                _set_float(self._prog_cloud, "uLightRadius", 50.0)   # 6.0 → 50.0
                 _set_float(self._prog_cloud, "uEmissive", 6.0)
                 _set_float(self._prog_cloud, "uAmbientStrength", 0.0)
                 _set_bool(self._prog_cloud, "uCircular", True)
                 identity4 = np.eye(4, dtype=np.float32)
                 _set_mat4(self._prog_cloud, "uMVP", proj @ view)
                 _set_mat4(self._prog_cloud, "uModel", identity4)
-                _set_float(self._prog_cloud, "uPointSize", 1600.0)
-                _set_float(self._prog_cloud, "uPointSizeFalloff", 0.05)
+                # 1 米直径的物理球：gl_PointSize = focal_px / dist
+                # 默认 fov=50°、800px 高 → focal_px ≈ 800/(2·tan(25°)) ≈ 858
+                # 让 uPointSize / (dist · uPointSizeFalloff) ≈ 858/dist
+                # → uPointSize ≈ 858, uPointSizeFalloff = 1.0
+                # （shader 里 clamp 上限 256：太近时 splat 不会无限放大）
+                focal_px = float(self._egl.height()) / (2.0 * np.tan(np.radians(self.camera.fovy) * 0.5))
+                _set_float(self._prog_cloud, "uPointSize", focal_px)
+                _set_float(self._prog_cloud, "uPointSizeFalloff", 1.0)
                 GL.glBindVertexArray(self._robot_glow_vao)
                 GL.glDrawArrays(GL.GL_POINTS, 0, 1)
 
@@ -428,7 +466,9 @@ class GLPointCloudWidget(QtWidgets.QWidget):
             GL.glActiveTexture(GL.GL_TEXTURE0)
             GL.glBindTexture(GL.GL_TEXTURE_2D, self._scene_color)
             _set_int(self._prog_bright, "uScene", 0)
-            _set_float(self._prog_bright, "uThreshold", 0.85)
+            # 阴天：把阈值提到 3.0，点云亮度上限 ≈ 1.5（光照 + 环境光 + emissive），
+            # 完全不会触发 bloom。只有机器人光球（emissive=6.0）才发光。
+            _set_float(self._prog_bright, "uThreshold", 3.0)
             _set_float(self._prog_bright, "uKnee", 0.25)
             GL.glBindVertexArray(self._fsq_vao)
             GL.glDrawArrays(GL.GL_TRIANGLES, 0, 3)
