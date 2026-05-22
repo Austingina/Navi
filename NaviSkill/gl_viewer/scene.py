@@ -50,6 +50,28 @@ class SubmapGeom:
     model_mat: np.ndarray = field(default_factory=lambda: np.eye(4, dtype=np.float32))
 
 
+def _voxel_downsample(xyz: np.ndarray, voxel_size: float) -> np.ndarray:
+    """3D 体素降采样：每个 voxel_size 的立方体内只保留一个点。
+
+    实现：把每个点的 xyz 量化到整数 grid index，按 (i,j,k) 做唯一化。
+    NumPy 纯实现，对 ~10M 点 ~2s。比随机降采样保持点云空间均匀。
+    """
+    if len(xyz) == 0 or voxel_size <= 0:
+        return xyz
+    keys = np.floor(xyz / voxel_size).astype(np.int64)
+    # 平移到非负范围
+    keys = keys - keys.min(axis=0, keepdims=True)
+    mx = int(keys.max())
+    if mx < (1 << 21):
+        # 21 bit 每轴 = ±~1M 体素 = ±500km @ 0.5m，常规室内/户外都够
+        h = keys[:, 0] | (keys[:, 1] << 21) | (keys[:, 2] << 42)
+        _, idx = np.unique(h, return_index=True)
+    else:
+        # 超大范围 fallback：直接 axis=0 unique（慢但正确）
+        _, idx = np.unique(keys, axis=0, return_index=True)
+    return xyz[np.sort(idx)]
+
+
 def _color_by_z(xyz: np.ndarray, base: Tuple[float, float, float]) -> np.ndarray:
     """按高度 (z) 给一个 (N, 3) float32 颜色 ∈ [0, 1]，与 base palette 颜色调和。"""
     if len(xyz) == 0:
@@ -82,8 +104,17 @@ class Scene:
     lidar / 机器人状态由 ros_bridge 维护，不在这里处理；viewer 直接组合两者。
     """
 
-    def __init__(self, map_manager, max_submap_points: int = 200_000):
+    def __init__(self, map_manager, voxel_size: float = 0.5,
+                 max_submap_points: int = 1_500_000):
+        """
+        Args:
+            voxel_size: 体素降采样的边长（米）。默认 0.5m，跟 MapEditor 类似密度。
+                设 <=0 关闭体素降采样（直接用全量点）。
+            max_submap_points: 体素降采样后的兜底上限。超过时再随机采样。
+                默认很大（1.5M），实际上 0.5m 体素后室内场景一般几十万到几百万。
+        """
         self._map_manager = map_manager
+        self.voxel_size = float(voxel_size)
         self.max_submap_points = int(max_submap_points)
         self.submaps: Dict[str, SubmapGeom] = {}
         self.routes_cache: Dict[str, np.ndarray] = {}
@@ -108,9 +139,16 @@ class Scene:
             logger.warning("submap %s 解析 PCD 失败: %s", pcd_path, sm_id)
             return
         n_raw = len(xyz)
-        if n_raw > self.max_submap_points:
+
+        # ── 体素降采样：保持空间均匀（比每 submap 固定 N 个随机点更好）
+        if self.voxel_size > 0:
+            xyz = _voxel_downsample(xyz, self.voxel_size)
+        n_voxel = len(xyz)
+
+        # 兜底：如果某 submap 体素后还是过大（户外稀疏），再随机降一刀
+        if len(xyz) > self.max_submap_points:
             rng = np.random.default_rng(seed=42)
-            keep = rng.choice(n_raw, self.max_submap_points, replace=False)
+            keep = rng.choice(len(xyz), self.max_submap_points, replace=False)
             xyz = xyz[keep]
 
         tf = self._map_manager.get_submap_transform(sm_id) or {}
@@ -132,7 +170,8 @@ class Scene:
             model_mat=_build_model_mat(t_arr, q_arr),
         )
         self.submaps[sm_id] = geom
-        logger.info("submap %s 已加载: %d 点（原始 %d）", sm_id, len(xyz), n_raw)
+        logger.info("submap %s 已加载: %d 点（原始 %d → 体素 %.2fm 后 %d）",
+                    sm_id, len(xyz), n_raw, self.voxel_size, n_voxel)
 
     def resolve_route_world(self, route_name: str) -> Optional[np.ndarray]:
         """把 route 上所有 waypoint 变换到 root 坐标系，返回 (K, 3) float32。"""

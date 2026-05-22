@@ -384,43 +384,37 @@ class GLPointCloudWidget(QtWidgets.QWidget):
             GL.glBindVertexArray(vao)
             GL.glDrawArrays(GL.GL_POINTS, 0, len(geom.xyz))
 
-        # lidar —— 突出显示策略：
-        #   1) 关闭深度测试   → 永远画在静态点云之上，不被墙壁遮挡
-        #   2) 加性混合       → 颜色累加到背景上，自带"穿透发光"感
-        #   3) 强自发光        → 不依赖光照（HDR 颜色，配合 bloom 自发光晕）
-        #   4) 关闭深度写入   → 后续 robot 等还能按真实深度排序
+        # lidar —— 跟静态点云一样的 unlit 路径，颜色由 ros_bridge 按 z 高度
+        # 着的彩虹色直接输出。仍保留"穿墙可见"：disable 深度测试 / 深度写入，
+        # 但用普通 alpha 混合（不再加性 → 无光晕、不堆白）。
         lidar = self._bridge.get_latest_lidar() if self._bridge else None
         if lidar is not None and lidar.interleaved is not None and len(lidar.interleaved) > 0:
             sm = self._scene.submaps.get(lidar.submap_id)
             if sm is not None:
                 self._upload_lidar(lidar.interleaved, lidar.seq)
 
-                # 状态切换
+                # 状态切换：穿墙可见 + 普通 alpha 混合
                 GL.glDisable(GL.GL_DEPTH_TEST)
                 GL.glDepthMask(GL.GL_FALSE)
-                GL.glBlendFunc(GL.GL_SRC_ALPHA, GL.GL_ONE)   # additive
+                # 注意：BlendFunc 已经是 SRC_ALPHA/ONE_MINUS_SRC_ALPHA（每帧开头默认），
+                # 不需要切换。
 
                 mvp = proj @ view @ sm.model_mat
                 _set_mat4(self._prog_cloud, "uMVP", mvp)
                 _set_mat4(self._prog_cloud, "uModel", sm.model_mat)
                 _set_bool(self._prog_cloud, "uCircular", self.circular_points)
-                _set_float(self._prog_cloud, "uPointSize", 7.0)
+                _set_float(self._prog_cloud, "uPointSize", 6.0)
                 _set_float(self._prog_cloud, "uPointSizeFalloff", 0.0)
-                # lidar 自发光：阴天下不需要太高（避免过白），靠加性混合 +
-                # 鲜艳的 z-彩虹色已经足够醒目，且永不被墙挡。
-                _set_float(self._prog_cloud, "uEmissive", 1.5)
+                # unlit：emissive=1.0 + 其它 light/ambient 已经 = 0
+                # → 直接输出 vBaseColor (z-rainbow)，不会触发 bloom（阈值 3.0）
+                _set_float(self._prog_cloud, "uEmissive", 1.0)
                 _set_float(self._prog_cloud, "uAmbientStrength", 0.0)
                 GL.glBindVertexArray(self._lidar_vao)
                 GL.glDrawArrays(GL.GL_POINTS, 0, self._lidar_count)
 
-                # 恢复状态（给下面机器人 box 用）
-                GL.glBlendFunc(GL.GL_SRC_ALPHA, GL.GL_ONE_MINUS_SRC_ALPHA)
+                # 恢复深度状态（给下面机器人 box / 光球 用）
                 GL.glDepthMask(GL.GL_TRUE)
                 GL.glEnable(GL.GL_DEPTH_TEST)
-                # 把 emissive / ambient 恢复到静态点云 unlit 默认
-                # （机器人 glow 那段会自己再 set 成发光配置）
-                _set_float(self._prog_cloud, "uEmissive", 1.0)
-                _set_float(self._prog_cloud, "uAmbientStrength", 0.0)
 
         # 机器人外框 + 发光核心
         if robot is not None:

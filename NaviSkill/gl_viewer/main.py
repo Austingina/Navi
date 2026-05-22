@@ -50,8 +50,10 @@ def main() -> int:
                         help="地图 JSON 路径（如 /home/nvidia/Navi/maps/408/408.json）")
     parser.add_argument("--lidar", type=str, default="/cloud_registered",
                         help="LiDAR topic（默认 /cloud_registered，可选 /livox/lidar 等）")
-    parser.add_argument("--max_submap_points", type=int, default=200_000,
-                        help="每个 submap 最大渲染点数")
+    parser.add_argument("--voxel_size", type=float, default=0.5,
+                        help="点云体素降采样边长（米），默认 0.5m。设 <=0 关闭。")
+    parser.add_argument("--max_submap_points", type=int, default=1_500_000,
+                        help="每 submap 体素降采样后的兜底上限（防止稀疏户外场景过大）")
     parser.add_argument("--max_lidar_points", type=int, default=20_000,
                         help="单帧 lidar 最大点数（throttle 后）")
     parser.add_argument("--lidar_hz", type=float, default=5.0,
@@ -94,7 +96,8 @@ def main() -> int:
     from gl_viewer.ros_bridge import RosBridge
 
     mm = MapManager(args.map)
-    scene = Scene(mm, max_submap_points=args.max_submap_points)
+    scene = Scene(mm, voxel_size=args.voxel_size,
+                  max_submap_points=args.max_submap_points)
     scene.load_all_submaps()
 
     bridge = RosBridge(

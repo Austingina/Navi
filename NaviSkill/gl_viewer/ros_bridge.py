@@ -216,17 +216,16 @@ class RosBridge:
             xyz = xyz[::stride]
             n = len(xyz)
 
-        # z-彩虹着色
+        # z-彩虹着色（5 段 jet：蓝→青→绿→黄→红，比单调 rainbow 更鲜艳）
         z = xyz[:, 2]
         z_lo, z_hi = float(np.percentile(z, 5.0)), float(np.percentile(z, 95.0))
         denom = max(0.3, z_hi - z_lo)
         t = np.clip((z - z_lo) / denom, 0.0, 1.0).astype(np.float32)
-        r = (0.2 + 0.8 * t)
-        g = (0.6 - 0.4 * np.abs(t - 0.5) * 2.0)
-        b = (1.0 - 0.8 * t)
+        # Jet colormap 解析公式（值域 [0, 1]，饱和度高）：
+        r = np.clip(1.5 - np.abs(4.0 * t - 3.0), 0.0, 1.0)
+        g = np.clip(1.5 - np.abs(4.0 * t - 2.0), 0.0, 1.0)
+        b = np.clip(1.5 - np.abs(4.0 * t - 1.0), 0.0, 1.0)
         rgb = np.stack([r, g, b], axis=1).astype(np.float32)
-        # 整体提亮，让 lidar 更醒目
-        rgb = np.minimum(rgb * 1.3, 1.0)
 
         interleaved = np.concatenate([xyz, rgb], axis=1).astype(np.float32, copy=False)
 
