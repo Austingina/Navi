@@ -30,7 +30,27 @@ Output (under ``--output_dir``)::
     database_meta.npz             # method, descriptor_dim, num_database
     database_build_info.json      # full build provenance (consumed by
                                   # vpr_detect.py to validate undistortion
-                                  # consistency across submap databases)
+                                  # consistency across submap databases),
+                                  # plus L1+L2 / L3 filter reports.
+    low_texture_filter_report.csv # per-frame L1+L2 metrics for tuning
+                                  # (--min_lap_var / --min_orb_kpts)
+
+Frame-quality filtering (rejects featureless wall/glass/ceiling frames
+that cause cross-submap false recalls):
+
+* L1 (Laplacian variance) + L2 (ORB keypoint count) run *between*
+  image extraction and descriptor inference; failing frames are
+  deleted from the image cache. Defaults: ``min_lap_var=60``,
+  ``min_orb_kpts=80``. Disable with ``--no_texture_filter``.
+* L3 (descriptor self-consistency) runs *after* descriptor inference;
+  frames whose top-K descriptor neighbours sit far in pose space are
+  considered non-discriminative and removed from the saved arrays.
+  Defaults: ``k=20``, ``pose_far_m=5.0``, ``ratio_thr=0.6``. Disable
+  with ``--no_prune_ambiguous``.
+
+Because filtering is aggressive, the default ``--db_distance`` is now
+0.2 m (was 1.0 m) so the surviving spacing stays reasonable after the
+above stages thin the database.
 
 By default the extracted JPGs are written under ``<output_dir>/database/``.
 Pass ``--image_cache_dir`` to redirect them elsewhere (e.g. ``~/.vpr/<scene>``)
@@ -46,7 +66,6 @@ Examples
         --pose_file data/ImgPose.txt \\
         --image_topic /camera_agent/img_left/compressed \\
         --undistort_fisheye \\
-        --db_distance 1.0 \\
         --method salad-indoor \\
         --output_dir datasets/scene_A
 
@@ -54,7 +73,6 @@ Examples
     python vpr_preprocess.py \\
         --source ros2_r1pro \\
         --bag_path /home/nvidia/vpr_data/2f/rosbag_20260514_093133 \\
-        --db_distance 1.0 \\
         --method megaloc \\
         --output_dir ~/Navi/maps/408/vpr/2f
 """
@@ -76,6 +94,7 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 from model_loader import get_model
+from utils.utils_common import filter_low_texture_directory
 from utils.utils_r1pro import extract_database_from_ros2_r1pro
 from utils.utils_s20 import extract_database_from_ros1
 
@@ -85,9 +104,15 @@ from utils.utils_s20 import extract_database_from_ros1
 # ---------------------------------------------------------------------------
 
 class DatabaseSampler:
-    """Keep one frame per ``db_distance`` meters of horizontal motion."""
+    """Keep one frame per ``db_distance`` meters of horizontal motion.
 
-    def __init__(self, db_distance=1.0):
+    Default spacing is 0.2 m so the post-extraction L1+L2 low-texture
+    filter (see :func:`utils.utils_common.filter_low_texture_directory`)
+    has room to drop wall/ceiling/glass frames without leaving large
+    gaps in the surviving database.
+    """
+
+    def __init__(self, db_distance=0.2):
         self.db_distance = db_distance
         self.last_x = None
         self.last_y = None
@@ -156,6 +181,73 @@ def _parse_pose_from_filename(image_path):
     return x, y, z, ts
 
 
+# ---------------------------------------------------------------------------
+# L3: descriptor self-consistency pruning
+# ---------------------------------------------------------------------------
+# 在描述子算完之后做单 submap 自检：对每个 keyframe i，找它的 top-K 描述子
+# 最近邻；若其中超过 ``ratio_thr`` 的邻居在位姿空间上距离 i 超过
+# ``pose_far_m``，则判定 i 是 "判别力差" 的样本——它的描述子和远处一堆帧
+# 撞车，留在库里只会引入误召回。
+#
+# 这一层只能发现单 submap *内* 的自混淆；跨 submap 的"两段走廊互相撞车"
+# 需要在 vpr_detect 启动时做跨库黑名单 (L4)，暂未实现。
+
+def _prune_ambiguous_descriptors(
+    descriptors: np.ndarray,
+    poses: np.ndarray,
+    k: int = 20,
+    pose_far_m: float = 5.0,
+    ratio_thr: float = 0.6,
+):
+    """Return a boolean keep-mask marking discriminative frames.
+
+    Parameters
+    ----------
+    descriptors : (N, D) float32
+        Global VPR descriptors. Will be L2-normalized on a copy so
+        cosine similarity == inner product.
+    poses : (N, >=2) float64
+        Per-frame poses; only columns 0..1 (XY) are used.
+    k : int
+        Number of top descriptor-space neighbours considered per frame.
+    pose_far_m : float
+        Neighbours whose XY distance exceeds this are "far".
+    ratio_thr : float
+        Reject a frame if the fraction of its top-K descriptor neighbours
+        that are far in pose exceeds this.
+    """
+    n = descriptors.shape[0]
+    if n <= k + 1:
+        # Too few frames to do a meaningful KNN check; keep everything.
+        return np.ones(n, dtype=bool)
+
+    desc = descriptors.astype(np.float32, copy=True)
+    norms = np.linalg.norm(desc, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    desc /= norms
+
+    xy = np.asarray(poses[:, :2], dtype=np.float64)
+
+    keep = np.ones(n, dtype=bool)
+
+    # Chunked computation to keep peak memory bounded for large N
+    chunk = 512
+    for start in range(0, n, chunk):
+        end = min(start + chunk, n)
+        sim = desc[start:end] @ desc.T               # (chunk, N)
+        rows = np.arange(end - start)
+        sim[rows, np.arange(start, end)] = -np.inf   # mask self
+
+        nn_idx = np.argpartition(-sim, k, axis=1)[:, :k]   # (chunk, k)
+        nn_xy = xy[nn_idx]                                  # (chunk, k, 2)
+        self_xy = xy[start:end][:, None, :]                 # (chunk, 1, 2)
+        dxy = np.linalg.norm(nn_xy - self_xy, axis=2)       # (chunk, k)
+        far_ratio = (dxy > pose_far_m).mean(axis=1)         # (chunk,)
+        keep[start:end] = far_ratio <= ratio_thr
+
+    return keep
+
+
 def extract_descriptors(args, db_dir):
     """Run the VPR model over ``db_dir`` and persist descriptors + metadata."""
     image_paths = sorted(
@@ -190,10 +282,60 @@ def extract_descriptors(args, db_dir):
         for images, indices in tqdm(loader, desc="Database descriptors"):
             out = model(images.to(args.device)).cpu().numpy()
             descriptors[indices.numpy(), :] = out
+    descriptor_seconds = time.time() - t0
     logger.info(
-        f"Descriptor extraction done in {time.time() - t0:.1f}s "
+        f"Descriptor extraction done in {descriptor_seconds:.1f}s "
         f"({len(image_paths)} images, dim={descriptor_dim})"
     )
+
+    # ------------------------------------------------------------------
+    # L3: self-consistency prune (descriptor-space neighbours far in pose
+    # space indicate a non-discriminative frame).
+    # ------------------------------------------------------------------
+    n_before_prune = len(image_paths)
+    pruned_indices = []
+    if args.prune_ambiguous:
+        keep_mask = _prune_ambiguous_descriptors(
+            descriptors,
+            poses,
+            k=args.ambiguous_k,
+            pose_far_m=args.ambiguous_pose_far,
+            ratio_thr=args.ambiguous_ratio,
+        )
+        n_pruned = int((~keep_mask).sum())
+        if n_pruned >= n_before_prune:
+            logger.warning(
+                f"L3 prune would remove all {n_before_prune} frames "
+                f"(k={args.ambiguous_k}, pose_far_m={args.ambiguous_pose_far}, "
+                f"ratio_thr={args.ambiguous_ratio}); skipping prune."
+            )
+            pruned_indices = []
+        elif n_pruned > 0:
+            pruned_indices = [
+                image_paths[i] for i in np.where(~keep_mask)[0].tolist()
+            ]
+            descriptors = descriptors[keep_mask]
+            poses = poses[keep_mask]
+            image_paths = [p for p, k in zip(image_paths, keep_mask) if k]
+            logger.info(
+                f"L3 ambiguous prune: removed {n_pruned}/{n_before_prune} "
+                f"({n_pruned / n_before_prune:.1%}) frames "
+                f"(k={args.ambiguous_k}, pose_far_m={args.ambiguous_pose_far}, "
+                f"ratio_thr={args.ambiguous_ratio})"
+            )
+        else:
+            logger.info(
+                f"L3 ambiguous prune: nothing to remove "
+                f"(k={args.ambiguous_k}, pose_far_m={args.ambiguous_pose_far}, "
+                f"ratio_thr={args.ambiguous_ratio})"
+            )
+    else:
+        logger.info("L3 ambiguous prune disabled (--no_prune_ambiguous)")
+
+    if len(image_paths) == 0:
+        raise RuntimeError(
+            "All database frames were pruned; loosen L1/L2/L3 thresholds."
+        )
 
     descriptors_path = os.path.join(args.output_dir, "database_descriptors.npy")
     poses_path = os.path.join(args.output_dir, "database_poses.npy")
@@ -258,7 +400,20 @@ def extract_descriptors(args, db_dir):
         "xy_max":            poses[:, :2].max(axis=0).tolist(),
         "z_min":             float(poses[:, 2].min()),
         "z_max":             float(poses[:, 2].max()),
-        "descriptor_extraction_seconds": float(time.time() - t0),
+        "descriptor_extraction_seconds": float(descriptor_seconds),
+        # --- L1+L2 低纹理过滤报告 (None == 跳过该阶段) ---
+        "low_texture_filter": getattr(args, "_l12_report", None),
+        # --- L3 描述子自一致性剪枝报告 ---
+        "ambiguous_prune": {
+            "enabled":             bool(args.prune_ambiguous),
+            "k":                   int(args.ambiguous_k),
+            "pose_far_m":          float(args.ambiguous_pose_far),
+            "ratio_thr":           float(args.ambiguous_ratio),
+            "num_before_prune":    int(n_before_prune),
+            "num_after_prune":     int(len(image_paths)),
+            "num_pruned":          int(n_before_prune - len(image_paths)),
+            "pruned_image_names":  [os.path.basename(p) for p in pruned_indices],
+        },
     }
     with open(info_path, "w") as f:
         json.dump(build_info, f, indent=2, ensure_ascii=False)
@@ -315,8 +470,42 @@ def parse_args():
                              "database lean.")
 
     # Sampling
-    parser.add_argument("--db_distance", type=float, default=1.0,
-                        help="Min XY distance (m) between database keyframes")
+    parser.add_argument("--db_distance", type=float, default=0.2,
+                        help="Min XY distance (m) between database keyframes "
+                             "(default 0.2m; the L1+L2 low-texture filter "
+                             "below thins this further by dropping featureless "
+                             "wall/glass/ceiling frames)")
+
+    # L1 + L2: low-texture frame filter (runs between extraction and
+    # descriptor inference; rejects wall/glass/ceiling frames that would
+    # otherwise pollute the feature space and trigger cross-submap recalls)
+    parser.add_argument("--no_texture_filter", action="store_true",
+                        help="Disable the L1+L2 low-texture post-extraction "
+                             "filter (Laplacian variance + ORB keypoint count)")
+    parser.add_argument("--min_lap_var", type=float, default=60.0,
+                        help="[L1] Reject frames with Laplacian variance below "
+                             "this (catches blurry / blank walls / ceilings)")
+    parser.add_argument("--min_orb_kpts", type=int, default=80,
+                        help="[L2] Reject frames with fewer than this many ORB "
+                             "keypoints (catches glass reflections / sky / "
+                             "near-uniform floors)")
+
+    # L3: descriptor self-consistency prune (runs after descriptor extraction;
+    # drops frames whose top-K descriptor neighbours are spread far in pose
+    # space - a tell-tale sign of a non-discriminative keyframe).
+    parser.add_argument("--no_prune_ambiguous", dest="prune_ambiguous",
+                        action="store_false",
+                        help="Disable the L3 descriptor self-consistency prune")
+    parser.set_defaults(prune_ambiguous=True)
+    parser.add_argument("--ambiguous_k", type=int, default=20,
+                        help="[L3] Number of top descriptor-space neighbours "
+                             "examined per frame")
+    parser.add_argument("--ambiguous_pose_far", type=float, default=5.0,
+                        help="[L3] Neighbours whose XY distance exceeds this "
+                             "(m) are considered 'far'")
+    parser.add_argument("--ambiguous_ratio", type=float, default=0.6,
+                        help="[L3] Reject a frame if this fraction of its "
+                             "top-K descriptor neighbours are 'far' in pose")
 
     # Fisheye undistortion (forwarded to PolyFisheyeUndistorter) -- ros1 only
     parser.add_argument("--undistort_fisheye", action="store_true",
@@ -460,6 +649,27 @@ def main():
         )
     else:
         raise AssertionError(f"unhandled source: {args.source}")
+
+    # ------------------------------------------------------------------
+    # L1+L2 low-texture filter pass (deletes featureless JPGs in db_dir so
+    # they never reach the descriptor model). Stash the report on ``args``
+    # so extract_descriptors() can persist it into database_build_info.json.
+    # ------------------------------------------------------------------
+    if args.no_texture_filter:
+        logger.info("L1+L2 low-texture filter disabled (--no_texture_filter)")
+        args._l12_report = None
+    else:
+        args._l12_report = filter_low_texture_directory(
+            db_dir,
+            min_lap_var=args.min_lap_var,
+            min_orb_kpts=args.min_orb_kpts,
+            num_workers=args.num_workers,
+            delete=True,
+            report_path=os.path.join(
+                args.output_dir, "low_texture_filter_report.csv"
+            ),
+            logger=logger,
+        )
 
     extract_descriptors(args, db_dir)
     logger.info("VPR preprocessing complete.")

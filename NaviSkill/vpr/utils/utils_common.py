@@ -23,7 +23,8 @@ import bisect
 import io
 import os
 import time
-from concurrent.futures import as_completed
+from collections import namedtuple
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import numpy as np
 from PIL import Image
@@ -189,3 +190,209 @@ def print_summary(raw_count, sampler, unmatched, t0, db_dir, q_dir):
     print(f"  Skipped:  {sampler.skipped}")
     if unmatched:
         print(f"  Unmatched: {unmatched} (no pose within threshold)")
+
+
+# ---------------------------------------------------------------------------
+# L1 + L2 low-texture frame filter
+# ---------------------------------------------------------------------------
+# 用来剔除"白墙/玻璃幕墙/吊顶/纯地板"类没有判别力的关键帧。这种帧的全局
+# 描述符容易塌缩到同一片狭窄子空间，跨 submap 互相 KNN 命中，是多楼层
+# VPR 的主要误召回来源。
+#
+# 流程是两级廉价指标，全部在 CPU 上跑，单帧总耗时 < 10ms：
+#   L1: cv2.Laplacian(gray).var() —— 抓全局糊（白墙 / 过曝玻璃 / 吊顶）。
+#   L2: cv2.ORB FAST 关键点数      —— 抓"局部高频但整体空"的玻璃反光。
+#
+# 该函数返回值同时带回原始指标，便于线下调阈值（写进
+# ``low_texture_filter_report.csv``）。
+
+FrameQuality = namedtuple(
+    "FrameQuality", ["kept", "reason", "lap_var", "orb_kpts"]
+)
+
+
+def assess_frame_quality(
+    rgb_or_gray,
+    min_lap_var: float = 60.0,
+    min_orb_kpts: int = 80,
+    orb_fast_threshold: int = 15,
+    orb_nfeatures: int = 500,
+) -> FrameQuality:
+    """Score an image's discriminability for VPR (L1 + L2).
+
+    Parameters
+    ----------
+    rgb_or_gray : np.ndarray
+        HxWx3 uint8 RGB or HxW uint8 grayscale.
+    min_lap_var : float
+        Reject if Laplacian variance below this (L1).
+    min_orb_kpts : int
+        Reject if fewer than this many ORB keypoints (L2).
+    orb_fast_threshold, orb_nfeatures :
+        ``cv2.ORB_create`` parameters; defaults work well for 1024x768
+        indoor frames.
+
+    Returns
+    -------
+    FrameQuality(kept, reason, lap_var, orb_kpts)
+        ``reason`` is one of ``"kept"``, ``"low_lap_var"``, ``"low_orb_kpts"``.
+    """
+    import cv2
+
+    arr = rgb_or_gray
+    if arr.ndim == 3:
+        gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+    else:
+        gray = arr
+
+    lap_var = float(cv2.Laplacian(gray, cv2.CV_32F).var())
+    if lap_var < min_lap_var:
+        return FrameQuality(False, "low_lap_var", lap_var, 0)
+
+    orb = cv2.ORB_create(
+        nfeatures=orb_nfeatures, fastThreshold=orb_fast_threshold
+    )
+    kpts = orb.detect(gray, None)
+    n_kpts = int(len(kpts)) if kpts is not None else 0
+    if n_kpts < min_orb_kpts:
+        return FrameQuality(False, "low_orb_kpts", lap_var, n_kpts)
+
+    return FrameQuality(True, "kept", lap_var, n_kpts)
+
+
+def _assess_path_worker(args):
+    """ProcessPool worker: load JPG -> FrameQuality. Top-level for picklability."""
+    path, min_lap_var, min_orb_kpts = args
+    import cv2
+
+    bgr = cv2.imread(path, cv2.IMREAD_COLOR)
+    if bgr is None:
+        return path, FrameQuality(False, "unreadable", 0.0, 0)
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    return path, assess_frame_quality(
+        gray, min_lap_var=min_lap_var, min_orb_kpts=min_orb_kpts
+    )
+
+
+def filter_low_texture_directory(
+    db_dir: str,
+    *,
+    min_lap_var: float = 60.0,
+    min_orb_kpts: int = 80,
+    num_workers: int = 4,
+    delete: bool = True,
+    report_path: str = None,
+    logger=None,
+):
+    """Scan a database image directory and drop low-texture frames.
+
+    Runs L1 (Laplacian variance) + L2 (ORB keypoint count) over every
+    ``.jpg/.jpeg/.png`` in ``db_dir``. Frames that fail either gate are
+    deleted (when ``delete=True``) and a per-frame report is written to
+    ``report_path`` so the thresholds can be re-tuned offline.
+
+    Parameters
+    ----------
+    db_dir : str
+        Directory holding extracted database JPGs.
+    min_lap_var, min_orb_kpts :
+        Pass-through to :func:`assess_frame_quality`.
+    num_workers : int
+        ProcessPool size; <=1 runs serially in the calling process.
+    delete : bool
+        If False, only the report is written (dry-run).
+    report_path : str, optional
+        CSV destination; defaults to ``<db_dir>/../low_texture_filter_report.csv``.
+    logger :
+        loguru-style logger; defaults to ``loguru.logger``.
+
+    Returns
+    -------
+    dict
+        Summary stats: ``total``, ``kept``, ``filtered``, ``by_reason``,
+        ``min_lap_var``, ``min_orb_kpts``, ``elapsed_sec``.
+    """
+    if logger is None:
+        from loguru import logger as _logger
+        logger = _logger
+
+    exts = (".jpg", ".jpeg", ".png")
+    paths = sorted(
+        os.path.join(db_dir, p)
+        for p in os.listdir(db_dir)
+        if os.path.isfile(os.path.join(db_dir, p))
+        and os.path.splitext(p)[1].lower() in exts
+    )
+    total = len(paths)
+    if total == 0:
+        logger.warning(f"filter_low_texture_directory: no images in {db_dir}")
+        return {
+            "total": 0, "kept": 0, "filtered": 0, "by_reason": {},
+            "min_lap_var": min_lap_var, "min_orb_kpts": min_orb_kpts,
+            "elapsed_sec": 0.0,
+        }
+
+    logger.info(
+        f"L1+L2 filter: scanning {total} frames "
+        f"(min_lap_var={min_lap_var}, min_orb_kpts={min_orb_kpts}, "
+        f"workers={num_workers}, delete={delete}) ..."
+    )
+
+    t0 = time.time()
+    tasks = [(p, min_lap_var, min_orb_kpts) for p in paths]
+    results = []
+
+    if num_workers <= 1:
+        for t in tasks:
+            results.append(_assess_path_worker(t))
+    else:
+        with ProcessPoolExecutor(max_workers=num_workers) as pool:
+            for r in pool.map(_assess_path_worker, tasks, chunksize=16):
+                results.append(r)
+
+    if report_path is None:
+        report_path = os.path.join(
+            os.path.dirname(os.path.abspath(db_dir)),
+            "low_texture_filter_report.csv",
+        )
+    with open(report_path, "w") as f:
+        f.write("path,kept,reason,lap_var,orb_kpts\n")
+        for p, q in results:
+            f.write(
+                f"{os.path.basename(p)},{int(q.kept)},{q.reason},"
+                f"{q.lap_var:.2f},{q.orb_kpts}\n"
+            )
+
+    kept = 0
+    filtered = 0
+    by_reason = {}
+    for p, q in results:
+        if q.kept:
+            kept += 1
+        else:
+            filtered += 1
+            by_reason[q.reason] = by_reason.get(q.reason, 0) + 1
+            if delete:
+                try:
+                    os.remove(p)
+                except OSError as e:
+                    logger.warning(f"  could not remove {p}: {e}")
+
+    elapsed = time.time() - t0
+    logger.info(
+        f"L1+L2 filter done in {elapsed:.1f}s: "
+        f"kept={kept}/{total} ({kept / total:.1%}), "
+        f"filtered={filtered} ({by_reason})"
+    )
+    logger.info(f"  per-frame report -> {report_path}")
+
+    return {
+        "total": total,
+        "kept": kept,
+        "filtered": filtered,
+        "by_reason": by_reason,
+        "min_lap_var": float(min_lap_var),
+        "min_orb_kpts": int(min_orb_kpts),
+        "elapsed_sec": float(elapsed),
+        "report_path": report_path,
+    }
