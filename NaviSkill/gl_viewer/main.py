@@ -66,6 +66,13 @@ def main() -> int:
                         help="关闭 bloom 后处理（省 4 个 pass，显著减 GPU 负担）")
     parser.add_argument("--window", type=str, default="1280x800",
                         help="初始窗口尺寸 WxH")
+    parser.add_argument("--record", type=str, default=None,
+                        help="录制视频到指定路径（如 /tmp/demo.mp4）。"
+                             "开启后窗口将锁定为 --window 尺寸不能拖拽。")
+    parser.add_argument("--record_fps", type=int, default=15,
+                        help="录制视频帧率（默认 15）")
+    parser.add_argument("--record_crf", type=int, default=23,
+                        help="x264 质量（越小越清晰越大；默认 23，18-28 常用）")
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
 
@@ -121,17 +128,40 @@ def main() -> int:
         except Exception:
             pass
 
+    # ── 视频录制（可选） ──
+    recorder = None
+    if args.record:
+        from gl_viewer.recorder import VideoRecorder
+        # H.264 要求宽高都是偶数
+        rw, rh = (w & ~1), (h & ~1)
+        recorder = VideoRecorder(args.record, rw, rh,
+                                 fps=args.record_fps, crf=args.record_crf)
+        recorder.start()
+
     widget = GLPointCloudWidget(
         scene, bridge,
         target_fps=args.target_fps,
         enable_bloom=not args.no_bloom,
+        recorder=recorder,
     )
-    widget.resize(w, h)
+    if recorder is not None:
+        # 录制时锁定窗口尺寸，避免 resize 让 ffmpeg 帧尺寸不对
+        widget.setFixedSize(rw, rh)
+        widget.resize(rw, rh)
+    else:
+        widget.resize(w, h)
     widget.setWindowTitle("NaviSkill GL Viewer")
     widget.show()
 
-    rc = app.exec_()
-    bridge.stop()
+    try:
+        rc = app.exec_()
+    finally:
+        bridge.stop()
+        if recorder is not None:
+            try:
+                recorder.stop()
+            except Exception:
+                logging.exception("停止 recorder 失败")
     return rc
 
 

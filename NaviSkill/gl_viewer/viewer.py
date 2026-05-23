@@ -129,10 +129,13 @@ class GLPointCloudWidget(QtWidgets.QWidget):
     """点云 viewer（普通 QWidget，靠 EGL 离屏 + QImage 显示）。"""
 
     def __init__(self, scene: Scene, bridge, parent=None,
-                 target_fps: float = 15.0, enable_bloom: bool = True):
+                 target_fps: float = 15.0, enable_bloom: bool = True,
+                 recorder=None):
         super().__init__(parent)
         self._scene = scene
         self._bridge = bridge
+        # 可选：把每帧 BGRA 喂给视频录制器（recorder.VideoRecorder 实例）
+        self._recorder = recorder
 
         self.camera = OrbitCamera(pivot=(0.0, 0.0, 0.0), distance=15.0,
                                   yaw_deg=45.0, pitch_deg=35.0)
@@ -292,6 +295,13 @@ class GLPointCloudWidget(QtWidgets.QWidget):
         # QImage 直接包装 numpy 内存，保留引用避免 GC
         self._last_pixels = pixels
         qimg = QtGui.QImage(pixels.data, w, h, w * 4, QtGui.QImage.Format_ARGB32)
+
+        # 录视频（如果启用）：异步喂帧，不阻塞渲染
+        if self._recorder is not None:
+            try:
+                self._recorder.feed(pixels)
+            except Exception:
+                logger.exception("feed recorder 失败（忽略，继续渲染）")
 
         # ── 3. QPainter 显示 ─────────────────────────────────────
         p = QtGui.QPainter(self)
