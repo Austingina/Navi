@@ -5,7 +5,7 @@ from rcl_interfaces.srv import GetParameters, SetParameters  # 参数服务
 from rcl_interfaces.msg import Parameter as ParameterMsg, ParameterValue, ParameterType
 from rclpy.executors import SingleThreadedExecutor  # 单线程执行器
 from geometry_msgs.msg import PoseStamped, Twist, TwistStamped  # 位姿消息类型和速度控制消息类型
-from nav_msgs.msg import OccupancyGrid, Path  # 占据网格、全局路径
+from nav_msgs.msg import OccupancyGrid, Odometry, Path  # 占据网格、里程计、全局路径
 from sensor_msgs.msg import CompressedImage  # 压缩图像（用于 VPR 引导）
 from std_msgs.msg import String, Bool  # 字符串消息类型 / 布尔消息类型
 from std_srvs.srv import SetBool  # 用于 elevator_mode 服务
@@ -158,6 +158,20 @@ class NavNode(Node):
                 TwistStamped,
                 '/motion_control/chassis_speed',
                 self.chassis_speed_callback,
+                10
+            )
+
+            # /odom 订阅：用于"运动门控"——VPR 共识采集时，相邻两帧之间要求
+            # 机器人发生足够的位移或旋转（见 vpr_bootstrap.VprRelocator
+            # 的 MIN_MOVE_M / MIN_ROT_DEG），否则就等下一周期再采。
+            # /odom 是 cmd_odom.py 里 EKF 输出的局部里程，平滑且没有 VPR
+            # 重定位带来的 jump，正好适合做这种 incremental 距离/角度判断。
+            # 单元为 (px, py, yaw_rad, stamp_sec)；GIL 保证 tuple 引用读写原子。
+            self._latest_odom_pose: Optional[Tuple[float, float, float, float]] = None
+            self.odom_sub = self.create_subscription(
+                Odometry,
+                '/odom',
+                self._odom_callback,
                 10
             )
             # 卡住检测相关变量
@@ -656,6 +670,33 @@ class NavNode(Node):
         msg: TwistStamped消息，包含底盘实际速度
         """
         self.chassis_speed = msg.twist
+
+    def _odom_callback(self, msg: Odometry):
+        """缓存最新 /odom 位姿 (x, y, yaw_rad, stamp_sec)。
+
+        用 ZYX-yaw 提取（chassis 几乎水平时数值稳定），无需 tf2 依赖。
+        写入一个 tuple 即可，GIL 让外部读取拿到的是要么旧 tuple 要么完整新
+        tuple，不会拿到半新半旧的字段。
+        """
+        q = msg.pose.pose.orientation
+        siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
+        cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+        yaw = math.atan2(siny_cosp, cosy_cosp)
+        stamp_sec = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        self._latest_odom_pose = (
+            float(msg.pose.pose.position.x),
+            float(msg.pose.pose.position.y),
+            float(yaw),
+            float(stamp_sec),
+        )
+
+    def get_latest_odom_pose(self) -> Optional[Tuple[float, float, float, float]]:
+        """返回最新一帧 /odom 位姿 ``(x_m, y_m, yaw_rad, stamp_sec)`` 或 None。
+
+        供 VprRelocator.collect_consensus 做"运动门控"——比较相邻两次共识
+        采样之间的位移/转角增量，决定要不要等到下一周期再采。
+        """
+        return self._latest_odom_pose
 
     def _elevator_moving_callback(self, msg: Bool):
         """

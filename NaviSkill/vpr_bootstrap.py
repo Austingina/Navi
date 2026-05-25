@@ -751,12 +751,21 @@ class VprRelocator:
 
     # 可调超参（class-level，便于子类化或直接覆盖实例属性）
     CONSENSUS_FRAMES = 5          # 每轮采集多少帧
-    FRAME_INTERVAL_SEC = 1.0      # 帧间隔（秒）
+    FRAME_INTERVAL_SEC = 1.0      # 帧间隔（秒）—— 也是"运动门控"的轮询周期
     MAX_ROUNDS = 3                # 最多重试多少轮（防止无限循环）
     RERANK_TOP_K = 20             # 几何重排候选数
     IMAGE_WAIT_SEC = 5.0          # 单帧等待相机的超时（watchdog 场景）
     STARTUP_IMAGE_WAIT_SEC = 10.0 # 启动场景的首帧等待（相机话题可能还没建好）
     DEBUG_DIR = "/tmp/vpr_debug"  # 共识可视化保存目录
+
+    # --- 帧间运动门控（避免连续 5 帧拍同一面墙，等于浪费 votes） ---
+    # 仅在 ros_node 提供 ``get_latest_odom_pose()`` 时启用；否则退化为纯
+    # ``time.sleep(FRAME_INTERVAL_SEC)``，行为与改造前一致。
+    MIN_MOVE_M = 0.10            # 相邻两次成功采样之间，至少位移这么多米
+    MIN_ROT_DEG = 20.0           # 或者至少旋转这么多度（满足其一即可采）
+    MOTION_WAIT_TIMEOUT_SEC = 30.0   # 等运动满足的最大时长；超过后强采一帧，
+                                     # 避免机器人静止不动导致共识永远无法收敛
+    FRAME_DONE_AUDIO = "search.mp3"  # 每张成功检测后由 ros_node.play_audio() 播放
 
     def __init__(
         self,
@@ -823,6 +832,106 @@ class VprRelocator:
             return None
 
     # ------------------------------------------------------------------
+    # Motion gating + audio cue helpers (used by collect_consensus)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _pose_delta(
+        ref: Tuple[float, float, float],
+        cur: Tuple[float, float, float],
+    ) -> Tuple[float, float]:
+        """Return ``(distance_m, abs_yaw_deg)`` between two ``(x, y, yaw)`` poses."""
+        import math
+        dx = cur[0] - ref[0]
+        dy = cur[1] - ref[1]
+        dist = math.hypot(dx, dy)
+        dyaw = math.atan2(
+            math.sin(cur[2] - ref[2]), math.cos(cur[2] - ref[2])
+        )
+        return dist, abs(math.degrees(dyaw))
+
+    def _get_odom_pose(self) -> Optional[Tuple[float, float, float]]:
+        """Fetch the latest /odom pose as ``(x, y, yaw)``; None if unsupported."""
+        fn = getattr(self.ros_node, "get_latest_odom_pose", None)
+        if fn is None:
+            return None
+        try:
+            p = fn()
+        except Exception:
+            return None
+        if not p:
+            return None
+        # nav_node returns (x, y, yaw, stamp); strip stamp.
+        return float(p[0]), float(p[1]), float(p[2])
+
+    def _wait_for_motion(
+        self,
+        ref_pose: Optional[Tuple[float, float, float]],
+        frame_idx: int,
+    ) -> None:
+        """Sleep one frame interval, then keep sleeping until the robot has moved.
+
+        The motion gate kicks in only when:
+        * ros_node exposes ``get_latest_odom_pose`` (otherwise no gate, just sleep)
+        * AND ``ref_pose`` is not None (otherwise no reference to compare)
+        Either way always sleeps at least one ``FRAME_INTERVAL_SEC`` so we don't
+        burn CPU when /odom is missing.
+        """
+        time.sleep(self.FRAME_INTERVAL_SEC)
+        if ref_pose is None:
+            return
+
+        deadline = time.monotonic() + self.MOTION_WAIT_TIMEOUT_SEC
+        waited_extra = 0.0
+        warned = False
+        while True:
+            cur = self._get_odom_pose()
+            if cur is not None:
+                dist, rot_deg = self._pose_delta(ref_pose, cur)
+                if dist >= self.MIN_MOVE_M or rot_deg >= self.MIN_ROT_DEG:
+                    if waited_extra > 0:
+                        logger.info(
+                            "[VPR] 第 %d 帧运动门控满足 (Δdist=%.2fm, Δrot=%.1f°)，"
+                            "额外等待 %.1fs 后开始采样",
+                            frame_idx + 1, dist, rot_deg, waited_extra,
+                        )
+                    return
+                # Not enough motion yet -- log once per round, then keep polling.
+                if not warned:
+                    warned = True
+                    logger.info(
+                        "[VPR] 第 %d 帧运动不足 (Δdist=%.2fm < %.2fm 且 "
+                        "Δrot=%.1f° < %.1f°)，等下一周期 (%.1fs) 再判定",
+                        frame_idx + 1, dist, self.MIN_MOVE_M,
+                        rot_deg, self.MIN_ROT_DEG, self.FRAME_INTERVAL_SEC,
+                    )
+            else:
+                # /odom not arriving (e.g. cmd_odom not up) -> degrade silently.
+                logger.debug(
+                    "[VPR] 运动门控：/odom 暂不可用，按固定周期推进"
+                )
+                return
+
+            if time.monotonic() >= deadline:
+                logger.warning(
+                    "[VPR] 第 %d 帧运动门控超时 (>%.0fs)，强制采样以推进共识",
+                    frame_idx + 1, self.MOTION_WAIT_TIMEOUT_SEC,
+                )
+                return
+            time.sleep(self.FRAME_INTERVAL_SEC)
+            waited_extra += self.FRAME_INTERVAL_SEC
+
+    def _play_frame_done_audio(self) -> None:
+        """Best-effort 'one frame captured' chime; never throws."""
+        fn = getattr(self.ros_node, "play_audio", None)
+        if fn is None:
+            return
+        try:
+            fn(self.FRAME_DONE_AUDIO)
+        except Exception as e:
+            logger.debug(f"[VPR] play_audio({self.FRAME_DONE_AUDIO}) 失败: {e}")
+
+    # ------------------------------------------------------------------
     # Multi-frame consensus
     # ------------------------------------------------------------------
 
@@ -867,10 +976,15 @@ class VprRelocator:
             inliers_log: List[Optional[int]] = []
             collage_items: List[Tuple[Optional[str], Optional[Dict[str, Any]]]] = []
             round_aborted = False
+            # 上一次成功采样时的 /odom pose，下一帧据此做运动门控
+            last_sample_pose: Optional[Tuple[float, float, float]] = None
 
             for frame_idx in range(self.CONSENSUS_FRAMES):
                 if frame_idx > 0:
-                    time.sleep(self.FRAME_INTERVAL_SEC)
+                    # 不再是裸 sleep —— 改成"睡一周期后，若位移/转角都没达到
+                    # 阈值就接着等"。/odom 不可用或 ros_node 不支持该 API 时
+                    # 自动降级为原来的固定周期等待。
+                    self._wait_for_motion(last_sample_pose, frame_idx)
                 t0 = time.monotonic()
                 result = self._query_latest_image(
                     image_wait_sec=eff_image_wait,
@@ -900,6 +1014,11 @@ class VprRelocator:
                     submap_id, inliers,
                     float(result.get("distance") or 0.0), dt_ms,
                 )
+
+                # 每张成功检测后：播放 search.mp3 提示操作员可以挪/转一下，
+                # 并把当前 odom pose 记下来给下一帧的运动门控做参考点。
+                self._play_frame_done_audio()
+                last_sample_pose = self._get_odom_pose()
 
             consensus_ok = (
                 not round_aborted
