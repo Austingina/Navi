@@ -45,16 +45,64 @@ constexpr int kActionBtnMinW    = 96;    // "运行/停止/关闭" 按钮最小�
 constexpr int kFormHSpacing     = 12;
 constexpr int kFormVSpacing     = 10;
 
-// 统一配置 QFormLayout：紧凑但不挤压，字段可拉伸抢宽度
+// 统一配置 QFormLayout：紧凑但不挤压，字段可拉伸抢宽度。
+//
+// 注意 FieldGrowthPolicy：必须用 AllNonFixedFieldsGrow，而不是
+// ExpandingFieldsGrow——因为 ExpandingFieldsGrow 只识别"显式带 Expanding
+// 的 widget"作为可拉伸字段，对 layout-as-field（比如 addRow("Bag:", hbox)）
+// 不可靠：它会把这一行卡在 sizeHint 宽度，而 QFormLayout 的列宽是所有行的
+// 最大公约数，进而把所有行一起卡窄、看起来"输入框横向没占满"。
 QFormLayout* makeFormLayout(QWidget* parent) {
     auto* f = new QFormLayout(parent);
     f->setContentsMargins(12, 20, 12, 12);
     f->setHorizontalSpacing(kFormHSpacing);
     f->setVerticalSpacing(kFormVSpacing);
-    f->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    f->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     f->setRowWrapPolicy(QFormLayout::DontWrapRows);
     f->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
     return f;
+}
+
+// 创建一个无外边距的水平子布局——QHBoxLayout 没 parent、没设 contentsMargins
+// 时会落到 style 默认（通常 9~11px），叠加到父布局上会让行高错位。
+QHBoxLayout* makeFlatHBox(int spacing = 8) {
+    auto* h = new QHBoxLayout();
+    h->setContentsMargins(0, 0, 0, 0);
+    h->setSpacing(spacing);
+    return h;
+}
+
+// "QLineEdit + 浏览..." 组合行。
+//
+// 之所以包成 QWidget 而不是直接返回 QHBoxLayout：QFormLayout 的字段拉伸策略
+// 只能可靠地读 widget 自己的 sizePolicy。如果直接 addRow("Bag:", hbox)，
+// 这一行会按 hbox 的 sizeHint 算列宽，整列被卡在 line-edit 的 sizeHint 上，
+// 表现就是"输入框只有一半宽"。包成 widget 后显式给 Expanding/Fixed，列宽
+// 就能撑满 group box 的可用宽度。
+struct BrowseRow {
+    QWidget*     widget;
+    QLineEdit*   edit;
+    QPushButton* button;
+};
+
+BrowseRow makeBrowseRow(const QString& placeholder,
+                        const QString& tooltip = QString()) {
+    BrowseRow r;
+    r.widget = new QWidget();
+    r.widget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    auto* h = new QHBoxLayout(r.widget);
+    h->setContentsMargins(0, 0, 0, 0);
+    h->setSpacing(8);
+    r.edit = new QLineEdit();
+    r.edit->setPlaceholderText(placeholder);
+    if (!tooltip.isEmpty()) r.edit->setToolTip(tooltip);
+    r.edit->setMinimumWidth(kLineEditMinWidth);
+    r.edit->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    r.button = new QPushButton("浏览...");
+    r.button->setFixedWidth(kBrowseBtnWidth);
+    h->addWidget(r.edit, /*stretch=*/1);
+    h->addWidget(r.button);
+    return r;
 }
 
 } // namespace
@@ -73,8 +121,11 @@ BuildVprDatabaseDialog::BuildVprDatabaseDialog(const QString& submapId,
       outputDir_(outputDir),
       defaultImageCacheDir_(defaultImageCacheDir) {
     setWindowTitle(QString("构建 VPR 数据库 — %1").arg(submapId));
-    setMinimumSize(960, 820);
-    resize(1040, 880);
+    // 初始尺寸要能完整放下 tabs + 公共参数 + 低纹理过滤 + 日志区，否则上半部分
+    // 会被压缩到 QLineEdit 高度跌破字号、字都看不清。最小值同样下调到能容纳
+    // 所有 form 的 sizeHint。
+    setMinimumSize(980, 920);
+    resize(1080, 1000);
     buildUI();
     populateFromParams(initial);
 }
@@ -91,40 +142,37 @@ QWidget* BuildVprDatabaseDialog::buildS20Tab() {
     root->setContentsMargins(10, 10, 10, 10);
     root->setSpacing(10);
 
-    auto makeBrowseRow = [&](QLineEdit*& edit, const char* placeholder,
-                              auto&& slot) {
-        auto* row = new QHBoxLayout();
-        row->setSpacing(8);
-        edit = new QLineEdit();
-        edit->setPlaceholderText(placeholder);
-        edit->setMinimumWidth(kLineEditMinWidth);
-        edit->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        auto* btn = new QPushButton("浏览...");
-        btn->setFixedWidth(kBrowseBtnWidth);
-        row->addWidget(edit, /*stretch=*/1);
-        row->addWidget(btn);
-        connect(btn, &QPushButton::clicked, this, slot);
-        return row;
-    };
-
     auto* inputBox = new QGroupBox("输入 / 话题");
     auto* form = makeFormLayout(inputBox);
 
-    form->addRow("Bag 文件 (.bag):",
-        makeBrowseRow(editS20Bag_, "选择 ROS1 .bag",
-                      &BuildVprDatabaseDialog::onBrowseS20Bag));
-    form->addRow("位姿文件 (ImgPose.txt):",
-        makeBrowseRow(editPose_, "选择 ImgPose.txt",
-                      &BuildVprDatabaseDialog::onBrowsePose));
+    {
+        auto r = makeBrowseRow("选择 ROS1 .bag");
+        editS20Bag_ = r.edit;
+        connect(r.button, &QPushButton::clicked, this,
+                &BuildVprDatabaseDialog::onBrowseS20Bag);
+        form->addRow("Bag 文件 (.bag):", r.widget);
+    }
+    {
+        auto r = makeBrowseRow("选择 ImgPose.txt");
+        editPose_ = r.edit;
+        connect(r.button, &QPushButton::clicked, this,
+                &BuildVprDatabaseDialog::onBrowsePose);
+        form->addRow("位姿文件 (ImgPose.txt):", r.widget);
+    }
 
     editS20Topic_ = new QLineEdit();
     editS20Topic_->setPlaceholderText("/camera_agent/img_left/compressed");
     editS20Topic_->setMinimumWidth(kLineEditMinWidth);
+    editS20Topic_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     form->addRow("图像话题:", editS20Topic_);
 
-    form->addRow("摄像头内参 (.yaml, 可选):",
-        makeBrowseRow(editCalib_, "留空使用 PolyFisheye S20 默认内参",
-                      &BuildVprDatabaseDialog::onBrowseCalibration));
+    {
+        auto r = makeBrowseRow("留空使用 PolyFisheye S20 默认内参");
+        editCalib_ = r.edit;
+        connect(r.button, &QPushButton::clicked, this,
+                &BuildVprDatabaseDialog::onBrowseCalibration);
+        form->addRow("摄像头内参 (.yaml, 可选):", r.widget);
+    }
     root->addWidget(inputBox);
 
     auto* paramsBox = new QGroupBox("S20 参数");
@@ -133,8 +181,7 @@ QWidget* BuildVprDatabaseDialog::buildS20Tab() {
     chkUndistort_ = new QCheckBox("启用鱼眼去畸变 (POLYFISHEYE → perspective)");
     pform->addRow(chkUndistort_);
 
-    auto* fisheyeRow = new QHBoxLayout();
-    fisheyeRow->setSpacing(8);
+    auto* fisheyeRow = makeFlatHBox(8);
     spinOutW_ = new QSpinBox();  spinOutW_->setRange(64, 8192);
     spinOutW_->setMinimumWidth(90);
     spinOutH_ = new QSpinBox();  spinOutH_->setRange(64, 8192);
@@ -172,50 +219,62 @@ QWidget* BuildVprDatabaseDialog::buildR1proTab() {
     auto* form = makeFormLayout(inputBox);
 
     {
-        auto* row = new QHBoxLayout();
-        row->setSpacing(8);
-        editR1proBag_ = new QLineEdit();
-        editR1proBag_->setPlaceholderText(
-            "选择 ROS2 bag 目录（含 metadata.yaml + *.db3）或直接选 *.db3 文件");
-        editR1proBag_->setMinimumWidth(kLineEditMinWidth);
-        editR1proBag_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        auto* btn = new QPushButton("浏览...");
-        btn->setFixedWidth(kBrowseBtnWidth);
-        row->addWidget(editR1proBag_, /*stretch=*/1);
-        row->addWidget(btn);
-        connect(btn, &QPushButton::clicked, this,
+        auto r = makeBrowseRow(
+            "选择 ROS2 bag 目录（含 metadata.yaml + *.db3）或直接选 *.db3 文件",
+            "ROS 2 rosbag2 路径：可以是包含 metadata.yaml + *.db3 的目录，"
+            "也可以直接选 .db3 文件 (vpr_preprocess.py 会自动取其父目录)");
+        editR1proBag_ = r.edit;
+        connect(r.button, &QPushButton::clicked, this,
                 &BuildVprDatabaseDialog::onBrowseR1proBag);
-        form->addRow("Bag 目录 / .db3:", row);
+        form->addRow("Bag 目录:", r.widget);
     }
 
     editPoseTopic_ = new QLineEdit();
     editPoseTopic_->setPlaceholderText("/Odometry");
+    editPoseTopic_->setToolTip("nav_msgs/Odometry 类型的位姿话题");
     editPoseTopic_->setMinimumWidth(kLineEditMinWidth);
-    form->addRow("位姿话题 (Odometry):", editPoseTopic_);
+    editPoseTopic_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    form->addRow("位姿话题:", editPoseTopic_);
 
     editR1proTopic_ = new QLineEdit();
     editR1proTopic_->setPlaceholderText(
         "/hdas/camera_head/left_raw/image_raw_color/compressed");
+    editR1proTopic_->setToolTip("sensor_msgs/CompressedImage 类型的图像话题");
     editR1proTopic_->setMinimumWidth(kLineEditMinWidth);
-    form->addRow("图像话题 (CompressedImage):", editR1proTopic_);
+    editR1proTopic_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    form->addRow("图像话题:", editR1proTopic_);
     root->addWidget(inputBox);
 
     auto* paramsBox = new QGroupBox("R1Pro 参数 (PinHole 去畸变 + 中心裁剪)");
-    auto* pform = makeFormLayout(paramsBox);
+    auto* paramsLayout = new QVBoxLayout(paramsBox);
+    paramsLayout->setContentsMargins(12, 20, 12, 12);
+    paramsLayout->setSpacing(kFormVSpacing);
 
+    // 把说明文字单独放成 paramsBox 的子 widget，而不是塞进 QFormLayout —— 否则
+    // word-wrap 后真实高度走 heightForWidth，但 QFormLayout 只看 sizeHint，会把
+    // 多行文本压在 minimumHeight 上、第二行漫出到下面的行上，看起来像排版错乱。
     auto* note = new QLabel(
         QStringLiteral(
-            "R1Pro 路径自动应用 PinHoleUndistorter (R1Pro 默认内参)，并把去畸变后"
-            "的图像中心裁剪到下方指定尺寸。\n\n"
+            "R1Pro 路径自动应用 PinHoleUndistorter (默认内参)，并把去畸变后的图像"
+            "中心裁剪到下方尺寸。\n"
             "裁剪尺寸必须与运行时 vpr_bootstrap._VPR_QUERY_TARGET_W/H 一致，"
             "否则建库图与在线查询图不在同一几何空间，会显著影响匹配精度。"));
     note->setStyleSheet("color: #666; font-size: 11px;");
     note->setWordWrap(true);
-    note->setMinimumHeight(48);
-    pform->addRow(note);
+    note->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
+    paramsLayout->addWidget(note);
 
-    auto* cropRow = new QHBoxLayout();
-    cropRow->setSpacing(8);
+    auto* pform = new QFormLayout();
+    // 内嵌在 paramsLayout 里，必须清掉默认边距——否则 style 给的 ~9px padding
+    // 会和外层 paramsLayout(12,20,12,12) 叠加，使得标签和输入框被向内挤压。
+    pform->setContentsMargins(0, 0, 0, 0);
+    pform->setHorizontalSpacing(kFormHSpacing);
+    pform->setVerticalSpacing(kFormVSpacing);
+    pform->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    pform->setRowWrapPolicy(QFormLayout::DontWrapRows);
+    pform->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+
+    auto* cropRow = makeFlatHBox(8);
     spinCropW_ = new QSpinBox(); spinCropW_->setRange(64, 8192);
     spinCropW_->setMinimumWidth(90);
     spinCropH_ = new QSpinBox(); spinCropH_->setRange(64, 8192);
@@ -227,6 +286,8 @@ QWidget* BuildVprDatabaseDialog::buildR1proTab() {
     cropRow->addWidget(spinCropH_);
     cropRow->addStretch(1);
     pform->addRow("中心裁剪尺寸:", cropRow);
+    paramsLayout->addLayout(pform);
+
     root->addWidget(paramsBox);
 
     root->addStretch(1);
@@ -243,12 +304,17 @@ void BuildVprDatabaseDialog::buildUI() {
     tabs_->setDocumentMode(false);
     tabs_->addTab(buildS20Tab(),   "S20 (ROS1 bag)");
     tabs_->addTab(buildR1proTab(), "R1Pro (ROS2 bag)");
-    // tab 区不要被日志撑得太小：它的内容是 fixed 高度，给一个温和的最小值
-    tabs_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    // tab 区里的 form 是按字号算高度的，绝不能被日志区压缩——必须用
+    // MinimumExpanding：sizeHint 是硬下限（不会 shrink），同时仍可吃多余空间。
+    // 注意：之前用 Preferred 是有 ShrinkFlag 的，会被纵向撑大的 logBox 一起
+    // 压扁，行高跌破字号 → "tab 里 text 和 input 看不清字"。
+    tabs_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::MinimumExpanding);
     rootLayout->addWidget(tabs_);
 
     // ── 公共参数 ───────────────────────────────────────────────────
     auto* sharedBox = new QGroupBox("公共参数");
+    // 跟 tabs 一样：form 行高是按字号算的，不能被 logBox stretch 挤压。
+    sharedBox->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::MinimumExpanding);
     auto* sform = makeFormLayout(sharedBox);
 
     spinDbDist_ = new QDoubleSpinBox();
@@ -269,8 +335,7 @@ void BuildVprDatabaseDialog::buildUI() {
     cmbDevice_->setMinimumWidth(120);
     sform->addRow("设备:", cmbDevice_);
 
-    auto* perfRow = new QHBoxLayout();
-    perfRow->setSpacing(8);
+    auto* perfRow = makeFlatHBox(8);
     spinBatch_   = new QSpinBox(); spinBatch_->setRange(1, 64);
     spinBatch_->setMinimumWidth(80);
     spinWorkers_ = new QSpinBox(); spinWorkers_->setRange(0, 64);
@@ -296,7 +361,10 @@ void BuildVprDatabaseDialog::buildUI() {
                        "由 MapEditor 根据工程目录与 submap ID 自动决定。"));
     sform->addRow("数据库目录:", editOutputDir_);
 
-    auto* cacheRow = new QHBoxLayout();
+    auto* cacheWidget = new QWidget();
+    cacheWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    auto* cacheRow = new QHBoxLayout(cacheWidget);
+    cacheRow->setContentsMargins(0, 0, 0, 0);
     cacheRow->setSpacing(8);
     editImageCacheDir_ = new QLineEdit();
     editImageCacheDir_->setFont(mono);
@@ -313,9 +381,57 @@ void BuildVprDatabaseDialog::buildUI() {
     cacheRow->addWidget(btnCache);
     connect(btnCache, &QPushButton::clicked, this,
             &BuildVprDatabaseDialog::onBrowseImageCache);
-    sform->addRow("图片缓存目录:", cacheRow);
+    sform->addRow("图片缓存目录:", cacheWidget);
 
     rootLayout->addWidget(sharedBox);
+
+    // ── 低纹理帧过滤 (L1 + L2) ─────────────────────────────────────
+    // 在描述符抽取前做的廉价 CPU 过滤，专门剔除"白墙/玻璃/吊顶/纯地板"这类
+    // 没有判别力的关键帧——它们的全局描述符容易塌缩到同一片狭窄子空间，
+    // 跨 submap 互相 KNN 命中，是多楼层 VPR 的主要误召回来源。
+    // 阈值的物理含义见 utils.utils_common.assess_frame_quality 的注释。
+    auto* qualityBox = new QGroupBox("低纹理帧过滤 (L1 + L2)");
+    qualityBox->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::MinimumExpanding);
+    auto* qform = makeFormLayout(qualityBox);
+
+    chkTextureFilter_ = new QCheckBox(
+        "启用低纹理帧过滤 (关闭等同于 --no_texture_filter)");
+    chkTextureFilter_->setToolTip(
+        QStringLiteral(
+            "关闭后 vpr_preprocess.py 会跳过 L1+L2 检查，所有关键帧都进库。\n"
+            "通常仅在调试或者室外宽视角数据时关掉，室内多楼层强烈建议开。"));
+    qform->addRow(chkTextureFilter_);
+
+    spinMinLapVar_ = new QDoubleSpinBox();
+    spinMinLapVar_->setRange(0.0, 10000.0);
+    spinMinLapVar_->setDecimals(1);
+    spinMinLapVar_->setSingleStep(5.0);
+    spinMinLapVar_->setMinimumWidth(110);
+    spinMinLapVar_->setToolTip(
+        QStringLiteral(
+            "[L1] cv2.Laplacian(gray, CV_32F).var() 阈值，低于此判为模糊/无纹理。\n"
+            "经验值: 白墙/失焦 5~30, 吊顶/纯地板 30~80, 普通室内 100~800。\n"
+            "默认 20.0 是宽松基线，能保证弱纹理走廊不被误丢；想更激进地剔除\n"
+            "白墙/玻璃可调到 60+。调阈值前先看 low_texture_filter_report.csv\n"
+            "里 lap_var 列的直方图分布。"));
+    qform->addRow("L1: 最小 Laplacian 方差 (min_lap_var):", spinMinLapVar_);
+
+    spinMinOrbKpts_ = new QSpinBox();
+    spinMinOrbKpts_->setRange(0, 5000);
+    spinMinOrbKpts_->setSingleStep(10);
+    spinMinOrbKpts_->setMinimumWidth(110);
+    spinMinOrbKpts_->setToolTip(
+        QStringLiteral(
+            "[L2] ORB 关键点数下限（fastThreshold=15, nfeatures=500）。\n"
+            "经验值: 玻璃幕墙 40~70, 普通走廊 150~300, 杂物区 ≥400。\n"
+            "默认 80 与 fastThreshold=15 绑定，改 fastThreshold 必须重调此值。\n"
+            "调阈值前同样先看 low_texture_filter_report.csv 的 orb_kpts 直方图。"));
+    qform->addRow("L2: 最少 ORB 关键点数 (min_orb_kpts):", spinMinOrbKpts_);
+
+    connect(chkTextureFilter_, &QCheckBox::toggled, this,
+            &BuildVprDatabaseDialog::onTextureFilterToggled);
+
+    rootLayout->addWidget(qualityBox);
 
     // ── 日志 ───────────────────────────────────────────────────────
     auto* logBox = new QGroupBox("运行日志");
@@ -324,15 +440,18 @@ void BuildVprDatabaseDialog::buildUI() {
     logView_ = new QPlainTextEdit();
     logView_->setReadOnly(true);
     logView_->setFont(QFont("monospace"));
-    logView_->setMinimumHeight(160);
+    // 启动时 log 是空的，给个温和的最小高度就行；跑起来后 stretch=1 会自动让
+    // 它把上面 MinimumExpanding 几块吃饱后的剩余空间全部拿走。如果这里硬给
+    // 160+，对话框总高度不够时反而会反压 tab 区。
+    logView_->setMinimumHeight(100);
     logView_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     logLayout->addWidget(logView_);
-    // 日志区拿剩余的垂直空间；tabs / sharedBox 保持各自的 sizeHint
+    // 日志区拿剩余的垂直空间；tabs / sharedBox / qualityBox 是 MinimumExpanding，
+    // 它们的 sizeHint 是硬下限，log 只能吃"它们都满足后剩下的"那部分。
     rootLayout->addWidget(logBox, /*stretch=*/1);
 
     // ── 按钮 ───────────────────────────────────────────────────────
-    auto* btnRow = new QHBoxLayout();
-    btnRow->setSpacing(10);
+    auto* btnRow = makeFlatHBox(10);
     btnRun_   = new QPushButton("▶ 运行");
     btnStop_  = new QPushButton("■ 停止");
     btnClose_ = new QPushButton("关闭");
@@ -381,6 +500,12 @@ void BuildVprDatabaseDialog::populateFromParams(const BuildVprParams& p) {
         p.imageCacheDir.isEmpty() ? defaultImageCacheDir_ : p.imageCacheDir
     );
 
+    // 低纹理帧过滤
+    chkTextureFilter_->setChecked(p.textureFilter);
+    spinMinLapVar_->setValue(p.minLapVar);
+    spinMinOrbKpts_->setValue(p.minOrbKpts);
+    onTextureFilterToggled(p.textureFilter);
+
     // 决定激活的 tab
     if (p.source == kSourceRos2R1Pro) tabs_->setCurrentIndex(kTabIdxR1Pro);
     else                              tabs_->setCurrentIndex(kTabIdxS20);
@@ -414,6 +539,11 @@ BuildVprParams BuildVprDatabaseDialog::currentParams() const {
     p.batchSize        = spinBatch_->value();
     p.numWorkers       = spinWorkers_->value();
     p.imageCacheDir    = editImageCacheDir_->text().trimmed();
+
+    // 低纹理帧过滤
+    p.textureFilter    = chkTextureFilter_->isChecked();
+    p.minLapVar        = spinMinLapVar_->value();
+    p.minOrbKpts       = spinMinOrbKpts_->value();
     return p;
 }
 
@@ -487,6 +617,11 @@ void BuildVprDatabaseDialog::onUndistortToggled(bool enabled) {
     editCalib_->setEnabled(enabled);
 }
 
+void BuildVprDatabaseDialog::onTextureFilterToggled(bool enabled) {
+    spinMinLapVar_->setEnabled(enabled);
+    spinMinOrbKpts_->setEnabled(enabled);
+}
+
 bool BuildVprDatabaseDialog::validate(QString* err) const {
     auto fail = [&](const QString& s) { if (err) *err = s; return false; };
 
@@ -547,6 +682,16 @@ QStringList BuildVprDatabaseDialog::buildArgList(const QString& scriptPath) cons
          << "--device"          << cmbDevice_->currentText()
          << "--batch_size"      << QString::number(spinBatch_->value())
          << "--num_workers"     << QString::number(spinWorkers_->value());
+
+    // 低纹理帧过滤：关闭就直接传 --no_texture_filter，开就把两个阈值都传过去
+    if (!chkTextureFilter_->isChecked()) {
+        args << "--no_texture_filter";
+    } else {
+        args << "--min_lap_var"
+             << QString::number(spinMinLapVar_->value(), 'f', 1)
+             << "--min_orb_kpts"
+             << QString::number(spinMinOrbKpts_->value());
+    }
 
     if (activeSource() == QString::fromLatin1(kSourceRos2R1Pro)) {
         args << "--bag_path"    << editR1proBag_->text().trimmed()

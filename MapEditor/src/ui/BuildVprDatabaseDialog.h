@@ -56,7 +56,10 @@ struct BuildVprParams {
     int     cropHeight       = 768;
 
     // ── 公共参数 ────────────────────────────────────────────────
-    double  dbDistance       = 1.0;
+    /// 数据库采样间距 (m)。与 vpr_preprocess.py 的 --db_distance 默认值
+    /// (0.2) 对齐：开启低纹理过滤后，按 0.2m 取样能覆盖室内多楼层场景
+    /// 又不至于让数据库过大。
+    double  dbDistance       = 0.2;
     QString method           = "salad-indoor";
     QString device           = "cuda";
     int     batchSize        = 4;
@@ -64,6 +67,16 @@ struct BuildVprParams {
     /// 提取出的 JPG 缓存目录；空时由 MainWindow 决定默认值
     /// (一般为 ~/.vpr/<projectName>/<submapId>/)
     QString imageCacheDir;
+
+    // ── 低纹理帧过滤 (L1 + L2，见 utils_common.assess_frame_quality) ─
+    /// false → 给 vpr_preprocess.py 加 --no_texture_filter，整段跳过
+    bool    textureFilter    = true;
+    /// L1：Laplacian 方差阈值，低于此判为模糊/无纹理（白墙/吊顶）。
+    /// 默认 20.0 偏宽松，避免在弱纹理走廊里把过多关键帧丢掉；如需更激进
+    /// 的过滤可在对话框里调到 60+ 再观察 low_texture_filter_report.csv。
+    double  minLapVar        = 20.0;
+    /// L2：ORB 关键点数下限，少于此判为低判别力（玻璃反光/纯地板）
+    int     minOrbKpts       = 80;
 };
 
 class BuildVprDatabaseDialog : public QDialog {
@@ -92,6 +105,7 @@ private slots:
     void onBrowseR1proBag();
     void onBrowseImageCache();
     void onUndistortToggled(bool enabled);
+    void onTextureFilterToggled(bool enabled);
     void onRun();
     void onStop();
     void onProcessOutput();
@@ -144,6 +158,12 @@ private:
     QLineEdit*       editOutputDir_       = nullptr;
     QLineEdit*       editImageCacheDir_   = nullptr;
     QString          defaultImageCacheDir_;
+
+    // ── 低纹理帧过滤 (L1 + L2) ──────────────────────────────────
+    QCheckBox*       chkTextureFilter_ = nullptr;
+    QDoubleSpinBox*  spinMinLapVar_    = nullptr;
+    QSpinBox*        spinMinOrbKpts_   = nullptr;
+
     QPlainTextEdit*  logView_         = nullptr;
     QPushButton*     btnRun_          = nullptr;
     QPushButton*     btnStop_         = nullptr;
