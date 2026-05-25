@@ -39,6 +39,24 @@ import uuid
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+# 让本模块的 INFO 日志可见：server.py 把根 logger 设到了 WARNING，会把
+# 我们的 INFO 全部过滤掉。这里给本模块单独挂一个 INFO 级别的 StreamHandler，
+# 并关掉 propagate 以避免 WARNING+ 同时也走根 handler 造成重复输出。
+logger.setLevel(logging.INFO)
+if not any(
+    getattr(h, "_vpr_bootstrap_handler", False) for h in logger.handlers
+):
+    _vpr_handler = logging.StreamHandler()
+    _vpr_handler.setLevel(logging.INFO)
+    _vpr_handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+    )
+    _vpr_handler._vpr_bootstrap_handler = True  # type: ignore[attr-defined]
+    logger.addHandler(_vpr_handler)
+    logger.propagate = False
 
 
 # Where vpr_detect.py and its dedicated venv live. Kept here so server.py
@@ -767,6 +785,20 @@ class VprRelocator:
                                      # 避免机器人静止不动导致共识永远无法收敛
     FRAME_DONE_AUDIO = "search.mp3"  # 每张成功检测后由 ros_node.play_audio() 播放
 
+    # --- 软共识降级方案（严格共识失败后启用） ---
+    # 触发条件：5 帧 top-1 中至少有 SOFT_CONSENSUS_MIN_VOTES 帧投同一个 submap X，
+    #          且其余帧 top-SOFT_CONSENSUS_TOP_K 中也存在 submap X 的匹配；
+    # 验证条件：把这 5 帧（每帧选 submap X 对应的候选位姿）的 VPR 位姿 V_i 与
+    #          采集时的 odom 位姿 O_i 做 2D 刚体对齐（Kabsch / Procrustes，
+    #          这等价于 HMM 里"状态=位姿、转移=odom 增量"的硬判 Viterbi），
+    #          残差小于阈值才认为轨迹一致、可降级判共识成功。
+    SOFT_CONSENSUS_MIN_VOTES = 3       # 至少有几帧 top-1 一致
+    SOFT_CONSENSUS_TOP_K = 3           # 非一致帧在 top-K 内检索匹配 submap
+    TRAJ_FIT_MEAN_RESIDUAL_M = 1.0     # Kabsch 拟合后平均残差阈值（米）
+    TRAJ_FIT_MAX_RESIDUAL_M = 2.0      # Kabsch 拟合后单点残差阈值（米）
+    TRAJ_STATIC_ODOM_M = 0.10          # odom 位移 < 此值视为机器人基本静止
+    TRAJ_STATIC_VPR_M = 1.0            # odom 静止时，VPR 位移也应 < 此值
+
     def __init__(
         self,
         vpr_bootstrap: VprBootstrap,
@@ -965,16 +997,24 @@ class VprRelocator:
         # 自动关闭 rerank，仅依赖 FAISS top-1 投票。GPU 模式才开 rerank。
         use_rerank = getattr(self.vpr_bootstrap, "device", "cpu") == "cuda"
 
+        # 每帧请求 top-K 候选；K=1 时与旧行为一致，>=3 时可触发软共识降级。
+        locate_top_k = max(1, int(self.SOFT_CONSENSUS_TOP_K))
+
         for round_idx in range(self.MAX_ROUNDS):
             logger.info(
-                "[VPR] 共识第 %d/%d 轮开始 (%s)：采集 %d 帧 / 间隔 %.1fs / rerank=%s / rerank_top_k=%d",
+                "[VPR] 共识第 %d/%d 轮开始 (%s)：采集 %d 帧 / 间隔 %.1fs / "
+                "rerank=%s / rerank_top_k=%d / locate_top_k=%d",
                 round_idx + 1, self.MAX_ROUNDS, reason,
                 self.CONSENSUS_FRAMES, self.FRAME_INTERVAL_SEC,
-                use_rerank, self.RERANK_TOP_K,
+                use_rerank, self.RERANK_TOP_K, locate_top_k,
             )
             votes: List[Optional[str]] = []
             inliers_log: List[Optional[int]] = []
             collage_items: List[Tuple[Optional[str], Optional[Dict[str, Any]]]] = []
+            # 每帧的 top-K 完整候选（含 database/x/y/z），用于软共识查找
+            top_k_per_frame: List[List[Dict[str, Any]]] = []
+            # 每帧采集时的 odom pose (x, y, yaw)；None 表示 /odom 不可用
+            odom_poses: List[Optional[Tuple[float, float, float]]] = []
             round_aborted = False
             # 上一次成功采样时的 /odom pose，下一帧据此做运动门控
             last_sample_pose: Optional[Tuple[float, float, float]] = None
@@ -986,9 +1026,12 @@ class VprRelocator:
                     # 自动降级为原来的固定周期等待。
                     self._wait_for_motion(last_sample_pose, frame_idx)
                 t0 = time.monotonic()
+                # 在 locate 前抓一次 /odom，作为"该帧采集时的机器人位姿"，
+                # 供后续软共识里的 VPR / odom 轨迹一致性检查使用。
+                sample_odom = self._get_odom_pose()
                 result = self._query_latest_image(
                     image_wait_sec=eff_image_wait,
-                    top_k=1,
+                    top_k=locate_top_k,
                     rerank=use_rerank,
                     rerank_top_k=self.RERANK_TOP_K,
                 )
@@ -1007,12 +1050,18 @@ class VprRelocator:
                 votes.append(submap_id)
                 inliers_log.append(inliers)
                 collage_items.append((result.get("query_image_path"), result))
+                top_k_per_frame.append(result.get("top_k_results") or [])
+                odom_poses.append(sample_odom)
                 logger.info(
                     "[VPR] 第 %d/%d 帧 → submap='%s' (rerank_inliers=%s, "
-                    "dist=%.4f, %.0fms)",
+                    "dist=%.4f, %.0fms, odom=%s)",
                     frame_idx + 1, self.CONSENSUS_FRAMES,
                     submap_id, inliers,
                     float(result.get("distance") or 0.0), dt_ms,
+                    "(%.2f,%.2f,%.1f°)" % (
+                        sample_odom[0], sample_odom[1],
+                        sample_odom[2] * 57.29578,
+                    ) if sample_odom else "n/a",
                 )
 
                 # 每张成功检测后：播放 search.mp3 提示操作员可以挪/转一下，
@@ -1027,6 +1076,19 @@ class VprRelocator:
                 and None not in votes
             )
 
+            # 严格共识失败时，尝试软共识降级方案（仅在本轮完整采到 N 帧才有意义）。
+            soft_consensus_submap: Optional[str] = None
+            if (
+                not consensus_ok
+                and not round_aborted
+                and len(votes) == self.CONSENSUS_FRAMES
+            ):
+                soft_consensus_submap = self._try_soft_consensus(
+                    votes=votes,
+                    top_k_per_frame=top_k_per_frame,
+                    odom_poses=odom_poses,
+                )
+
             self._save_debug_image(
                 round_idx=round_idx,
                 reason=reason,
@@ -1035,6 +1097,7 @@ class VprRelocator:
                 inliers_log=inliers_log,
                 round_aborted=round_aborted,
                 consensus_ok=consensus_ok,
+                soft_consensus_submap=soft_consensus_submap,
             )
 
             if consensus_ok:
@@ -1044,6 +1107,15 @@ class VprRelocator:
                     chosen, votes, inliers_log,
                 )
                 return chosen
+
+            if soft_consensus_submap is not None:
+                logger.info(
+                    "[VPR] 软共识达成: submap='%s' (votes=%s, inliers=%s)，"
+                    "通过 top-%d 回捞 + odom/VPR 轨迹一致性校验",
+                    soft_consensus_submap, votes, inliers_log,
+                    self.SOFT_CONSENSUS_TOP_K,
+                )
+                return soft_consensus_submap
 
             if round_aborted:
                 continue
@@ -1069,6 +1141,7 @@ class VprRelocator:
         inliers_log: List[Optional[int]],
         round_aborted: bool,
         consensus_ok: bool,
+        soft_consensus_submap: Optional[str] = None,
     ) -> None:
         """把一轮的 (query, match) 拼成大图写到 ``DEBUG_DIR``。失败只 warning。"""
         try:
@@ -1077,6 +1150,9 @@ class VprRelocator:
             if consensus_ok:
                 status = "ok"
                 chosen = votes[0] if votes else "-"
+            elif soft_consensus_submap is not None:
+                status = "softok"
+                chosen = soft_consensus_submap
             elif round_aborted:
                 status = "framefail"
                 chosen = "-"
@@ -1097,6 +1173,186 @@ class VprRelocator:
                 logger.warning("[VPR] 共识可视化未写入: %s", save_path)
         except Exception as e:
             logger.warning(f"[VPR] 保存共识可视化异常: {e}")
+
+    # ------------------------------------------------------------------
+    # Soft consensus (relaxed fallback with HMM-style trajectory check)
+    # ------------------------------------------------------------------
+
+    def _result_to_submap_id(self, result: Dict[str, Any]) -> Optional[str]:
+        """把单条 VPR 结果里的 ``database`` 反查回 ``submap_id``。"""
+        db = result.get("database")
+        if not db:
+            return None
+        return self.vpr_bootstrap._db_to_submap.get(os.path.abspath(db))
+
+    def _try_soft_consensus(
+        self,
+        *,
+        votes: List[Optional[str]],
+        top_k_per_frame: List[List[Dict[str, Any]]],
+        odom_poses: List[Optional[Tuple[float, float, float]]],
+    ) -> Optional[str]:
+        """严格共识失败后的降级方案。
+
+        条件（与用户需求一致）：
+        1. 至少 ``SOFT_CONSENSUS_MIN_VOTES`` 帧的 top-1 投同一个 ``submap X``；
+        2. 其余帧的 top-``SOFT_CONSENSUS_TOP_K`` 中也存在 ``submap X`` 的匹配；
+        3. 把这 5 帧 "对齐到 submap X 的候选位姿" 与采集时的 odom 位姿做 2D
+           刚体（Kabsch / Procrustes）对齐，残差在阈值内 —— 这等价于一个
+           硬判 Viterbi-HMM：状态是 submap 坐标系下的真实位姿，转移由 odom
+           增量约束，观测是每帧 top-K 中匹配到 ``submap X`` 的候选位姿。
+
+        三个条件都满足时返回 ``submap_id``，否则返回 ``None``。
+        """
+        if len(votes) != len(top_k_per_frame) or len(votes) != len(odom_poses):
+            logger.debug(
+                "[VPR] 软共识跳过：输入长度不一致 votes=%d top_k=%d odom=%d",
+                len(votes), len(top_k_per_frame), len(odom_poses),
+            )
+            return None
+        if len(votes) < self.SOFT_CONSENSUS_MIN_VOTES:
+            return None
+
+        from collections import Counter
+        valid_votes = [v for v in votes if v is not None]
+        if not valid_votes:
+            return None
+        counter = Counter(valid_votes)
+        submap_id, top_count = counter.most_common(1)[0]
+        if top_count < self.SOFT_CONSENSUS_MIN_VOTES:
+            logger.info(
+                "[VPR] 软共识不满足：top-1 票数最大才 %d (<%d)，候选 submap='%s'",
+                top_count, self.SOFT_CONSENSUS_MIN_VOTES, submap_id,
+            )
+            return None
+
+        # 为每帧挑出 "属于 submap X 的最靠前候选"；任一帧 top-K 内都没有就失败
+        chosen: List[Dict[str, Any]] = []
+        per_frame_origin: List[str] = []   # "top1" or "topN" 仅作日志
+        for i, candidates in enumerate(top_k_per_frame):
+            picked = None
+            picked_rank = -1
+            for rank, r in enumerate(candidates[: self.SOFT_CONSENSUS_TOP_K]):
+                if self._result_to_submap_id(r) == submap_id:
+                    picked = r
+                    picked_rank = rank
+                    break
+            if picked is None:
+                logger.info(
+                    "[VPR] 软共识不满足：第 %d 帧 top-%d 中未出现 submap='%s' "
+                    "(top-1 实际为 '%s')",
+                    i + 1, self.SOFT_CONSENSUS_TOP_K, submap_id, votes[i],
+                )
+                return None
+            chosen.append(picked)
+            per_frame_origin.append("top1" if picked_rank == 0 else f"top{picked_rank + 1}")
+
+        # odom 必须全部可用，否则没法做轨迹一致性检查
+        if any(o is None for o in odom_poses):
+            logger.info(
+                "[VPR] 软共识不满足：odom 在部分帧缺失 (%s)，无法做轨迹一致性校验",
+                [o is not None for o in odom_poses],
+            )
+            return None
+
+        vpr_xy = [(float(c.get("x", 0.0)), float(c.get("y", 0.0))) for c in chosen]
+        odom_xy = [(float(o[0]), float(o[1])) for o in odom_poses]  # type: ignore[index]
+
+        logger.info(
+            "[VPR] 软共识候选：submap='%s' (top-1 票数 %d/%d, 各帧来源=%s)，"
+            "进入 VPR/odom 轨迹一致性校验",
+            submap_id, top_count, len(votes), per_frame_origin,
+        )
+        if not self._trajectory_consistent(vpr_xy, odom_xy):
+            return None
+        return submap_id
+
+    def _trajectory_consistent(
+        self,
+        vpr_xy: List[Tuple[float, float]],
+        odom_xy: List[Tuple[float, float]],
+    ) -> bool:
+        """检查 VPR 位姿序列与 odom 位姿序列描述的是同一段轨迹。
+
+        因为 odom 坐标系 / submap 坐标系之间差一个未知的 2D 刚体变换，所以
+        不能直接逐点比 ``|V_i - O_i|``。这里用 Kabsch (2D Procrustes) 最小
+        二乘地把 odom 旋转 / 平移到 submap，然后看每点残差是否都在阈值内：
+
+            R*, t* = argmin Σ ||(R O_i + t) - V_i||^2
+            ok ⇔ mean ||residual|| ≤ TRAJ_FIT_MEAN_RESIDUAL_M
+                 且 max ||residual|| ≤ TRAJ_FIT_MAX_RESIDUAL_M
+
+        机器人几乎静止时（odom 总位移 < TRAJ_STATIC_ODOM_M），Kabsch 拟合不可靠，
+        改为退化判定：只要 VPR 位移也很小（< TRAJ_STATIC_VPR_M）即认为一致。
+        """
+        n = len(vpr_xy)
+        if n != len(odom_xy) or n < 2:
+            logger.warning(
+                "[VPR] 软共识轨迹检查：点数不合法 (vpr=%d, odom=%d)", n, len(odom_xy),
+            )
+            return False
+
+        try:
+            import numpy as np  # 本地导入，避免在不需要时强依赖
+        except Exception as e:
+            logger.warning(
+                "[VPR] 软共识轨迹检查：numpy 不可用 (%s)，无法做拟合，判失败", e,
+            )
+            return False
+
+        V = np.asarray(vpr_xy, dtype=float)
+        O = np.asarray(odom_xy, dtype=float)
+
+        odom_extent = float(np.linalg.norm(O - O.mean(axis=0), axis=1).max())
+        vpr_extent = float(np.linalg.norm(V - V.mean(axis=0), axis=1).max())
+
+        if odom_extent < self.TRAJ_STATIC_ODOM_M:
+            # 机器人基本没动：Kabsch 退化为奇异；如果 VPR 也基本静止就视作一致。
+            ok = vpr_extent <= self.TRAJ_STATIC_VPR_M
+            logger.info(
+                "[VPR] 软共识轨迹检查（静止分支）：odom_extent=%.3fm < %.2fm, "
+                "vpr_extent=%.3fm (阈值 ≤%.2f) → %s",
+                odom_extent, self.TRAJ_STATIC_ODOM_M,
+                vpr_extent, self.TRAJ_STATIC_VPR_M,
+                "通过" if ok else "失败",
+            )
+            return ok
+
+        # Kabsch / Procrustes：对齐 O → V 的 2D 刚体（rotation + translation）
+        Vc = V - V.mean(axis=0)
+        Oc = O - O.mean(axis=0)
+        H = Oc.T @ Vc
+        try:
+            U, _, Vt = np.linalg.svd(H)
+        except np.linalg.LinAlgError as e:
+            logger.warning(
+                "[VPR] 软共识轨迹检查：SVD 失败 (%s)，判失败", e,
+            )
+            return False
+        d = float(np.sign(np.linalg.det(Vt.T @ U.T)))
+        if d == 0.0:
+            d = 1.0
+        R = Vt.T @ np.diag([1.0, d]) @ U.T
+        t = V.mean(axis=0) - R @ O.mean(axis=0)
+        fit = (R @ O.T).T + t
+        residuals = np.linalg.norm(V - fit, axis=1)
+        mean_res = float(residuals.mean())
+        max_res = float(residuals.max())
+
+        ok = (
+            mean_res <= self.TRAJ_FIT_MEAN_RESIDUAL_M
+            and max_res <= self.TRAJ_FIT_MAX_RESIDUAL_M
+        )
+        logger.info(
+            "[VPR] 软共识轨迹检查：n=%d, odom_extent=%.2fm, vpr_extent=%.2fm, "
+            "residual mean=%.3fm / max=%.3fm "
+            "(阈值 mean≤%.2f, max≤%.2f) → %s",
+            n, odom_extent, vpr_extent,
+            mean_res, max_res,
+            self.TRAJ_FIT_MEAN_RESIDUAL_M, self.TRAJ_FIT_MAX_RESIDUAL_M,
+            "通过" if ok else "失败",
+        )
+        return ok
 
     # ------------------------------------------------------------------
     # High-level entry points (server.py 直接调用这两个)
