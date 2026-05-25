@@ -722,7 +722,28 @@ class VprBootstrap:
             )
             return None
 
-        logger.warning(f"locate result: {best.get('image_path')}")
+        logger.info(
+            "VprBootstrap.locate top-%d 结果 (faiss=%sms, rerank=%sms, total=%sms):",
+            len(results),
+            resp.get("faiss_ms"), resp.get("rerank_ms"), resp.get("elapsed_ms"),
+        )
+        for r in results:
+            r_db = r.get("database", "")
+            r_sm = self._db_to_submap.get(os.path.abspath(r_db)) or "?"
+            r_inl = r.get("rerank_inliers")
+            r_dist = r.get("distance")
+            try:
+                dist_str = f"{float(r_dist):.4f}"
+            except (TypeError, ValueError):
+                dist_str = str(r_dist)
+            logger.info(
+                "  [%d] submap=%s  dist=%s  inliers=%s  xyz=(%.2f,%.2f,%.2f)  %s",
+                int(r.get("rank", -1)),
+                r_sm, dist_str, r_inl,
+                float(r.get("x") or 0.0), float(r.get("y") or 0.0), float(r.get("z") or 0.0),
+                r.get("image_path"),
+            )
+
         return {
             "submap_id": submap_id,
             "distance": best.get("distance"),
@@ -793,9 +814,9 @@ class VprRelocator:
     #          这等价于 HMM 里"状态=位姿、转移=odom 增量"的硬判 Viterbi），
     #          残差小于阈值才认为轨迹一致、可降级判共识成功。
     SOFT_CONSENSUS_MIN_VOTES = 3       # 至少有几帧 top-1 一致
-    SOFT_CONSENSUS_TOP_K = 3           # 非一致帧在 top-K 内检索匹配 submap
-    TRAJ_FIT_MEAN_RESIDUAL_M = 1.0     # Kabsch 拟合后平均残差阈值（米）
-    TRAJ_FIT_MAX_RESIDUAL_M = 2.0      # Kabsch 拟合后单点残差阈值（米）
+    SOFT_CONSENSUS_TOP_K = 10           # 非一致帧在 top-K 内检索匹配 submap
+    TRAJ_FIT_MEAN_RESIDUAL_M = 3.0     # Kabsch 拟合后平均残差阈值（米）
+    TRAJ_FIT_MAX_RESIDUAL_M = 5.0      # Kabsch 拟合后单点残差阈值（米）
     TRAJ_STATIC_ODOM_M = 0.10          # odom 位移 < 此值视为机器人基本静止
     TRAJ_STATIC_VPR_M = 1.0            # odom 静止时，VPR 位移也应 < 此值
 
