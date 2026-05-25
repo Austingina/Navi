@@ -443,7 +443,7 @@ def resolve_map_source(
             f"无法从 {arg} 同步地图且本地无可用缓存: {e}"
         ) from e
 
-    logger.info(
+    logger.warning(
         "[mapsource] sync %s: server=(%s, %s) local=(%s, %s) "
         "downloaded=%d files (%.1f MiB) failed=%d elapsed=%.1fs",
         result.status,
