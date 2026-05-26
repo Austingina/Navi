@@ -282,14 +282,19 @@ class NavigationToolManager:
         # 6. 更新 MapManager 缓存
         self.map_manager.set_current_submap(target_submap)
 
+
+        logging.warning(f"init_pose_in_target: {init_pose_in_target}")
         # 7. 若有初始位姿则发布到 /pose_in_target
         if init_pose_in_target:
             try:
                 if isinstance(init_pose_in_target.get("position"), dict):
                     init_pose_in_target["position"]["z"] = 0
                 self.ros_node.publish_pose_in_target(init_pose_in_target)
+                logging.warning(f"已发布初始位姿到 /pose_in_target: {init_pose_in_target}")
             except Exception as e:
                 logging.warning(f"_change_map: publish_pose_in_target 失败: {e}")
+        else:
+            logging.warning(f"init_pose_in_target为空，未发布初始位姿到 /pose_in_target")
 
         result: Dict[str, Any] = {
             "success": True,
