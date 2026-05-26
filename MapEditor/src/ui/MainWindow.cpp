@@ -352,6 +352,15 @@ void MainWindow::onOpen() {
     refreshRouteLines();
     viewer_->resetCamera();
 
+    // 自动显示已构建 VPR 数据库且勾选可见的 submap 视觉特征点
+    for (const auto& smId : project_.submapIds()) {
+        auto* sm = project_.submap(smId);
+        if (!sm || !sm->displayOptions().showVprFeatures) continue;
+        QString dbDir = QDir(currentProjectDir_).absoluteFilePath("vpr/" + smId);
+        if (!VprDatabaseData::dirHasDatabase(dbDir)) continue;
+        onShowVprFeaturesChanged(smId, true);
+    }
+
     statusLabel_->setText(QString("已加载: %1 | %2 个子地图 | %3 条路线")
                               .arg(path)
                               .arg(project_.submapCount())
@@ -1326,6 +1335,9 @@ void MainWindow::pushVprPointsToViewer(const QString& smId) {
 }
 
 void MainWindow::onShowVprFeaturesChanged(const QString& smId, bool show) {
+    if (auto* sm = project_.submap(smId)) {
+        sm->displayOptions().showVprFeatures = show;
+    }
     if (show) {
         auto db = ensureVprDatabase(smId);
         if (!db) return;                       // 加载失败 / 无数据库

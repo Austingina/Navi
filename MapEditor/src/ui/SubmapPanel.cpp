@@ -301,7 +301,8 @@ QTreeWidgetItem* SubmapPanel::makeSubmapItem(const QString& id, SubMap* sm) {
     }
     item->addChild(ptFolder);
 
-    // VPR 视觉特征：默认关闭；未构建数据库时禁用 checkbox
+    // VPR 视觉特征：未构建数据库时禁用 checkbox；已构建则按 displayOptions().showVprFeatures
+    // 显示当前勾选状态（默认 true，即"如有 VPR 数据库则默认勾选"）。
     QString vprDir;
     bool hasVprDb = false;
     if (project_ && !project_->projectDir().isEmpty()) {
@@ -312,17 +313,18 @@ QTreeWidgetItem* SubmapPanel::makeSubmapItem(const QString& id, SubMap* sm) {
                                                   : QStringLiteral("🧠 VPR 视觉特征 (未构建)")});
     vprItem->setData(0, RoleType, TypeVprFeatures);
     vprItem->setData(0, RoleSubmapId, id);
-    // 默认未勾选；未构建时禁用整行
-    vprItem->setCheckState(1, Qt::Unchecked);
-    if (!hasVprDb) {
-        vprItem->setFlags(vprItem->flags() & ~Qt::ItemIsEnabled);
-        vprItem->setToolTip(0,
-            QStringLiteral("尚未构建 VPR 数据库。\n右键 Submap 节点选择「构建 VPR 数据库...」后即可启用。"));
-    } else {
+    if (hasVprDb) {
+        vprItem->setCheckState(1,
+            sm->displayOptions().showVprFeatures ? Qt::Checked : Qt::Unchecked);
         vprItem->setToolTip(0,
             QStringLiteral("勾选以在 3D 视图中显示该 submap 的 VPR 视觉特征点（紫色）。\n"
                            "点击单点查看对应图片；按住 Shift+左键拖框可批量选中；\n"
                            "右键此节点可删除已选中的特征点（同步更新磁盘文件）。"));
+    } else {
+        vprItem->setCheckState(1, Qt::Unchecked);
+        vprItem->setFlags(vprItem->flags() & ~Qt::ItemIsEnabled);
+        vprItem->setToolTip(0,
+            QStringLiteral("尚未构建 VPR 数据库。\n右键 Submap 节点选择「构建 VPR 数据库...」后即可启用。"));
     }
     item->addChild(vprItem);
 

@@ -105,6 +105,7 @@ struct SubmapDisplayOptions {
     bool    visible          = true;
     bool    showSemanticPts  = true;
     bool    showPortals      = true;
+    bool    showVprFeatures  = true;   // 仅当 submap 存在 VPR 数据库时生效
     QColor  color            = QColor(200, 200, 200);
     float   voxelSize        = 1.0f;   // 显示用降采样体素大小(米), 默认1m
     float   pointSize        = 2.0f;

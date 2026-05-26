@@ -1,7 +1,7 @@
 {
     "_comment": "多楼层地图配置文件 / Multi-floor map configuration",
     "global": {
-        "build_no": 20260525151248,
+        "build_no": 20260526092449,
         "default_route": "route262",
         "default_submap": "2f",
         "version": "1.0.1"
