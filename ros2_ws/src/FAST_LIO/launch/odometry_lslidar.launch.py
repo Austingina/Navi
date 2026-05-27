@@ -93,6 +93,17 @@ def generate_launch_description():
         output='screen'
     )
 
+    # Standalone chassis EKF: fuses /motion_control/chassis_speed + /livox/imu
+    # + /Odometry (from fastlio_odometry) into /odom and /odom/health.
+    # Runs in its own process to keep the laser_mapping CPU isolated.
+    chassis_ekf_node = Node(
+        package='fast_lio',
+        executable='chassis_ekf',
+        name='chassis_ekf',
+        parameters=[{'use_sim_time': use_sim_time}],
+        output='screen'
+    )
+
     # cloud2scan = Node(
     #         package='pointcloud_to_laserscan', executable='pointcloud_to_laserscan_node',
     #         remappings=[('cloud_in', '/cloud_registered_body'),
@@ -160,6 +171,7 @@ def generate_launch_description():
     ld.add_action(tf_baselink_laser)
     ld.add_action(tf_map2odom)
     ld.add_action(fast_lio_node)
+    ld.add_action(chassis_ekf_node)
     ld.add_action(rviz_node)
     # ld.add_action(cloud2scan)
     ld.add_action(cloud2scan2)

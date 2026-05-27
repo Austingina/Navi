@@ -119,6 +119,15 @@ target_link_libraries(fastlio_odometry ${PCL_LIBRARIES} ${PYTHON_LIBRARIES} Eige
 #teaserpp::teaser_registration teaserpp::teaser_features teaserpp::teaser_io)
 target_include_directories(fastlio_odometry PRIVATE ${PYTHON_INCLUDE_DIRS})
 
+# Lightweight standalone EKF node (chassis dead-reckoning + LIO fusion) — runs
+# in its own process so it doesn't share the laser_mapping callback group.
+add_executable(chassis_ekf src/chassis_ekf_node.cpp)
+target_include_directories(chassis_ekf PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(chassis_ekf Eigen3::Eigen)
+
 list(APPEND EOL_LIST "foxy" "galactic" "eloquent" "dashing" "crystal")
 
 if($ENV{ROS_DISTRO} IN_LIST EOL_LIST)
@@ -136,9 +145,16 @@ endif()
 
 ament_target_dependencies(fastlio_mapping ${dependencies})
 ament_target_dependencies(fastlio_odometry ${dependencies})
+ament_target_dependencies(chassis_ekf
+  rclcpp
+  geometry_msgs
+  nav_msgs
+  sensor_msgs
+  std_msgs
+)
 
 # ---------------- Install --------------- #
-install(TARGETS fastlio_mapping fastlio_odometry
+install(TARGETS fastlio_mapping fastlio_odometry chassis_ekf
   DESTINATION lib/${PROJECT_NAME}
 )
 
