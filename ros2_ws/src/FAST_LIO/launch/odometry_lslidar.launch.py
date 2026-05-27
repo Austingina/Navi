@@ -94,7 +94,7 @@ def generate_launch_description():
     )
 
     # Standalone chassis EKF: fuses /motion_control/chassis_speed + /livox/imu
-    # + /Odometry (from fastlio_odometry) into /odom and /odom/health.
+    # + /Odometry (from fastlio_odometry) into /odom.
     # Runs in its own process to keep the laser_mapping CPU isolated.
     chassis_ekf_node = Node(
         package='fast_lio',

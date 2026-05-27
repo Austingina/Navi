@@ -11,8 +11,7 @@
 //   /livox/imu                    (sensor_msgs/Imu)            - yaw rate
 //   /Odometry                     (nav_msgs/Odometry)          - laser pose
 // Output:
-//   /odom         (nav_msgs/Odometry)
-//   /odom/health  (std_msgs/String, JSON)
+//   /odom (nav_msgs/Odometry)
 //
 // State vector:
 //     x = [px, py, theta, b_g]
@@ -24,11 +23,8 @@
 // observable.
 // =============================================================================
 
-#include <chrono>
 #include <cmath>
-#include <cstdio>
 #include <mutex>
-#include <sstream>
 #include <string>
 
 #include <Eigen/Core>
@@ -39,7 +35,6 @@
 #include <geometry_msgs/msg/twist_stamped.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <sensor_msgs/msg/imu.hpp>
-#include <std_msgs/msg/string.hpp>
 
 namespace {
 
@@ -186,8 +181,6 @@ public:
     }
 };
 
-// ----------------------- mode strings -------------------------------------
-
 constexpr const char *MODE_FREE_RUNNING = "EKF_FREE_RUNNING";
 constexpr const char *MODE_LIO_TRACKING = "EKF_LIO_TRACKING";
 constexpr const char *MODE_LIO_LOST     = "EKF_DEAD_RECKONING";
@@ -205,14 +198,12 @@ public:
         this->declare_parameter<std::string>("imu_topic", "/livox/imu");
         this->declare_parameter<std::string>("lio_topic", "/Odometry");
         this->declare_parameter<std::string>("odom_topic", "/odom");
-        this->declare_parameter<std::string>("health_topic", "/odom/health");
         this->declare_parameter<std::string>("odom_frame", "odom");
         this->declare_parameter<std::string>("base_frame", "base_link");
 
         // -- timeouts --
         this->declare_parameter<double>("lio_timeout_sec", 0.5);
         this->declare_parameter<double>("chassis_speed_timeout_sec", 1.0);
-        this->declare_parameter<double>("health_publish_period_sec", 1.0);
 
         // -- noise --
         this->declare_parameter<double>("sigma_vx", 0.05);
@@ -230,12 +221,10 @@ public:
         imu_topic_           = p("imu_topic").as_string();
         lio_topic_           = p("lio_topic").as_string();
         odom_topic_          = p("odom_topic").as_string();
-        health_topic_        = p("health_topic").as_string();
         odom_frame_          = p("odom_frame").as_string();
         base_frame_          = p("base_frame").as_string();
         lio_timeout_         = p("lio_timeout_sec").as_double();
         chassis_speed_timeout_ = p("chassis_speed_timeout_sec").as_double();
-        const double health_period = p("health_publish_period_sec").as_double();
 
         ekf_.cfg.sigma_vx        = p("sigma_vx").as_double();
         ekf_.cfg.sigma_vy        = p("sigma_vy").as_double();
@@ -262,23 +251,14 @@ public:
             lio_topic_, reliable_qos,
             std::bind(&ChassisEKFNode::lio_cb, this, std::placeholders::_1));
 
-        pub_odom_   = this->create_publisher<nav_msgs::msg::Odometry>(
+        pub_odom_ = this->create_publisher<nav_msgs::msg::Odometry>(
             odom_topic_, reliable_qos);
-        pub_health_ = this->create_publisher<std_msgs::msg::String>(
-            health_topic_, 10);
-
-        const auto health_period_ms =
-            std::chrono::milliseconds(static_cast<int64_t>(health_period * 1000.0));
-        health_timer_ = rclcpp::create_timer(
-            this, this->get_clock(), health_period_ms,
-            std::bind(&ChassisEKFNode::publish_health, this));
 
         RCLCPP_INFO(this->get_logger(),
                     "chassis_ekf up. inputs: chassis_speed=%s, imu=%s, lio=%s "
-                    "-> odom=%s, health=%s",
+                    "-> odom=%s",
                     chassis_speed_topic_.c_str(), imu_topic_.c_str(),
-                    lio_topic_.c_str(), odom_topic_.c_str(),
-                    health_topic_.c_str());
+                    lio_topic_.c_str(), odom_topic_.c_str());
     }
 
 private:
@@ -331,8 +311,8 @@ private:
             }
         }
 
-        update_mode_locked();
         publish_odom_locked(ts);
+        update_mode_locked();
     }
 
     // ---- /Odometry: snap or Kalman update ---------------------------------
@@ -386,7 +366,6 @@ private:
                                                 : MODE_LIO_TRACKING;
         }
         if (new_mode != mode_) {
-            ++transitions_;
             RCLCPP_WARN(this->get_logger(),
                         "/odom mode: %s -> %s",
                         mode_.c_str(), new_mode.c_str());
@@ -443,49 +422,10 @@ private:
         pub_odom_->publish(out);
     }
 
-    void publish_health() {
-        std::lock_guard<std::mutex> lk(mtx_);
-        update_mode_locked();
-        const double now = now_sec();
-
-        const double imu_age   = last_imu_ts_     > 0.0 ? (now - last_imu_ts_)     : -1.0;
-        const double speed_age = last_chassis_ts_ > 0.0 ? (now - last_chassis_ts_) : -1.0;
-        const double lio_age   = last_lio_ts_     > 0.0 ? (now - last_lio_ts_)     : -1.0;
-        const double pos_sigma   = std::sqrt(std::max(0.0, ekf_.P(0, 0)));
-        const double yaw_sigma_d = std::sqrt(std::max(0.0, ekf_.P(2, 2))) * 180.0 / M_PI;
-
-        std::ostringstream oss;
-        oss.setf(std::ios::fixed);
-        auto emit_age = [&](double age) {
-            if (age < 0.0) { oss << "null"; return; }
-            char tmp[32];
-            std::snprintf(tmp, sizeof(tmp), "%.3f", age);
-            oss << tmp;
-        };
-        oss << "{\"mode\":\"" << mode_ << "\","
-            << "\"imu_age_sec\":";     emit_age(imu_age);   oss << ",";
-        oss << "\"chassis_age_sec\":"; emit_age(speed_age); oss << ",";
-        oss << "\"lio_age_sec\":";     emit_age(lio_age);   oss << ",";
-        oss.precision(4);
-        oss << "\"transitions\":"     << transitions_ << ","
-            << "\"lio_anchored\":"    << (ekf_.lio_anchored ? "true" : "false") << ","
-            << "\"ekf_px\":"            << ekf_.x(0) << ","
-            << "\"ekf_py\":"            << ekf_.x(1) << ","
-            << "\"ekf_theta_deg\":"     << (ekf_.x(2) * 180.0 / M_PI) << ","
-            << "\"ekf_gyro_bias_rps\":" << ekf_.x(3) << ","
-            << "\"ekf_pos_sigma_m\":"   << pos_sigma << ","
-            << "\"ekf_yaw_sigma_deg\":" << yaw_sigma_d
-            << "}";
-
-        std_msgs::msg::String m;
-        m.data = oss.str();
-        pub_health_->publish(m);
-    }
-
 private:
     // params / topic config
     std::string chassis_speed_topic_, imu_topic_, lio_topic_;
-    std::string odom_topic_, health_topic_;
+    std::string odom_topic_;
     std::string odom_frame_, base_frame_;
     double      lio_timeout_ = 0.5;
     double      chassis_speed_timeout_ = 1.0;
@@ -495,8 +435,6 @@ private:
     rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr            sub_imu_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr          sub_lio_;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr             pub_odom_;
-    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr               pub_health_;
-    rclcpp::TimerBase::SharedPtr                                      health_timer_;
 
     // shared state — guarded by mtx_ since the default executor still
     // serializes callbacks per-node, but a multi-threaded executor would
@@ -511,7 +449,6 @@ private:
     double last_vx_             = 0.0;
     double last_vy_             = 0.0;
     double last_omega_chassis_  = 0.0;
-    int    transitions_         = 0;
     std::string mode_           = MODE_FREE_RUNNING;
 };
 

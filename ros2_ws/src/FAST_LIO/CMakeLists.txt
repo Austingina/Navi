@@ -150,7 +150,6 @@ ament_target_dependencies(chassis_ekf
   geometry_msgs
   nav_msgs
   sensor_msgs
-  std_msgs
 )
 
 # ---------------- Install --------------- #
