@@ -1,8 +1,10 @@
 // chassis_ekf_node.cpp
 // =============================================================================
-// 4-state EKF chassis odometry node, ported from scripts/galaxea/cmd_odom.py
-// to C++ to drop the Python CPU footprint (~100% of one core on Jetson) down
-// to noise.
+// 4-state EKF chassis odometry node, ported from the original Python
+// implementation (now retired) to C++ to drop the Python CPU footprint
+// (~100% of one core on Jetson) down to noise. The /cmd_vel ->
+// /motion_target/target_speed_chassis bridge that used to live alongside
+// the EKF is now in fast_lio/scripts/cmd_vel_bridge.py.
 //
 // Inputs:
 //   /motion_control/chassis_speed (geometry_msgs/TwistStamped) - body velocity

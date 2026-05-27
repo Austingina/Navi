@@ -959,7 +959,7 @@ class VprRelocator:
                         rot_deg, self.MIN_ROT_DEG, self.FRAME_INTERVAL_SEC,
                     )
             else:
-                # /odom not arriving (e.g. cmd_odom not up) -> degrade silently.
+                # /odom not arriving (e.g. chassis_ekf not up) -> degrade silently.
                 logger.debug(
                     "[VPR] 运动门控：/odom 暂不可用，按固定周期推进"
                 )

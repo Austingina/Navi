@@ -158,6 +158,14 @@ install(TARGETS fastlio_mapping fastlio_odometry chassis_ekf
   DESTINATION lib/${PROJECT_NAME}
 )
 
+# Python helper nodes (e.g. cmd_vel_bridge.py): installed under lib/<pkg> so
+# they're invokable as `ros2 run fast_lio cmd_vel_bridge.py` and as launch
+# Node(executable=...).
+install(PROGRAMS
+  scripts/cmd_vel_bridge.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 install(
   DIRECTORY config launch rviz
   DESTINATION share/${PROJECT_NAME}

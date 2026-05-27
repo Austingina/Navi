@@ -46,6 +46,17 @@ def generate_launch_description():
         convert_types=True)
 
 
+    # Lightweight Python bridge: /cmd_vel -> /motion_target/target_speed_chassis.
+    # Was previously a standalone bash-launched script (scripts/galaxea/cmd_odom.py);
+    # now lives inside fast_lio/scripts/cmd_vel_bridge.py and is brought up here.
+    cmd_vel_bridge_node = Node(
+        package='fast_lio',
+        executable='cmd_vel_bridge.py',
+        name='cmd_vel_bridge',
+        parameters=[{'use_sim_time': use_sim_time}],
+        output='screen',
+    )
+
     return LaunchDescription([
         DeclareLaunchArgument(
             'map',
@@ -61,6 +72,7 @@ def generate_launch_description():
         #    package='nav2_waypoint_cycle',
         #    executable='nav2_waypoint_cycle',
         #),
+        cmd_vel_bridge_node,
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 [wheeltec_nav_launchr, '/bringup_launch.py']),

@@ -9,10 +9,9 @@ This node has exactly one job:
 It repackages the incoming Twist into a TwistStamped, stamps it with the ROS
 clock and the ``base_link`` frame, and forwards it to the chassis controller.
 
-The chassis EKF / /odom / /odom/health logic that used to live here was
-migrated into the C++ FAST-LIO node (``fastlio_odometry``) so that the laser
-localization and chassis dead-reckoning share a single process. That cut the
-Python CPU footprint from ~100% of one core down to noise.
+The chassis EKF / /odom / /odom/health logic that used to live alongside this
+bridge was migrated into the standalone C++ node ``chassis_ekf`` (see
+``chassis_ekf_node.cpp``) so the per-/cmd_vel CPU footprint is now negligible.
 """
 
 import rclpy

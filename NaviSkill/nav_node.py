@@ -164,7 +164,7 @@ class NavNode(Node):
             # /odom 订阅：用于"运动门控"——VPR 共识采集时，相邻两帧之间要求
             # 机器人发生足够的位移或旋转（见 vpr_bootstrap.VprRelocator
             # 的 MIN_MOVE_M / MIN_ROT_DEG），否则就等下一周期再采。
-            # /odom 是 cmd_odom.py 里 EKF 输出的局部里程，平滑且没有 VPR
+            # /odom 是 chassis_ekf 节点输出的局部里程，平滑且没有 VPR
             # 重定位带来的 jump，正好适合做这种 incremental 距离/角度判断。
             # 单元为 (px, py, yaw_rad, stamp_sec)；GIL 保证 tuple 引用读写原子。
             self._latest_odom_pose: Optional[Tuple[float, float, float, float]] = None

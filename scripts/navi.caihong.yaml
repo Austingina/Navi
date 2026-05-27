@@ -6,18 +6,16 @@ windows:
     layout: tiled
     panes:
       - shell_command:
-          - bash $NAVI_SCRIPT_DIR/start_r1pro.bash
-      - shell_command:
-          - sleep 5
+          - sleep 0
           - bash $NAVI_SCRIPT_DIR/start_lidar.bash
       - shell_command:
-          - sleep 10
+          - sleep 5
           - bash $NAVI_SCRIPT_DIR/start_localization.bash
       - shell_command:
-          - sleep 15
+          - sleep 10
           - bash $NAVI_SCRIPT_DIR/start_mcp.sh -m http://10.239.18.181:8080/mapserver/408
       - shell_command:
-          - sleep 20
+          - sleep 15
           - bash $NAVI_SCRIPT_DIR/start_navigation.bash
 
   - window_name: monitoring
