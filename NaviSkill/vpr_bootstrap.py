@@ -1062,6 +1062,47 @@ class VprRelocator:
         # 每帧请求 top-K 候选；K=1 时与旧行为一致，>=3 时可触发软共识降级。
         locate_top_k = max(1, int(self.SOFT_CONSENSUS_TOP_K))
 
+        # VPR 期间才让 ros_node 订阅相机；其余时间彻底不订阅，避免 10-30Hz
+        # 持续的 bytes 拷贝。enable/disable 走引用计数，重入安全。
+        # 兼容旧 ros_node：方法缺失时静默跳过（订阅保持常驻）。
+        _enable_cam = getattr(self.ros_node, "enable_camera_subscription", None)
+        _disable_cam = getattr(self.ros_node, "disable_camera_subscription", None)
+        _camera_enabled = False
+        if callable(_enable_cam):
+            try:
+                _enable_cam()
+                _camera_enabled = True
+            except Exception as e:
+                logger.warning(
+                    "[VPR] enable_camera_subscription 失败，本次将依赖既有订阅: %s", e
+                )
+
+        try:
+            return self._collect_consensus_inner(
+                reason=reason,
+                eff_image_wait=eff_image_wait,
+                use_rerank=use_rerank,
+                locate_top_k=locate_top_k,
+            )
+        finally:
+            if _camera_enabled and callable(_disable_cam):
+                try:
+                    _disable_cam()
+                except Exception as e:
+                    logger.warning(
+                        "[VPR] disable_camera_subscription 失败（忽略）: %s", e
+                    )
+
+    def _collect_consensus_inner(
+        self,
+        *,
+        reason: str,
+        eff_image_wait: float,
+        use_rerank: bool,
+        locate_top_k: int,
+    ) -> Optional[Dict[str, Any]]:
+        """``collect_consensus`` 的真正循环，单独抽出来让外层 try/finally
+        负责 camera 订阅的启停（避免把 100 多行循环嵌进 try 块里看着累）。"""
         for round_idx in range(self.MAX_ROUNDS):
             logger.info(
                 "[VPR] 共识第 %d/%d 轮开始 (%s)：采集 %d 帧 / 间隔 %.1fs / "

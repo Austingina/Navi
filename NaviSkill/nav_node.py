@@ -103,19 +103,19 @@ class NavNode(Node):
                 10
             )
 
-            # 相机 CompressedImage 订阅：用于 VPR 引导/重定位。
-            # 只缓存最新一帧，无须高频处理。
+            # 相机 CompressedImage：用于 VPR 引导/重定位。按需启停订阅，
+            # VPR idle 时彻底不订阅，避免 10-30Hz 持续 bytes 拷贝吃 spin 线程 CPU。
+            # 启停由 enable_camera_subscription / disable_camera_subscription
+            # 控制，调用方（VprRelocator.collect_consensus）应配对调用并用引用
+            # 计数保证并发安全。
             self.camera_image_topic = camera_image_topic
             self._latest_image_lock = threading.Lock()
             self._latest_image_bytes: Optional[bytes] = None
             self._latest_image_stamp_ns: Optional[int] = None
             self._latest_image_event = threading.Event()
-            self.camera_image_sub = self.create_subscription(
-                CompressedImage,
-                camera_image_topic,
-                self._camera_image_callback,
-                10,
-            )
+            self.camera_image_sub = None  # 真正订阅句柄；None 表示当前未订阅
+            self._camera_sub_lock = threading.Lock()
+            self._camera_sub_refcount = 0
             # Nav2 全局路径（下发新 goal 后 planner 会先清空再发布新路径）
             self._plan_lock = threading.Lock()
             self._plan_epoch = 0
@@ -538,6 +538,61 @@ class NavNode(Node):
             self._latest_image_event.set()
         except Exception as e:
             self.get_logger().error(f"camera image callback 出错: {e}")
+
+    def enable_camera_subscription(self) -> None:
+        """启用相机图像订阅；引用计数 +1，首次启用时真正 create_subscription。
+
+        线程安全且幂等：多次 enable 只创建一次订阅，对应次数的 disable
+        归零后才真正销毁。供 VPR 调用方在 collect_consensus 入口处调用。
+        """
+        with self._camera_sub_lock:
+            self._camera_sub_refcount += 1
+            if self.camera_image_sub is None:
+                try:
+                    self.camera_image_sub = self.create_subscription(
+                        CompressedImage,
+                        self.camera_image_topic,
+                        self._camera_image_callback,
+                        10,
+                    )
+                    self.get_logger().info(
+                        f"camera 订阅已启用: {self.camera_image_topic}"
+                    )
+                except Exception as e:
+                    # 创建失败时回滚引用计数，避免后续 disable 把别人“吃掉”
+                    self._camera_sub_refcount -= 1
+                    self.camera_image_sub = None
+                    self.get_logger().error(
+                        f"启用 camera 订阅失败 ({self.camera_image_topic}): {e}"
+                    )
+                    raise
+
+    def disable_camera_subscription(self) -> None:
+        """禁用相机图像订阅；引用计数 -1，归零时真正销毁。
+
+        线程安全；多调 disable 不报错（refcount 下界为 0）。销毁后会清空
+        最新一帧缓存，避免下次 VPR 拿到陈旧图像。
+        """
+        with self._camera_sub_lock:
+            if self._camera_sub_refcount > 0:
+                self._camera_sub_refcount -= 1
+            if self._camera_sub_refcount > 0 or self.camera_image_sub is None:
+                return
+            sub = self.camera_image_sub
+            self.camera_image_sub = None
+            try:
+                self.destroy_subscription(sub)
+            except Exception as e:
+                self.get_logger().warning(
+                    f"销毁 camera 订阅失败（忽略）: {e}"
+                )
+            # 清掉陈旧帧；同时把 event 复位，让 get_latest_image_bytes 等到
+            # 下次启用后才能拿到新帧而非旧缓存。
+            with self._latest_image_lock:
+                self._latest_image_bytes = None
+                self._latest_image_stamp_ns = None
+            self._latest_image_event.clear()
+            self.get_logger().info("camera 订阅已禁用")
 
     def get_latest_image_bytes(
         self,
