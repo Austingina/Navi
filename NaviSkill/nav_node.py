@@ -168,6 +168,11 @@ class NavNode(Node):
             # 重定位带来的 jump，正好适合做这种 incremental 距离/角度判断。
             # 单元为 (px, py, yaw_rad, stamp_sec)；GIL 保证 tuple 引用读写原子。
             self._latest_odom_pose: Optional[Tuple[float, float, float, float]] = None
+            # /odom 节流：底盘通常 50-100Hz 广播，但消费方（VPR 运动门控）只关心
+            # 累计位移/转角，无需每帧都进入回调。保留 ~10Hz 已足够，丢掉的帧只是
+            # 在节省 ROS spin 线程的 CPU/GIL 占用。0.0 表示首帧必定通过。
+            self._odom_min_keep_interval_sec = 0.1
+            self._odom_last_keep_mono: float = 0.0
             self.odom_sub = self.create_subscription(
                 Odometry,
                 '/odom',
@@ -714,7 +719,16 @@ class NavNode(Node):
         用 ZYX-yaw 提取（chassis 几乎水平时数值稳定），无需 tf2 依赖。
         写入一个 tuple 即可，GIL 让外部读取拿到的是要么旧 tuple 要么完整新
         tuple，不会拿到半新半旧的字段。
+
+        节流：底盘 50-100Hz 触发回调，但 VPR 运动门控只需要 ~10Hz 的累计位移/转角
+        信息。早期 return 避免在 SingleThreadedExecutor 上挤占其他回调（特别是
+        update_robot_pose 的 TF 心跳）的 GIL 时间。
         """
+        mono = time.monotonic()
+        if mono - self._odom_last_keep_mono < self._odom_min_keep_interval_sec:
+            return
+        self._odom_last_keep_mono = mono
+
         q = msg.pose.pose.orientation
         siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
         cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
