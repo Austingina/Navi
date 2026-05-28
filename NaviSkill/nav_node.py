@@ -13,7 +13,7 @@ from action_msgs.msg import GoalStatus, GoalStatusArray  # Action状态消息
 import logging  # 日志记录库
 import threading  # 线程处理库
 from collections import deque
-from typing import Any, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 import time
 import math  # 数学库
 import os  # 文件路径处理
@@ -204,6 +204,12 @@ class NavNode(Node):
             
             # 音频文件路径
             self.audio_dir = os.path.join(os.path.dirname(__file__), 'audio')
+
+            # Service client 缓存：避免 get_current_map_path / set_elevator_mode /
+            # set_remote_parameter 每次调用都 create_client（DDS endpoint 注册
+            # 与销毁开销不可忽视，换图轮询时尤其明显）。键为 (srv_type, srv_name)。
+            self._svc_client_cache: Dict[Tuple[Any, str], Any] = {}
+            self._svc_client_cache_lock = threading.Lock()
 
             self.get_logger().info("ROS节点初始化成功")
             # call queue for scheduling calls to be executed inside the ROS executor thread
@@ -1333,6 +1339,21 @@ class NavNode(Node):
         # 导航仍在进行中
         return (NavNode.GOAL_CHECK_PENDING, None)
 
+    def _get_cached_client(self, srv_type, srv_name: str):
+        """按 ``(srv_type, srv_name)`` 复用 rclpy Client，避免每次调用都
+        ``create_client`` 引发的 DDS endpoint 注册/销毁抖动。
+
+        线程安全；同一节点生命周期内同 service 只创建一次。Node 销毁时
+        rclpy 会随节点回收所有 client，无需在此手动 destroy。
+        """
+        key = (srv_type, srv_name)
+        with self._svc_client_cache_lock:
+            cli = self._svc_client_cache.get(key)
+            if cli is None:
+                cli = self.create_client(srv_type, srv_name)
+                self._svc_client_cache[key] = cli
+        return cli
+
     def get_current_map_path(self, timeout_sec: float = 2.0) -> str:
         """
         从 /grid_map_pcl_loader_node 节点获取 map_file_path 参数
@@ -1344,12 +1365,11 @@ class NavNode(Node):
         str: 当前地图文件路径，如果获取失败返回空字符串
         """
         try:
-            # 创建参数服务客户端
-            client = self.create_client(
+            client = self._get_cached_client(
                 GetParameters,
-                '/grid_map_pcl_loader_node/get_parameters'
+                '/grid_map_pcl_loader_node/get_parameters',
             )
-            
+
             # 等待服务可用
             if not client.wait_for_service(timeout_sec=timeout_sec):
                 self.get_logger().warning('参数服务不可用: /grid_map_pcl_loader_node/get_parameters')
@@ -1452,7 +1472,7 @@ class NavNode(Node):
         :return: (success, message)
         """
         srv_name = '/elevator_mode'
-        cli = self.create_client(SetBool, srv_name)
+        cli = self._get_cached_client(SetBool, srv_name)
         if not cli.wait_for_service(timeout_sec=2.0):
             msg = f'服务 {srv_name} 不可用'
             self.get_logger().error(msg)
@@ -1497,7 +1517,7 @@ class NavNode(Node):
         :return: (success, message)
         """
         srv = f'{node_name}/set_parameters'
-        cli = self.create_client(SetParameters, srv)
+        cli = self._get_cached_client(SetParameters, srv)
         if not cli.wait_for_service(timeout_sec=2.0):
             msg = f'服务 {srv} 不可用'
             self.get_logger().error(msg)
