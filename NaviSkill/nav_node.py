@@ -1180,8 +1180,8 @@ class NavNode(Node):
         if self.pid_rotation_phase:
             # 旋转阶段：调整yaw角度
             if abs(yaw_error) < yaw_tolerance:
-                print(f"current quaternion: {self.current_pose.pose.orientation}")
-                print(f"yaw角度调整完成: {current_yaw} -> {target_yaw}, error={yaw_error}, tolerance={yaw_tolerance}")
+                self.get_logger().debug(f"current quaternion: {self.current_pose.pose.orientation}")
+                self.get_logger().warning(f"yaw角度调整完成: {current_yaw} -> {target_yaw}, error={yaw_error}, tolerance={yaw_tolerance}")
                 self.pid_rotation_phase = False
                 self.get_logger().info("yaw角度调整完成，切换到移动阶段")
                 cmd_vel.angular.z = 0.0
@@ -1197,12 +1197,12 @@ class NavNode(Node):
                     cmd_vel.angular.z = 0.5
                 elif cmd_vel.angular.z < -0.5:
                     cmd_vel.angular.z = -0.5
-                print(f"yaw_error={yaw_error},cmd={cmd_vel.angular.z},ts={timestamp.sec}.{timestamp.nanosec}")
+                self.get_logger().debug(f"yaw_error={yaw_error},cmd={cmd_vel.angular.z},ts={timestamp.sec}.{timestamp.nanosec}")
         else:
             # 移动阶段：调整xy位置
             if dist < tolerance:
                 # 位置达到要求，完成调整
-                print(f"位置调整完成: x={self.current_pose.pose.position.x}, y={self.current_pose.pose.position.y}, dist={dist}, tolerance={tolerance}")
+                self.get_logger().warning(f"位置调整完成: x={self.current_pose.pose.position.x}, y={self.current_pose.pose.position.y}, dist={dist}, tolerance={tolerance}")
                 self.pid_control_active = False
                 self.get_logger().info("位置调整完成，到达目标")
                 cmd_vel.linear.x = 0.0
@@ -1216,7 +1216,7 @@ class NavNode(Node):
                 y_local = -math.sin(current_yaw) * dx + math.cos(current_yaw) * dy
                 cmd_vel.linear.x = kp_linear * x_local
                 cmd_vel.linear.y = kp_linear * y_local
-                print(f"dx={dx},dy={dy},xlocal={x_local},ylocal={y_local},cmdx={cmd_vel.linear.x},cmdy={cmd_vel.linear.y}")
+                self.get_logger().debug(f"dx={dx},dy={dy},xlocal={x_local},ylocal={y_local},cmdx={cmd_vel.linear.x},cmdy={cmd_vel.linear.y}")
                 # 限制线性速度
                 max_vel = 0.3
                 if abs(cmd_vel.linear.x) > max_vel:
@@ -1285,7 +1285,7 @@ class NavNode(Node):
 
         # 如果已经在PID控制状态中，执行PID控制步骤
         if self.pid_control_active:
-            print("pid_control_step")
+            self.get_logger().warning("pid_control_step")
             done = self.pid_control_step(yaw_tolerance, tolerance)
             if done:
                 return (NavNode.GOAL_CHECK_REACHED, None)
