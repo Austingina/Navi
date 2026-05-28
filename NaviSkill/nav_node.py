@@ -593,24 +593,61 @@ class NavNode(Node):
             )
 
             now = self.get_clock().now()
-            stamp_tm = rclpy.time.Time.from_msg(transform.header.stamp)
-            stamp_age_sec = max(0.0, (now - stamp_tm).nanoseconds * 1e-9)
+
+            # ── 计算 TF 新鲜度 ────────────────────────────────────────
+            # 注意：lookup_transform('map','base_link') 在 tf2 内是把
+            # map→odom 与 odom→base_link 两段链路合成的；返回的
+            # header.stamp 取链路中"最旧那一段的最新时间"。
+            # FAST-LIO 通常只在重定位修正时才广播 map→odom（几秒~十几秒一帧），
+            # 而 odom→base_link 由底盘里程计 ~50-100Hz 广播；因此合成 stamp
+            # 看起来"老"，但 pose 是用 odom→base_link 最新一帧外推得到的，
+            # 位姿实际是新鲜的。
+            #
+            # 这里改用 odom→base_link 的 stamp 作为真正的新鲜度指标；
+            # 当该叶子查询失败时回退到合成 stamp，兼容直接 map→base_link
+            # 的 TF 树。
+            leaf_age_sec: Optional[float] = None
+            try:
+                leaf_tf = self.tf_buffer.lookup_transform(
+                    'odom', 'base_link',
+                    rclpy.time.Time(),
+                    timeout=rclpy.duration.Duration(seconds=0.0),
+                )
+                leaf_stamp_tm = rclpy.time.Time.from_msg(leaf_tf.header.stamp)
+                leaf_age_sec = max(0.0, (now - leaf_stamp_tm).nanoseconds * 1e-9)
+            except TransformException:
+                leaf_age_sec = None
+
+            composed_stamp_tm = rclpy.time.Time.from_msg(transform.header.stamp)
+            composed_age_sec = max(0.0, (now - composed_stamp_tm).nanoseconds * 1e-9)
+
+            # 叶子优先；不可用时回退到合成 stamp
+            stamp_age_sec = leaf_age_sec if leaf_age_sec is not None else composed_age_sec
+
             if stamp_age_sec > self._tf_stale_warn_sec:
                 mono = time.monotonic()
                 if mono - self._last_stale_tf_warn_mono >= 4.0:
                     self._last_stale_tf_warn_mono = mono
-                    self.get_logger().warning(
-                        f"map→base_link 查询成功，但 TF 时间戳已落后约 {stamp_age_sec:.2f}s（tf2 仍可能返回缓冲中的旧变换）。"
-                        "换图后若 LIO 暂停发 TF，通常不会进入「无法获取tf变换」，除非整段 TF 链断裂。"
-                    )
+                    if leaf_age_sec is not None:
+                        self.get_logger().warning(
+                            f"TF 新鲜度告警：odom→base_link 时间戳落后约 {leaf_age_sec:.2f}s "
+                            f"（map→base_link 合成 stamp 落后 {composed_age_sec:.2f}s）。"
+                            "若仅合成 stamp 老、叶子 stamp 新鲜，通常只是 map→odom 长时间未更新，"
+                            "不代表定位丢失。"
+                        )
+                    else:
+                        self.get_logger().warning(
+                            f"TF 新鲜度告警：map→base_link 合成 stamp 落后约 {composed_age_sec:.2f}s "
+                            "（无法读取 odom→base_link 单独 stamp，可能是 TF 链非 map→odom→base_link）。"
+                        )
 
-            # 落后超过失败阈值（默认 10s）：直接判为定位失败，不与 tf_fail_count 混用
-            # 不再用这帧旧 TF 覆盖 current_pose，避免上层把陈旧位姿当作有效定位
+            # 失败阈值同样用叶子 stamp：只有底盘 TF 真的停了才判为定位丢失，
+            # 避免 FAST-LIO 修正稀疏时误把"map→odom 沉默"当作定位失败。
             if stamp_age_sec > self._tf_stale_fail_sec:
                 if self.tf_ready:
                     self.tf_ready = False
                     self.get_logger().warn(
-                        f"✗ TF定位丢失：map→base_link 时间戳落后 {stamp_age_sec:.2f}s "
+                        f"✗ TF定位丢失：odom→base_link 时间戳落后 {stamp_age_sec:.2f}s "
                         f"超过失败阈值 {self._tf_stale_fail_sec:.1f}s，进入not ready状态"
                     )
                     self.play_audio("fail.mp3")
