@@ -825,7 +825,7 @@ class VprRelocator:
         vpr_bootstrap: VprBootstrap,
         ros_node: Any,
         map_manager: Any,
-        change_map_fn: Callable[[str], Dict[str, Any]],
+        change_map_fn: Callable[..., Dict[str, Any]],
     ):
         """
         :param vpr_bootstrap: 已 ``start()`` 的 VprBootstrap；本类不负责其生命周期。
@@ -834,7 +834,13 @@ class VprRelocator:
         :param map_manager: 可选，仅用于日志里打印 "当前 submap"（``get_current_submap``）。
                             传 None 时相关日志会显示 "n/a"。
         :param change_map_fn: 取到 submap_id 后用于真正切换地图的回调。期望
-                              返回形如 ``{"success": bool, "msg": str, ...}`` 的字典。
+                              签名为 ``change_map_fn(submap_id, *,
+                              init_pose_in_target=None)`` 并返回形如
+                              ``{"success": bool, "msg": str, ...}`` 的字典。
+                              ``init_pose_in_target`` 由 VPR 共识帧的位姿构造
+                              （``{position: {x,y,z}, orientation: identity}``），
+                              用于绕开 MapManager 的跨图换算，直接发布 VPR
+                              识别到的位置到 ``/pose_in_target``。
         """
         self.vpr_bootstrap = vpr_bootstrap
         self.ros_node = ros_node
@@ -988,12 +994,42 @@ class VprRelocator:
     # Multi-frame consensus
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _vpr_result_to_init_pose(
+        result: Optional[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """把一条 VPR 候选 (含 ``x/y/z``) 转成 ``init_pose_in_target`` 字典。
+
+        :return: ``{position: {x, y, z=0}, orientation: identity}`` 或 None。
+
+        注：当前 VPR 数据库只存 ``[x, y, z, ts_ns]``，没有朝向，因此朝向退化
+        为单位四元数；这与 ``publish_pose_in_target`` 的接口契约（同时需要
+        position + orientation）一致，由下游决定是否要再做朝向修正。
+        """
+        if not result:
+            return None
+        x = result.get("x")
+        y = result.get("y")
+        if x is None or y is None:
+            return None
+        try:
+            return {
+                "position": {
+                    "x": float(x),
+                    "y": float(y),
+                    "z": 0.0,
+                },
+                "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
+            }
+        except (TypeError, ValueError):
+            return None
+
     def collect_consensus(
         self,
         reason: str,
         *,
         image_wait_sec: Optional[float] = None,
-    ) -> Optional[str]:
+    ) -> Optional[Dict[str, Any]]:
         """多帧共识识别 submap_id；返回投票一致的结果或 None。
 
         - 1s 间隔取 ``CONSENSUS_FRAMES`` 帧，每帧（GPU 模式下）开启几何重排
@@ -1006,6 +1042,11 @@ class VprRelocator:
         :param image_wait_sec: 每帧等待相机出图的超时。None 时使用
                                 ``IMAGE_WAIT_SEC``；启动场景建议传
                                 ``STARTUP_IMAGE_WAIT_SEC``。
+        :return: ``{submap_id: str, init_pose_in_target: dict | None,
+                    consensus_kind: 'strict'|'soft', frames_used: int}``
+                 共识失败时返回 None。``init_pose_in_target`` 取自共识中
+                 "最后一帧" 在该 submap 上的 VPR 候选位姿（位置；朝向用
+                 单位四元数），可直接交给 ``server._change_map`` 发布。
         """
         if not self.available:
             return None
@@ -1099,16 +1140,19 @@ class VprRelocator:
 
             # 严格共识失败时，尝试软共识降级方案（仅在本轮完整采到 N 帧才有意义）。
             soft_consensus_submap: Optional[str] = None
+            soft_consensus_chosen: List[Dict[str, Any]] = []
             if (
                 not consensus_ok
                 and not round_aborted
                 and len(votes) == self.CONSENSUS_FRAMES
             ):
-                soft_consensus_submap = self._try_soft_consensus(
+                soft = self._try_soft_consensus(
                     votes=votes,
                     top_k_per_frame=top_k_per_frame,
                     odom_poses=odom_poses,
                 )
+                if soft is not None:
+                    soft_consensus_submap, soft_consensus_chosen = soft
 
             self._save_debug_image(
                 round_idx=round_idx,
@@ -1122,21 +1166,40 @@ class VprRelocator:
             )
 
             if consensus_ok:
-                chosen = votes[0]
+                chosen_submap = votes[0]
+                # 用最后一帧的 VPR 位姿作为 init_pose_in_target（最贴近"现在"的观测）
+                last_result = collage_items[-1][1] if collage_items else None
+                init_pose = self._vpr_result_to_init_pose(last_result)
                 logger.info(
-                    "[VPR] 共识达成: submap='%s' (votes=%s, inliers=%s)",
-                    chosen, votes, inliers_log,
+                    "[VPR] 共识达成: submap='%s' (votes=%s, inliers=%s, "
+                    "init_pose_in_target=%s)",
+                    chosen_submap, votes, inliers_log, init_pose,
                 )
-                return chosen
+                return {
+                    "submap_id": chosen_submap,
+                    "init_pose_in_target": init_pose,
+                    "consensus_kind": "strict",
+                    "frames_used": len(votes),
+                }
 
             if soft_consensus_submap is not None:
+                # 软共识下每帧的"被选候选"已在 _try_soft_consensus 里挑好；
+                # 同样取最后一帧那份候选的 (x,y) 作为 init_pose_in_target。
+                last_picked = soft_consensus_chosen[-1] if soft_consensus_chosen else None
+                init_pose = self._vpr_result_to_init_pose(last_picked)
                 logger.info(
                     "[VPR] 软共识达成: submap='%s' (votes=%s, inliers=%s)，"
-                    "通过 top-%d 回捞 + odom/VPR 轨迹一致性校验",
+                    "通过 top-%d 回捞 + odom/VPR 轨迹一致性校验, "
+                    "init_pose_in_target=%s",
                     soft_consensus_submap, votes, inliers_log,
-                    self.SOFT_CONSENSUS_TOP_K,
+                    self.SOFT_CONSENSUS_TOP_K, init_pose,
                 )
-                return soft_consensus_submap
+                return {
+                    "submap_id": soft_consensus_submap,
+                    "init_pose_in_target": init_pose,
+                    "consensus_kind": "soft",
+                    "frames_used": len(votes),
+                }
 
             if round_aborted:
                 continue
@@ -1212,7 +1275,7 @@ class VprRelocator:
         votes: List[Optional[str]],
         top_k_per_frame: List[List[Dict[str, Any]]],
         odom_poses: List[Optional[Tuple[float, float, float]]],
-    ) -> Optional[str]:
+    ) -> Optional[Tuple[str, List[Dict[str, Any]]]]:
         """严格共识失败后的降级方案。
 
         条件（与用户需求一致）：
@@ -1223,7 +1286,10 @@ class VprRelocator:
            硬判 Viterbi-HMM：状态是 submap 坐标系下的真实位姿，转移由 odom
            增量约束，观测是每帧 top-K 中匹配到 ``submap X`` 的候选位姿。
 
-        三个条件都满足时返回 ``submap_id``，否则返回 ``None``。
+        三个条件都满足时返回 ``(submap_id, chosen_per_frame)``，其中
+        ``chosen_per_frame`` 是每帧在 ``submap X`` 上的最靠前候选（含
+        ``x/y/z``）；用于上层把"最后一帧对应位姿"作为 init_pose_in_target。
+        否则返回 ``None``。
         """
         if len(votes) != len(top_k_per_frame) or len(votes) != len(odom_poses):
             logger.debug(
@@ -1286,7 +1352,7 @@ class VprRelocator:
         )
         if not self._trajectory_consistent(vpr_xy, odom_xy):
             return None
-        return submap_id
+        return submap_id, chosen
 
     def _trajectory_consistent(
         self,
@@ -1400,18 +1466,23 @@ class VprRelocator:
             "启动时未指定 submap：通过 VPR 多帧共识 (%d 帧 × 间隔 %.1fs × 最多 %d 轮) 自动识别 ...",
             self.CONSENSUS_FRAMES, self.FRAME_INTERVAL_SEC, self.MAX_ROUNDS,
         )
-        submap_id = self.collect_consensus(
+        consensus = self.collect_consensus(
             "startup bootstrap",
             image_wait_sec=self.STARTUP_IMAGE_WAIT_SEC,
         )
-        if submap_id is None:
+        if consensus is None:
             logger.warning(
                 "VPR 引导未能达成共识，将回退到 MapManager 当前 submap: %s",
                 self._current_submap_str(),
             )
             return False
-        logger.info("VPR 引导共识 submap='%s'，开始换图", submap_id)
-        cm = self.change_map_fn(submap_id)
+        submap_id = consensus["submap_id"]
+        init_pose_in_target = consensus.get("init_pose_in_target")
+        logger.info(
+            "VPR 引导共识 submap='%s'（%s 共识），开始换图，init_pose_in_target=%s",
+            submap_id, consensus.get("consensus_kind"), init_pose_in_target,
+        )
+        cm = self.change_map_fn(submap_id, init_pose_in_target=init_pose_in_target)
         if not cm.get("success"):
             logger.error("VPR 引导 change_map 失败: %s", cm.get("msg"))
             return False
@@ -1423,14 +1494,20 @@ class VprRelocator:
             logger.warning("VprRelocator: VPR 不可用，跳过重定位 (%s)", reason)
             return False
         logger.warning("[VPR] 触发重定位 (%s) ...", reason)
-        target_submap = self.collect_consensus(reason)
-        if target_submap is None:
+        consensus = self.collect_consensus(reason)
+        if consensus is None:
             return False
+        target_submap = consensus["submap_id"]
+        init_pose_in_target = consensus.get("init_pose_in_target")
         logger.info(
-            "[VPR] 共识 submap='%s' (当前='%s')，开始换图",
+            "[VPR] 共识 submap='%s' (当前='%s', %s 共识)，开始换图，"
+            "init_pose_in_target=%s",
             target_submap, self._current_submap_str(),
+            consensus.get("consensus_kind"), init_pose_in_target,
         )
-        cm = self.change_map_fn(target_submap)
+        cm = self.change_map_fn(
+            target_submap, init_pose_in_target=init_pose_in_target,
+        )
         if not cm.get("success"):
             logger.error("[VPR] change_map 失败: %s", cm.get("msg"))
             return False

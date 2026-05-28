@@ -149,6 +149,7 @@ class NavigationToolManager:
         *,
         timeout: float = 60.0,
         poll_interval: float = 0.5,
+        init_pose_in_target: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """统一的换图流程，被 ``_sync_map_state`` / VPR 引导 / VPR 重定位 /
         WebSocket RPC ``change_map`` 全部复用。
@@ -158,12 +159,21 @@ class NavigationToolManager:
         1. 校验 ``target_submap`` 是否在 MapManager 中存在
         2. 取 ROS 端当前地图（``get_current_map_path``）；若已是 ``target_submap``
            则直接返回成功，不再下发 change_map 请求
-        3. 若已定位（``ros_node.current_pose`` 非空且能确定 ``from_map_id``），
-           计算目标 submap 中的初始位姿；未定位则跳过
+        3. 解析 ``init_pose_in_target``：
+           - 若调用方已传入（VPR 共识场景：直接把识别到的位置作为目标
+             submap 中的初始位姿），则跳过跨图换算，直接使用；
+           - 否则若已定位（``ros_node.current_pose`` 非空且能确定
+             ``from_map_id``），用 ``map_manager.get_init_pose_after_changemap``
+             计算；未定位则跳过位姿发布。
         4. 通过 ``ros_node.change_map`` 发送切换请求
         5. 轮询 ``get_current_map_path`` 直到目标地图加载完成或超时
         6. 更新 MapManager.current_submap
-        7. 若步骤 3 算出 ``init_pose_in_target``，发布到 ``/pose_in_target``
+        7. 若步骤 3 解析出 ``init_pose_in_target``，发布到 ``/pose_in_target``
+
+        :param init_pose_in_target: 可选。形如 ``{position: {x,y,z},
+            orientation: {x,y,z,w}}``。VPR 重定位/引导路径会传入：用 VPR
+            识别到的位置 + 单位四元数（朝向无意义）。其他调用方传 None
+            走原有的跨图位姿换算路径。
 
         返回的字典与 WebSocket RPC ``change_map`` 兼容：
         ``{success, map_id, map_path, from_map_id, msg,
@@ -199,11 +209,10 @@ class NavigationToolManager:
                 "msg": f"当前已经是地图 {target_submap}，无需切换",
             }
 
-        # 3. 当前已定位时，计算目标 submap 中的初始位姿；未定位则跳过
+        # 3. 解析 init_pose_in_target
         current_pose: Optional[Dict[str, Any]] = None
-        init_pose_in_target: Optional[Dict[str, Any]] = None
         odom = self.ros_node.current_pose
-        if odom is not None and from_map_id:
+        if odom is not None:
             current_pose = {
                 "position": {
                     "x": odom.pose.position.x,
@@ -217,6 +226,29 @@ class NavigationToolManager:
                     "w": odom.pose.orientation.w,
                 },
             }
+
+        if init_pose_in_target is not None:
+            # 3a. VPR 等调用方直接给了目标 submap 中的位姿 —— 跳过跨图换算，
+            #     仅做一次基本结构兜底（强制 z=0）。
+            logging.info(
+                "_change_map: 使用调用方提供的 init_pose_in_target，跳过跨图换算 "
+                "(target=%s, pose=%s)",
+                target_submap, init_pose_in_target,
+            )
+            if isinstance(init_pose_in_target, dict):
+                pos = init_pose_in_target.get("position")
+                if not isinstance(pos, dict):
+                    init_pose_in_target["position"] = {"x": 0.0, "y": 0.0, "z": 0.0}
+                else:
+                    try:
+                        init_pose_in_target["position"]["z"] = 0
+                    except Exception:
+                        init_pose_in_target["position"] = {
+                            **init_pose_in_target.get("position", {}),
+                            "z": 0,
+                        }
+        elif current_pose is not None and from_map_id:
+            # 3b. 当前已定位时，按 from_map_id → target_submap 做跨图换算
             try:
                 init_pose_in_target = self.map_manager.get_init_pose_after_changemap(
                     current_pose, from_map_id, target_submap
@@ -242,7 +274,8 @@ class NavigationToolManager:
                 init_pose_in_target = None
         else:
             logging.info(
-                "_change_map: 未定位 (current_pose=%s, from_map_id=%s)，跳过位姿换算",
+                "_change_map: 未定位且未提供 init_pose_in_target "
+                "(current_pose=%s, from_map_id=%s)，跳过位姿换算",
                 "set" if odom is not None else "None", from_map_id,
             )
 
