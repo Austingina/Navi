@@ -1291,7 +1291,7 @@ class NavNode(Node):
 
         # 如果已经在PID控制状态中，执行PID控制步骤
         if self.pid_control_active:
-            self.get_logger().warning("pid_control_step")
+            # self.get_logger().info("pid_control_step")
             done = self.pid_control_step(yaw_tolerance, tolerance)
             if done:
                 return (NavNode.GOAL_CHECK_REACHED, None)

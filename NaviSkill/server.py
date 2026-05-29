@@ -329,12 +329,33 @@ class NavigationToolManager:
         else:
             logging.warning(f"init_pose_in_target为空，未发布初始位姿到 /pose_in_target")
 
+        # 8. 等待定位就绪（is_map_localized 为 True）
+        localize_timeout = timeout  # 复用同一超时参数
+        localize_start = time.time()
+        localized = False
+        while time.time() - localize_start < localize_timeout:
+            if self.ros_node.is_map_localized():
+                localized = True
+                logging.warning(
+                    "_change_map: 定位已就绪 (elapsed=%.1fs)",
+                    time.time() - localize_start,
+                )
+                break
+            time.sleep(poll_interval)
+
+        if not localized:
+            logging.warning(
+                "_change_map: 等待定位超时(%.0fs)，地图已切换但定位尚未就绪",
+                localize_timeout,
+            )
+
         result: Dict[str, Any] = {
             "success": True,
             "map_id": target_submap,
             "map_path": target_map_path,
             "from_map_id": from_map_id,
-            "msg": f"已切换到地图 {target_submap}",
+            "localized": localized,
+            "msg": f"已切换到地图 {target_submap}" + ("" if localized else "（定位超时，尚未就绪）"),
         }
         if current_pose is not None:
             result["pose_in_source"] = current_pose
