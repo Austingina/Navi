@@ -1116,6 +1116,17 @@ bool global_localize(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr
     // }
 
     // ndt.setInputSource(ds_lidar_frame);
+    // GICP computeCovariances requires source pts >= k_correspondences (default 20);
+    // too few points causes KNN out-of-bounds access → SIGSEGV.
+    {
+        const int k_corr = static_cast<int>(gicp.getCorrespondenceRandomness());
+        const int n_src  = static_cast<int>(ds_lidar_frame->points.size());
+        if (n_src < k_corr) {
+            std::cout << "[GICP] source cloud too small (" << n_src
+                      << " pts < k_correspondences=" << k_corr << "), skip" << std::endl;
+            return false;
+        }
+    }
     gicp.setInputSource(ds_lidar_frame);
     PointCloudXYZI::Ptr ndt_aligned(new PointCloudXYZI);
     // ndt.align(*ndt_aligned, bbs3d_ptr->get_global_pose().cast<float>());
@@ -1656,6 +1667,11 @@ private:
             }
             RCLCPP_INFO(this->get_logger(), "Elevator mode auto-cleared by change_map");
         }
+
+        // 换图后重置 hint，避免用旧地图坐标裁剪新地图；
+        // /pose_in_target 回调会在 server.py 发布后紧接着把 hint 重新设上。
+        use_relocalize_hint = false;
+        relocalize_hint_pos = Eigen::Vector3f(0.0f, 0.0f, 0.0f);
 
         // Trigger relocalization
         flg_first_scan = true;
