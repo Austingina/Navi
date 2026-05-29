@@ -111,19 +111,27 @@ class NavNode(Node):
                 callback_group=self._cb_group_bulk,
             )
 
-            # 相机 CompressedImage：用于 VPR 引导/重定位。按需启停订阅，
-            # VPR idle 时彻底不订阅，避免 10-30Hz 持续 bytes 拷贝吃 spin 线程 CPU。
-            # 启停由 enable_camera_subscription / disable_camera_subscription
-            # 控制，调用方（VprRelocator.collect_consensus）应配对调用并用引用
-            # 计数保证并发安全。
+            # 相机 CompressedImage：用于 VPR 引导/重定位。
+            # 订阅句柄在 __init__ 时一次性创建，永不销毁，彻底消除
+            # create/destroy_subscription 带来的 Destroyable 竞争。
+            # _camera_enabled 标志控制是否真正处理帧（False 时回调立即 return）。
+            # enable/disable_camera_subscription 通过引用计数翻转该标志。
             self.camera_image_topic = camera_image_topic
             self._latest_image_lock = threading.Lock()
             self._latest_image_bytes: Optional[bytes] = None
             self._latest_image_stamp_ns: Optional[int] = None
             self._latest_image_event = threading.Event()
-            self.camera_image_sub = None  # 真正订阅句柄；None 表示当前未订阅
+            self._camera_enabled: bool = False  # 帧处理门控标志
             self._camera_sub_lock = threading.Lock()
             self._camera_sub_refcount = 0
+            # 订阅句柄一次性创建，永不销毁
+            self.camera_image_sub = self.create_subscription(
+                CompressedImage,
+                self.camera_image_topic,
+                self._camera_image_callback,
+                10,
+                callback_group=self._cb_group_bulk,
+            )
             # Nav2 全局路径（下发新 goal 后 planner 会先清空再发布新路径）
             self._plan_lock = threading.Lock()
             self._plan_epoch = 0
@@ -547,6 +555,8 @@ class NavNode(Node):
 
     def _camera_image_callback(self, msg: CompressedImage) -> None:
         """缓存最新一帧相机 CompressedImage（仅保留 bytes 与时间戳）。"""
+        if not self._camera_enabled:
+            return  # VPR idle 时丢帧，无任何 Destroyable 操作
         try:
             data = bytes(msg.data)
             stamp_ns = int(msg.header.stamp.sec) * 1_000_000_000 + int(msg.header.stamp.nanosec)
@@ -558,86 +568,38 @@ class NavNode(Node):
             self.get_logger().error(f"camera image callback 出错: {e}")
 
     def enable_camera_subscription(self) -> None:
-        """启用相机图像订阅；引用计数 +1，首次启用时真正 create_subscription。
+        """启用相机帧处理；引用计数 +1，归零前保持启用。
 
-        线程安全且幂等：多次 enable 只创建一次订阅，对应次数的 disable
-        归零后才真正销毁。供 VPR 调用方在 collect_consensus 入口处调用。
-
-        create_subscription 通过 schedule_sync_call 调度到 ROS executor 线程中
-        执行，避免从外部线程直接操作 Destroyable 引发竞争。
+        线程安全且幂等。订阅句柄在 __init__ 时已创建，此处只翻转
+        _camera_enabled 标志，彻底避免 create/destroy_subscription 的
+        Destroyable 竞争。
         """
         with self._camera_sub_lock:
             self._camera_sub_refcount += 1
-            if self.camera_image_sub is not None:
-                return  # 已订阅，无需创建
-
-        # 在 executor 线程内完成 create_subscription，避免与 spin 竞争
-        def _do_create():
-            with self._camera_sub_lock:
-                if self.camera_image_sub is not None:
-                    return  # 并发 enable 已抢先创建
-                self.camera_image_sub = self.create_subscription(
-                    CompressedImage,
-                    self.camera_image_topic,
-                    self._camera_image_callback,
-                    10,
-                    callback_group=self._cb_group_bulk,
-                )
+            if self._camera_sub_refcount == 1:
+                self._camera_enabled = True
                 self.get_logger().info(
                     f"camera 订阅已启用: {self.camera_image_topic}"
                 )
-
-        try:
-            self.schedule_sync_call(_do_create)
-        except Exception as e:
-            # 创建失败时回滚引用计数，避免后续 disable 把别人"吃掉"
-            with self._camera_sub_lock:
-                self._camera_sub_refcount -= 1
-                self.camera_image_sub = None
-            self.get_logger().error(
-                f"启用 camera 订阅失败 ({self.camera_image_topic}): {e}"
-            )
-            raise
     def disable_camera_subscription(self) -> None:
-        """禁用相机图像订阅；引用计数 -1，归零时真正销毁。
+        """禁用相机帧处理；引用计数 -1，归零时停止处理帧并清空缓存。
 
-        线程安全；多调 disable 不报错（refcount 下界为 0）。销毁后会清空
-        最新一帧缓存，避免下次 VPR 拿到陈旧图像。
-
-        destroy_subscription 通过 schedule_sync_call 调度到 ROS executor 线程中
-        执行，避免从外部线程（如 VPR 协程）直接调用触发
-        "cannot use Destroyable because destruction was requested" 竞争。
+        线程安全；多调 disable 不报错（refcount 下界为 0）。
+        只翻转 _camera_enabled 标志，不做任何 Destroyable 操作。
         """
-        sub_to_destroy = None
         with self._camera_sub_lock:
             if self._camera_sub_refcount > 0:
                 self._camera_sub_refcount -= 1
-            if self._camera_sub_refcount > 0 or self.camera_image_sub is None:
+            if self._camera_sub_refcount > 0:
                 return
-            sub_to_destroy = self.camera_image_sub
-            self.camera_image_sub = None
-
-        # 清掉陈旧帧；这些是纯 Python 状态，无需在 executor 线程中操作
-        with self._latest_image_lock:
-            self._latest_image_bytes = None
-            self._latest_image_stamp_ns = None
-        self._latest_image_event.clear()
-
-        # destroy_subscription 必须在 executor 线程内执行
-        def _do_destroy():
-            try:
-                self.destroy_subscription(sub_to_destroy)
-            except Exception as e:
-                self.get_logger().warning(
-                    f"销毁 camera 订阅失败（忽略）: {e}"
-                )
-            self.get_logger().info("camera 订阅已禁用")
-
-        try:
-            self.schedule_sync_call(_do_destroy)
-        except Exception as e:
-            self.get_logger().warning(f"调度销毁 camera 订阅失败（忽略）: {e}")
-
+            if self._camera_enabled:
+                self._camera_enabled = False
+                # 清掉陈旧帧；让 get_latest_image_bytes 等到下次启用后再取新帧
+                with self._latest_image_lock:
+                    self._latest_image_bytes = None
+                    self._latest_image_stamp_ns = None
+                self._latest_image_event.clear()
+                self.get_logger().info("camera 订阅已禁用")
     def get_latest_image_bytes(
         self,
         timeout_sec: float = 5.0,
