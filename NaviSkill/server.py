@@ -24,7 +24,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import uvicorn
 # 导入ROS相关的库
 import rclpy  # ROS2 Python客户端库
-from rclpy.executors import SingleThreadedExecutor  # 单线程执行器
+from rclpy.executors import MultiThreadedExecutor  # 多线程执行器（配合 NavNode 回调组并行调度）
 from geometry_msgs.msg import PoseStamped  # 位姿消息类型
 import argparse  # 添加在文件顶部
 # 加载地图配置文件的函数
@@ -92,8 +92,8 @@ class NavigationToolManager:
                 self.ros_node = NavNode(camera_image_topic=camera_image_topic)
             else:
                 self.ros_node = NavNode()
-            # 创建单线程执行器
-            self.executor = SingleThreadedExecutor()
+            # 创建多线程执行器：3 个线程分别服务 TF 心跳 / 重量级消息 / call-queue 三个回调组
+            self.executor = MultiThreadedExecutor(num_threads=3)
             # 将节点添加到执行器
             self.executor.add_node(self.ros_node)
             

@@ -4,6 +4,7 @@ from rclpy.node import Node  # ROS节点基类
 from rcl_interfaces.srv import GetParameters, SetParameters  # 参数服务
 from rcl_interfaces.msg import Parameter as ParameterMsg, ParameterValue, ParameterType
 from rclpy.executors import SingleThreadedExecutor  # 单线程执行器
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup  # 回调组（MultiThreadedExecutor 并行调度）
 from geometry_msgs.msg import PoseStamped, Twist, TwistStamped  # 位姿消息类型和速度控制消息类型
 from nav_msgs.msg import OccupancyGrid, Odometry, Path  # 占据网格、里程计、全局路径
 from sensor_msgs.msg import CompressedImage  # 压缩图像（用于 VPR 引导）
@@ -62,6 +63,12 @@ class NavNode(Node):
         # 调用父类构造函数，设置节点名称
         super().__init__('nav_node')
 
+        # ── 回调组：与 MultiThreadedExecutor(num_threads=3) 配合使用，
+        # 使 TF 心跳 / 重量级消息 / call-queue 三组并行执行，互不阻塞。
+        self._cb_group_timer = MutuallyExclusiveCallbackGroup()  # update_robot_pose 定时器
+        self._cb_group_bulk  = MutuallyExclusiveCallbackGroup()  # map / camera / lidar / odom 等
+        self._cb_group_queue = MutuallyExclusiveCallbackGroup()  # call-queue 定时器
+
         # 初始化执行器和线程属性
         self.executor = None
         self.ros_thread = None
@@ -84,7 +91,7 @@ class NavNode(Node):
             self.tf_buffer = tf2_ros.Buffer()
             self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
             # 创建定时器定期获取tf变换
-            self.tf_timer = self.create_timer(0.1, self.update_robot_pose)  # 10Hz更新频率
+            self.tf_timer = self.create_timer(0.1, self.update_robot_pose, callback_group=self._cb_group_timer)  # 10Hz更新频率
 
             # 创建速度控制发布者，发布到/cmd_vel_nav话题
             self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
@@ -100,7 +107,8 @@ class NavNode(Node):
                 OccupancyGrid,
                 '/map',
                 self.map_callback,
-                10
+                10,
+                callback_group=self._cb_group_bulk,
             )
 
             # 相机 CompressedImage：用于 VPR 引导/重定位。按需启停订阅，
@@ -124,7 +132,8 @@ class NavNode(Node):
                 Path,
                 '/plan',
                 self._nav_plan_callback,
-                10
+                10,
+                callback_group=self._cb_group_bulk,
             )
             # 存储当前机器人位姿
             self.current_pose = None
@@ -158,7 +167,8 @@ class NavNode(Node):
                 TwistStamped,
                 '/motion_control/chassis_speed',
                 self.chassis_speed_callback,
-                10
+                10,
+                callback_group=self._cb_group_bulk,
             )
 
             # /odom 订阅：用于"运动门控"——VPR 共识采集时，相邻两帧之间要求
@@ -177,7 +187,8 @@ class NavNode(Node):
                 Odometry,
                 '/odom',
                 self._odom_callback,
-                10
+                10,
+                callback_group=self._cb_group_bulk,
             )
             # 卡住检测相关变量
             self.stuck_check_threshold = 0.1  # 速度阈值，低于此值认为没有移动
@@ -199,7 +210,8 @@ class NavNode(Node):
                 Bool,
                 '/elevator_moving',
                 self._elevator_moving_callback,
-                10
+                10,
+                callback_group=self._cb_group_bulk,
             )
             
             # 音频文件路径
@@ -216,7 +228,7 @@ class NavNode(Node):
             self._call_queue = deque()
             self._call_queue_lock = threading.Lock()
             # timer running in ROS thread will flush the queue
-            self._queue_timer = self.create_timer(0.02, self._process_call_queue)
+            self._queue_timer = self.create_timer(0.02, self._process_call_queue, callback_group=self._cb_group_queue)
 
             # ── 可视化相关的按需订阅（仅在 server.py -v 启动时由 visualization.py 触发）
             # 关键：回调里只缓存 raw msg + 元数据（O(1)），不在 rclpy 线程里做
@@ -287,7 +299,7 @@ class NavNode(Node):
                 # 仅缓存 raw msg，不在此处做 numpy 化（避免占用 rclpy 线程 GIL）
                 _store(msg, "pc2")
 
-            self._lidar_sub = self.create_subscription(PointCloud2, topic, _cb, 5)
+            self._lidar_sub = self.create_subscription(PointCloud2, topic, _cb, 5, callback_group=self._cb_group_bulk)
             self._lidar_topic = topic
             self.get_logger().info(f"viz: 已订阅 {topic} 作为 PointCloud2")
             return True
@@ -313,7 +325,7 @@ class NavNode(Node):
             def _cb(msg):
                 _store(msg, "livox_custom")
 
-            self._lidar_sub = self.create_subscription(CustomMsg, topic, _cb, 5)
+            self._lidar_sub = self.create_subscription(CustomMsg, topic, _cb, 5, callback_group=self._cb_group_bulk)
             self._lidar_topic = topic
             self.get_logger().info(f"viz: 已订阅 {topic} 作为 livox CustomMsg")
             return True
@@ -569,6 +581,7 @@ class NavNode(Node):
                     self.camera_image_topic,
                     self._camera_image_callback,
                     10,
+                    callback_group=self._cb_group_bulk,
                 )
                 self.get_logger().info(
                     f"camera 订阅已启用: {self.camera_image_topic}"
