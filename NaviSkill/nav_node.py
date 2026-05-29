@@ -641,6 +641,14 @@ class NavNode(Node):
         self.tf_ready = False
         self.tf_fail_count = 0
         self.current_pose = None
+        # 记录本次重定位请求的 ROS 时刻（纳秒）。
+        # update_robot_pose 只有在拿到时间戳 >= 该值的 TF 帧后，
+        # 才允许把 tf_ready 从 False 恢复为 True，防止 tf2 buffer
+        # 里换图前的旧缓存帧把 tf_ready 立即拉回 True。
+        try:
+            self._min_tf_stamp_for_ready_ns: int = self.get_clock().now().nanoseconds
+        except Exception:
+            self._min_tf_stamp_for_ready_ns = 0
         self.get_logger().info(
             f"{reason}：已清除位姿缓存并将定位判为未就绪，待 map→base_link 再次稳定。"
         )
@@ -743,6 +751,20 @@ class NavNode(Node):
             
             # 检测状态变化：从 not ready 变为 ready
             if not self.tf_ready:
+                # 换图后 tf2 buffer 里可能残留旧地图的缓存帧，
+                # 用时间戳门控：只接受产生于重定位请求之后的新帧。
+                min_ns: int = getattr(self, '_min_tf_stamp_for_ready_ns', 0)
+                if min_ns > 0:
+                    tf_stamp_ns = (
+                        leaf_stamp_tm.nanoseconds
+                        if leaf_age_sec is not None
+                        else composed_stamp_tm.nanoseconds
+                    )
+                    if tf_stamp_ns < min_ns:
+                        # 这帧产生于重定位请求之前，属于旧地图残留，跳过
+                        return
+                    # 帧足够新，清除门控
+                    self._min_tf_stamp_for_ready_ns = 0
                 self.tf_ready = True
                 self.get_logger().info("✓ TF定位成功，进入ready状态")
                 self.play_audio("success.mp3")
