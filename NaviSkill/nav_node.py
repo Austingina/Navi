@@ -1423,7 +1423,8 @@ class NavNode(Node):
             msg.data = map_file_path
             self.change_map_pub.publish(msg)
             self.get_logger().info(f'已发送地图切换请求: {map_file_path}')
-            self._on_relocalization_request("已发送 change_map")
+            # 此时地图尚未切换，FAST-LIO 仍在用旧地图正常输出 TF，不重置定位标志；
+            # 定位标志的重置由 publish_pose_in_target 延迟 2s 触发。
             return True
         except Exception as e:
             self.get_logger().error(f'发送地图切换请求失败: {e}')
@@ -1457,7 +1458,18 @@ class NavNode(Node):
             
             self.pose_in_target_pub.publish(msg)
             self.get_logger().info(f'已发布目标地图初始位姿: x={pos.get("x")}, y={pos.get("y")}')
-            self._on_relocalization_request("已发布 pose_in_target")
+            # 延迟 2s 再重置定位标志：此刻 FAST-LIO 刚收到 pose_in_target，
+            # 还需要几秒完成重定位；立即置 False 会被 update_robot_pose 用旧 TF
+            # 立即拉回 True，导致 server.py 的等待定位逻辑误判已就绪。
+            prev = getattr(self, '_localization_reset_timer', None)
+            if prev is not None:
+                prev.cancel()
+            def _do_reset():
+                self._on_relocalization_request("已发布 pose_in_target（2s 后重置定位标志）")
+                self._localization_reset_timer = None
+            self._localization_reset_timer = threading.Timer(2.0, _do_reset)
+            self._localization_reset_timer.daemon = True
+            self._localization_reset_timer.start()
             return True
         except Exception as e:
             self.get_logger().error(f'发布目标地图初始位姿失败: {e}')
