@@ -550,55 +550,80 @@ class NavNode(Node):
 
         线程安全且幂等：多次 enable 只创建一次订阅，对应次数的 disable
         归零后才真正销毁。供 VPR 调用方在 collect_consensus 入口处调用。
+
+        create_subscription 通过 schedule_sync_call 调度到 ROS executor 线程中
+        执行，避免从外部线程直接操作 Destroyable 引发竞争。
         """
         with self._camera_sub_lock:
             self._camera_sub_refcount += 1
-            if self.camera_image_sub is None:
-                try:
-                    self.camera_image_sub = self.create_subscription(
-                        CompressedImage,
-                        self.camera_image_topic,
-                        self._camera_image_callback,
-                        10,
-                    )
-                    self.get_logger().info(
-                        f"camera 订阅已启用: {self.camera_image_topic}"
-                    )
-                except Exception as e:
-                    # 创建失败时回滚引用计数，避免后续 disable 把别人“吃掉”
-                    self._camera_sub_refcount -= 1
-                    self.camera_image_sub = None
-                    self.get_logger().error(
-                        f"启用 camera 订阅失败 ({self.camera_image_topic}): {e}"
-                    )
-                    raise
+            if self.camera_image_sub is not None:
+                return  # 已订阅，无需创建
 
+        # 在 executor 线程内完成 create_subscription，避免与 spin 竞争
+        def _do_create():
+            with self._camera_sub_lock:
+                if self.camera_image_sub is not None:
+                    return  # 并发 enable 已抢先创建
+                self.camera_image_sub = self.create_subscription(
+                    CompressedImage,
+                    self.camera_image_topic,
+                    self._camera_image_callback,
+                    10,
+                )
+                self.get_logger().info(
+                    f"camera 订阅已启用: {self.camera_image_topic}"
+                )
+
+        try:
+            self.schedule_sync_call(_do_create)
+        except Exception as e:
+            # 创建失败时回滚引用计数，避免后续 disable 把别人"吃掉"
+            with self._camera_sub_lock:
+                self._camera_sub_refcount -= 1
+                self.camera_image_sub = None
+            self.get_logger().error(
+                f"启用 camera 订阅失败 ({self.camera_image_topic}): {e}"
+            )
+            raise
     def disable_camera_subscription(self) -> None:
         """禁用相机图像订阅；引用计数 -1，归零时真正销毁。
 
         线程安全；多调 disable 不报错（refcount 下界为 0）。销毁后会清空
         最新一帧缓存，避免下次 VPR 拿到陈旧图像。
+
+        destroy_subscription 通过 schedule_sync_call 调度到 ROS executor 线程中
+        执行，避免从外部线程（如 VPR 协程）直接调用触发
+        "cannot use Destroyable because destruction was requested" 竞争。
         """
+        sub_to_destroy = None
         with self._camera_sub_lock:
             if self._camera_sub_refcount > 0:
                 self._camera_sub_refcount -= 1
             if self._camera_sub_refcount > 0 or self.camera_image_sub is None:
                 return
-            sub = self.camera_image_sub
+            sub_to_destroy = self.camera_image_sub
             self.camera_image_sub = None
+
+        # 清掉陈旧帧；这些是纯 Python 状态，无需在 executor 线程中操作
+        with self._latest_image_lock:
+            self._latest_image_bytes = None
+            self._latest_image_stamp_ns = None
+        self._latest_image_event.clear()
+
+        # destroy_subscription 必须在 executor 线程内执行
+        def _do_destroy():
             try:
-                self.destroy_subscription(sub)
+                self.destroy_subscription(sub_to_destroy)
             except Exception as e:
                 self.get_logger().warning(
                     f"销毁 camera 订阅失败（忽略）: {e}"
                 )
-            # 清掉陈旧帧；同时把 event 复位，让 get_latest_image_bytes 等到
-            # 下次启用后才能拿到新帧而非旧缓存。
-            with self._latest_image_lock:
-                self._latest_image_bytes = None
-                self._latest_image_stamp_ns = None
-            self._latest_image_event.clear()
             self.get_logger().info("camera 订阅已禁用")
+
+        try:
+            self.schedule_sync_call(_do_destroy)
+        except Exception as e:
+            self.get_logger().warning(f"调度销毁 camera 订阅失败（忽略）: {e}")
 
     def get_latest_image_bytes(
         self,
