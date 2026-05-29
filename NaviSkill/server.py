@@ -333,6 +333,8 @@ class NavigationToolManager:
         localize_timeout = timeout  # 复用同一超时参数
         localize_start = time.time()
         localized = False
+        # 等待 3s 让 FAST-LIO 完成换图初始化再开始轮询，避免读到换图前的旧 TF
+        time.sleep(3.0)
         while time.time() - localize_start < localize_timeout:
             if self.ros_node.is_map_localized():
                 localized = True
