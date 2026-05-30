@@ -541,15 +541,26 @@ class SimplePatrolClient:
         last_result: Dict[str, Any] = {"success": False, "msg": "等待超时或未到达"}
 
         for attempt in range(2):
+            # 修复2：第2轮开始前，若上一轮在暂停状态下超时（导航已被 cancel），
+            # 必须先调 resume_navigation 重新下发 goal；否则 _nav_terminal_message
+            # 仍为"导航已取消"，wait_goal_reached 会立即返回 nav_failed。
+            if attempt > 0 and self.is_paused:
+                logger.info("▶️  重试轮次：上轮在暂停中超时，重新恢复导航...")
+                resume_data = await client.call("resume_navigation")
+                if not resume_data.get("success"):
+                    logger.warning(f"重试恢复失败: {resume_data.get('msg')}")
+
             start_time = time.time()
             paused_duration = 0.0
             pause_start: Optional[float] = None
-
             self.is_paused = False
 
             with KeyboardHandler() as kb:
                 while True:
-                    elapsed = time.time() - start_time - paused_duration
+                    # 修复1：elapsed 需同时减去"已完成暂停时长"和"当前正在进行中的暂停时长"，
+                    # 否则暂停期间超时计时仍在流逝，会比预期提前触发超时。
+                    ongoing = (time.time() - pause_start) if (self.is_paused and pause_start is not None) else 0.0
+                    elapsed = time.time() - start_time - paused_duration - ongoing
                     if elapsed >= timeout:
                         break
 
