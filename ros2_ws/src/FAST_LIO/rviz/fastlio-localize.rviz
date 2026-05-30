@@ -254,8 +254,6 @@ Visualization Manager:
           Value: false
         left_arm_link7:
           Value: false
-        left_gripper_center:
-          Value: true
         left_gripper_link:
           Value: false
         lidar_chassis_left_link:
@@ -284,8 +282,6 @@ Visualization Manager:
           Value: false
         right_arm_link7:
           Value: false
-        right_gripper_center:
-          Value: true
         right_gripper_link:
           Value: false
         steer_motor_link1:
@@ -363,8 +359,6 @@ Visualization Manager:
                                         left_gripper_link:
                                           left_D405_link:
                                             {}
-                                          left_gripper_center:
-                                            {}
                         right_arm_base_link:
                           right_arm_link1:
                             right_arm_link2:
@@ -375,8 +369,6 @@ Visualization Manager:
                                       right_arm_link7:
                                         right_gripper_link:
                                           right_D405_link:
-                                            {}
-                                          right_gripper_center:
                                             {}
               livox_frame:
                 {}
@@ -666,6 +658,7 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /clicked_point
     - Class: nav2_rviz_plugins/GoalTool
+    - Class: rviz_global_relocalize/GlobalRelocalizeTool
   Transformation:
     Current:
       Class: rviz_default_plugins/TF
@@ -673,7 +666,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/ThirdPersonFollower
-      Distance: 15.980435371398926
+      Distance: 28.913516998291016
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -688,10 +681,10 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 1.5697963237762451
+      Pitch: 1.424796462059021
       Target Frame: base_link
       Value: ThirdPersonFollower (rviz_default_plugins)
-      Yaw: 2.3167672157287598
+      Yaw: 4.9599528312683105
     Saved: ~
 Window Geometry:
   Displays:

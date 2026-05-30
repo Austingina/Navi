@@ -1097,7 +1097,11 @@ class NavNode(Node):
         if self.last_goal:
             self.get_logger().info("继续导航...")
             try:
-                return self.schedule_sync_call(lambda: self.publish_goal(self.last_goal, target="resume"), timeout=10.0)
+                # publish_goal 内部已通过 schedule_sync_call(do_send) 自行调度到
+                # executor 线程；不能再套一层 schedule_sync_call，否则外层占住
+                # _cb_group_queue 的 executor 线程，内层永远无法被 _process_call_queue
+                # 调度 → 嵌套死锁，表现为 10s 超时。
+                return self.publish_goal(self.last_goal, target="resume")
             except Exception as e:
                 self.get_logger().error(f"继续导航失败: {e}")
                 return False
