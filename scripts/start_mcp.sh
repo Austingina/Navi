@@ -27,7 +27,7 @@ for arg in "$@"; do
 	esac
 done
 
-CMD=(/usr/bin/python3 server.py)
+CMD=($NAVI_ROOT_DIR/NaviSkill/vpr/.venv/bin/python3 server.py)
 if [[ $HAS_MAP -eq 0 ]]; then
 	CMD+=(-m "$DEFAULT_MAP")
 fi
