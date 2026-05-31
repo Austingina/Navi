@@ -378,7 +378,7 @@ class NavigationToolManager:
             logging.info("[VPR-watchdog] VPR 不可用，跳过 tf_ready 监视")
             return
 
-        grace_sec = 60.0
+        grace_sec = 150.0
         fail_cooldown_sec = 30.0
         success_cooldown_sec = 60.0
         check_interval_sec = 2.0
