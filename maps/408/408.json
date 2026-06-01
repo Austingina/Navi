@@ -1,7 +1,7 @@
 {
     "_comment": "多楼层地图配置文件 / Multi-floor map configuration",
     "global": {
-        "build_no": 20260601151834,
+        "build_no": 20260601210346,
         "default_route": "route262",
         "default_submap": "2f",
         "version": "1.0.1"
@@ -927,12 +927,12 @@
                     "type": "elevator_wait"
                 },
                 "meetingroom_entrance_1": {
-                    "need_inspect": true,
+                    "need_inspect": false,
                     "pose": {
                         "orientation": { "w": 0.026901326402598225, "x": -0.0037001824419930648, "y": -0.01280063115067871, "z": 0.9995492839924509},
                         "position": { "x": 8.265, "y": -12.352, "z": 0.0}
                     },
-                    "type": "single_pose"
+                    "type": "door_open"
                 },
                 "meetingroom_entrance_2": {
                     "need_inspect": false,
