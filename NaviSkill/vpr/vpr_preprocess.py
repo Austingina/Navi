@@ -100,6 +100,56 @@ from utils.utils_s20 import extract_database_from_ros1
 
 
 # ---------------------------------------------------------------------------
+# Post-filter resampling (when L1+L2 filter is enabled)
+# ---------------------------------------------------------------------------
+
+def resample_database_images(db_dir, db_distance, logger):
+    """在已有的图片上重新采样（按坐标距离）。
+    
+    用于 filter 后的二次采样：先 filter 掉低纹理图片，再在剩余图片上
+    按距离采样，确保采样结果分布均匀，避免某些区域被 filter 后无图片。
+    """
+    if db_distance <= 0:
+        return  # 不需要采样
+    
+    image_paths = sorted(
+        p for p in glob(f"{db_dir}/*")
+        if os.path.isfile(p)
+        and os.path.splitext(p)[1].lower() in (".jpg", ".jpeg", ".png")
+    )
+    if not image_paths:
+        return
+    
+    # 按坐标提取所有图片
+    poses = []
+    for p in image_paths:
+        x, y, z, ts = _parse_pose_from_filename(p)
+        poses.append((x, y, z, ts, p))
+    
+    # 按距离采样
+    sampler = DatabaseSampler(db_distance)
+    kept_paths = set()
+    for x, y, z, ts, p in poses:
+        if sampler.keep(x, y):
+            kept_paths.add(p)
+    
+    # 删除未被采样的图片
+    n_before = len(image_paths)
+    n_kept = len(kept_paths)
+    for p in image_paths:
+        if p not in kept_paths:
+            try:
+                os.remove(p)
+            except Exception:
+                pass
+    
+    logger.info(
+        f"Post-filter resampling: {n_kept}/{n_before} images kept "
+        f"(db_distance={db_distance:.2f}m, {sampler.kept} kept, {sampler.skipped} skipped)"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Database-only distance sampler (no query split)
 # ---------------------------------------------------------------------------
 
@@ -637,23 +687,29 @@ def main():
             )
         logger.info(f"Skipping image extraction; reusing {args.image_cache_dir}")
         db_dir = args.image_cache_dir
-    elif args.source == "ros1":
-        sampler = DatabaseSampler(args.db_distance)
-        db_dir = extract_database_from_ros1(
-            args, sampler, args.image_cache_dir, logger=logger,
-        )
-    elif args.source == "ros2_r1pro":
-        sampler = DatabaseSampler(args.db_distance)
-        db_dir = extract_database_from_ros2_r1pro(
-            args, sampler, args.image_cache_dir, logger=logger,
-        )
     else:
-        raise AssertionError(f"unhandled source: {args.source}")
+        # 决定是否在提取时采样：若后续会做 filter，则提取时不采样（db_distance=0），
+        # 让 filter 后再采样，这样采样结果分布更均匀。
+        # 若不做 filter，则提取时就采样（db_distance=args.db_distance）。
+        use_sampling_on_extraction = args.no_texture_filter
+        sampler = DatabaseSampler(args.db_distance) if use_sampling_on_extraction else DatabaseSampler(0)
+        
+        if args.source == "ros1":
+            db_dir = extract_database_from_ros1(
+                args, sampler, args.image_cache_dir, logger=logger,
+            )
+        elif args.source == "ros2_r1pro":
+            db_dir = extract_database_from_ros2_r1pro(
+                args, sampler, args.image_cache_dir, logger=logger,
+            )
+        else:
+            raise AssertionError(f"unhandled source: {args.source}")
 
     # ------------------------------------------------------------------
     # L1+L2 low-texture filter pass (deletes featureless JPGs in db_dir so
     # they never reach the descriptor model). Stash the report on ``args``
     # so extract_descriptors() can persist it into database_build_info.json.
+    # 过滤后，如果需要采样（db_distance > 0），再做一次采样以确保分布均匀。
     # ------------------------------------------------------------------
     if args.no_texture_filter:
         logger.info("L1+L2 low-texture filter disabled (--no_texture_filter)")
@@ -670,6 +726,9 @@ def main():
             ),
             logger=logger,
         )
+        # 过滤后重采样：确保采样的图片分布均匀（而不是某些区域被 filter 后无图片）
+        if args.db_distance > 0:
+            resample_database_images(db_dir, args.db_distance, logger)
 
     extract_descriptors(args, db_dir)
     logger.info("VPR preprocessing complete.")
