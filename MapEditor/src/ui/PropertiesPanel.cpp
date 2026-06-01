@@ -224,7 +224,7 @@ void PropertiesPanel::setupSemanticPointPage() {
     form->setContentsMargins(10, 20, 10, 10);
     spName_ = new QLineEdit();
     spType_ = new QComboBox();
-    spType_->addItems({"single_pose", "multi_pose", "LowPrecision_pose", "elevator_call", "elevator_wait", "elevator_in", "elevator_out"});
+    spType_->addItems({"single_pose", "multi_pose", "LowPrecision_pose", "elevator_call", "elevator_wait", "elevator_in", "elevator_out", "door_open"});
     spPx_ = makeSpinBox(); spPy_ = makeSpinBox(); spPz_ = makeSpinBox();
     spYaw_ = makeSpinBox(-180.0, 180.0, 2);
     spYaw_->setSuffix(" °");
