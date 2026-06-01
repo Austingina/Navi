@@ -1,7 +1,7 @@
 {
     "_comment": "多楼层地图配置文件 / Multi-floor map configuration",
     "global": {
-        "build_no": 20260526092449,
+        "build_no": 20260601094141,
         "default_route": "route262",
         "default_submap": "2f",
         "version": "1.0.1"
@@ -331,6 +331,43 @@
                 }
             ]
         },
+        "route212_from231": {
+            "description": "",
+            "waypoints": [
+                {
+                    "semantic_point": "charging point",
+                    "submap": "2f231"
+                },
+                {
+                    "semantic_point": "231_door_exit",
+                    "submap": "2f231"
+                },
+                {
+                    "route": "elevatorF_f2"
+                },
+                {
+                    "route": "1f_outdoor"
+                },
+                {
+                    "route": "1f_eh"
+                },
+                {
+                    "route": "elevatorF_f1"
+                },
+                {
+                    "semantic_point": "elevator_hall",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "231_door_entrance",
+                    "submap": "2f231"
+                },
+                {
+                    "semantic_point": "charging point",
+                    "submap": "2f231"
+                }
+            ]
+        },
         "route212_outdoor": {
             "description": "",
             "waypoints": [
@@ -381,6 +418,10 @@
                     "submap": "5f"
                 },
                 {
+                    "semantic_point": "corridor",
+                    "submap": "5f"
+                },
+                {
                     "route": "elevatorF_f5"
                 },
                 {
@@ -392,6 +433,45 @@
                 {
                     "semantic_point": "start",
                     "submap": "2f"
+                }
+            ]
+        },
+        "route252_from231": {
+            "description": "",
+            "waypoints": [
+                {
+                    "semantic_point": "charging point",
+                    "submap": "2f231"
+                },
+                {
+                    "semantic_point": "231_door_exit",
+                    "submap": "2f231"
+                },
+                {
+                    "route": "elevatorF_f2"
+                },
+                {
+                    "semantic_point": "charge point",
+                    "submap": "5f"
+                },
+                {
+                    "semantic_point": "corridor",
+                    "submap": "5f"
+                },
+                {
+                    "route": "elevatorF_f5"
+                },
+                {
+                    "semantic_point": "elevator_hall",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "231_door_entrance",
+                    "submap": "2f231"
+                },
+                {
+                    "semantic_point": "charging point",
+                    "submap": "2f231"
                 }
             ]
         },
@@ -490,41 +570,6 @@
                 {
                     "semantic_point": "start",
                     "submap": "2f"
-                }
-            ]
-        },
-        "route2f231": {
-            "description": "",
-            "waypoints": [
-                {
-                    "semantic_point": "charging point",
-                    "submap": "2f231"
-                },
-                {
-                    "semantic_point": "231_door_exit",
-                    "submap": "2f231"
-                },
-                {
-                    "route": "elevatorF_f2"
-                },
-                {
-                    "semantic_point": "charge point",
-                    "submap": "5f"
-                },
-                {
-                    "route": "elevatorF_f5"
-                },
-                {
-                    "semantic_point": "elevator_hall",
-                    "submap": "2f"
-                },
-                {
-                    "semantic_point": "231_door_entrance",
-                    "submap": "2f231"
-                },
-                {
-                    "semantic_point": "charging point",
-                    "submap": "2f231"
                 }
             ]
         }
@@ -1053,6 +1098,14 @@
                     },
                     "type": "single_pose"
                 },
+                "corridor": {
+                    "need_inspect": true,
+                    "pose": {
+                        "orientation": { "w": 0.0, "x": 0.0, "y": 0.0, "z": 1.0},
+                        "position": { "x": 6.3345, "y": 0.3459, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
                 "elevator_in": {
                     "need_inspect": false,
                     "pose": {
@@ -1073,7 +1126,7 @@
                     "need_inspect": false,
                     "pose": {
                         "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
-                        "position": { "x": -0.148, "y": 0.076, "z": 0.0}
+                        "position": { "x": 0.15, "y": 0.076, "z": 0.0}
                     },
                     "type": "elevator_out"
                 },
