@@ -191,6 +191,68 @@ if result.status == SyncStatus.FAILED:
 - 重新跑一次完整建图（所有 PCD 变化）→ 退化为全量 568 MiB；
   断点续传仍生效，网络抖动不会从头开始。
 
+## 地图数据备份 / 恢复（mapserver.backup）
+
+对线上地图目录做**全量快照**，并能从历史快照恢复。围绕两个目录约定：
+
+- **front（线上）**：`~/mapserver/front/<map_id>`，MapEditor / 导航栈实际读写的当前地图。
+- **backup（备份）**：`~/mapserver/backup`（默认根），按
+  `~/mapserver/backup/<map_id>/<build_no>` 分层存放。
+
+`build_no` 取当前地图 `<map_id>.json` 中 `global.build_no`（14 位时间戳
+`YYYYMMDDHHMMSS`），所以"同一张地图的每个保存版本"自然落到不同的备份目录。
+
+```
+~/mapserver/
+├── front/
+│   └── 408/                       ← 线上地图（MapEditor 编辑、导航读取）
+│       ├── 408.json               ← global.build_no = 20260601151834
+│       └── ...
+└── backup/
+    └── 408/
+        ├── 20260518205930/        ← 历史快照（build_no 即目录名）
+        └── 20260601151834/        ← 最新快照
+```
+
+### CLI
+
+```bash
+# 备份：把 front/408 整个快照到 backup/408/<build_no>/
+#（build_no 自动读 408.json 的 global.build_no；目录已存在则跳过，--force 覆盖）
+python -m mapserver.backup backup --map 408
+
+# 列出 408 的所有历史备份（按 build_no 倒序：新 → 旧）
+python -m mapserver.backup list --map 408
+
+# 恢复：交互式从备份列表里选一个，覆盖回 front/408
+python -m mapserver.backup restore --map 408
+# 或直接指定 build_no（非交互，便于脚本调用）
+python -m mapserver.backup restore --map 408 --build-no 20260601151834
+```
+
+公共参数：`--front-root`（默认 `~/mapserver/front`）、`--backup-root`
+（默认 `~/mapserver/backup`）、`--log-level`。
+
+### 关键属性
+
+- **原子替换**：备份 / 恢复都是"先拷到同目录下的临时 `.staging` → `os.replace`"，
+  中途崩溃不会留下半个目录、也不会破坏现有 front（被覆盖的旧目录先挪到临时 trash，
+  成功后才删除）。
+- **跳过临时产物**：拷贝时忽略 `__pycache__`、`*.partial`、`.staging`，其余文件
+  （含 `.mapserver_manifest.json`）全量保留。
+- **build_no 回退**：`<map_id>.json` / `version.json` 都读不到 `build_no` 时，
+  退化为当前本地时间 `YYYYMMDDHHMMSS`，保证总能产出快照目录。
+
+### 库 API
+
+```python
+from mapserver.backup import backup_map, list_backups, restore_map
+
+backup_map("408")                              # 快照 front/408 -> backup/408/<build_no>
+backups = list_backups("408")                  # [BackupInfo, ...] 按 build_no 倒序
+restore_map("408", backups[0].build_no)         # 用最新备份覆盖回 front/408
+```
+
 ## TODO / 后续
 
 - 加 ETag / If-None-Match，让 manifest 也能走 CDN 缓存。

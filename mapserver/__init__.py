@@ -1,9 +1,10 @@
-"""Map distribution service: server + incremental-sync client.
+"""Map distribution service: server + incremental-sync client + backup/restore.
 
 模块布局：
 - ``manifest`` —— 服务器-客户端共享的 manifest 数据模型与构建/比对函数
 - ``server``   —— FastAPI HTTP 服务，可作为 ``python -m mapserver.server`` 启动
 - ``client``   —— 增量同步客户端，可作为 ``python -m mapserver.client`` 启动
+- ``backup``   —— 地图数据全量备份 / 恢复，可作为 ``python -m mapserver.backup`` 启动
 
 参见 ``README.md`` 获取部署与使用说明。
 """
@@ -23,6 +24,14 @@ from .client import (
     resolve_map_source,
     sync_map,
 )
+from .backup import (
+    BackupInfo,
+    BackupResult,
+    RestoreResult,
+    backup_map,
+    list_backups,
+    restore_map,
+)
 
 __all__ = [
     "FileEntry",
@@ -36,4 +45,10 @@ __all__ = [
     "sync_map",
     "resolve_map_source",
     "parse_mapserver_url",
+    "BackupInfo",
+    "BackupResult",
+    "RestoreResult",
+    "backup_map",
+    "list_backups",
+    "restore_map",
 ]
