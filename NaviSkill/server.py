@@ -888,6 +888,7 @@ class NavigationToolManager:
             - "elevator_wait": 电梯等待点；机器人到达该点后应等待外部 agent 确认电梯已到达且车门已打开。
             - "elevator_in": 进梯点；`set_goal_by_name` 下发目标时自动调用 `enter_elevator`（锁 Z）。
             - "elevator_out": 出梯点；`wait_goal_reached` 到达后自动调用 `exit_elevator`（解锁 Z）。
+            - "door_open": 开门点；机器人到达该点后需要执行开门动作。
             """
             try:
                 if not self.map_manager:
