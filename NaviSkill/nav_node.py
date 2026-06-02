@@ -894,6 +894,7 @@ class NavNode(Node):
         返回:
         bool: True表示机器人被卡住，False表示正常
         """
+        return False
         # 电梯升降刚结束的宽限期内不做卡住检测，避免把底盘唤醒延迟误判为卡死
         if self._elevator_resume_grace_until and time.monotonic() < self._elevator_resume_grace_until:
             self.stuck_count = 0
