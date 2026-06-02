@@ -110,13 +110,13 @@ controller_server:
       plugin: "dwb_core::DWBLocalPlanner" # 路径跟随插件类型
       debug_trajectory_details: True # 是否调试轨迹细节
       min_vel_x: 0.0 # x方向最小速度
-      max_vel_x: 0.5 # x方向最大速度
+      max_vel_x: 0.8 # x方向最大速度
       min_vel_y: -0.1 # y方向最小速度
       max_vel_y: 0.1 # y方向最大速度
       min_vel_theta: -0.5 # 最小角速度
       max_vel_theta: 0.5 # 最大角速度
       # min_speed_xy: -0.26 # xy平面最小速度
-      max_speed_xy: 0.5 # xy平面最大速度
+      max_speed_xy: 0.8 # xy平面最大速度
       # Add high threshold velocity for turtlebot 3 issue.
       # https://github.com/ROBOTIS-GIT/turtlebot3_simulations/issues/75
       acc_lim_x: 2.5 # x方向最大加速度
@@ -138,7 +138,7 @@ controller_server:
       stateful: True # 是否有状态
       critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "HeadingAlign", "PathDist", "GoalDist"] # 评价器插件列表
       BaseObstacle.scale: 0.02 # 障碍物评价器权重
-      HeadingAlign.scale: 8.0 # 航向对齐评价器权重
+      HeadingAlign.scale: 32.0 # 航向对齐评价器权重
       HeadingAlign.forward_point_distance: 0.5 # 航向对齐前向
       GoalAlign.scale: 24.0 # 目标对齐评价器权重
       GoalAlign.forward_point_distance: 0.5 # 目标对齐前向点距离
@@ -270,10 +270,10 @@ velocity_smoother:
     smoothing_frequency: 20.0
     scale_velocities: False
     feedback: "OPEN_LOOP"
-    max_velocity: [0.5, 0.5, 0.5]
-    min_velocity: [-0.5, -0.5, -0.5]
-    max_accel: [0.5, 0.5, 0.1]
-    max_decel: [-0.5, -0.5, -0.1]
+    max_velocity: [0.8, 0.1, 0.5]
+    min_velocity: [-0.8, -0.1, -0.5]
+    max_accel: [2.5, 0.5, 0.1]
+    max_decel: [-2.5, -0.5, -0.1]
     odom_topic: "odom"
     odom_duration: 0.1
     deadband_velocity: [0.0, 0.0, 0.0]

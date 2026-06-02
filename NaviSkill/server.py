@@ -1230,7 +1230,7 @@ class NavigationToolManager:
             try:
                 start_time = time.time()
                 while time.time() - start_time < timeout:
-                    await asyncio.sleep(0.2)
+                    await asyncio.sleep(0.05)
                     status, fail_msg = self.ros_node.check_goal_reached(xy_tolerance, yaw_tolerance)
                     if status == self.ros_node.GOAL_CHECK_REACHED:
                         return {"success": True, "msg": f"已到达目标 {target}", "timestamp": int(time.time())}
