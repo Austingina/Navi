@@ -16,9 +16,9 @@ LOG_FILE="$LOG_DIR/localization_$(date +%Y%m%d_%H%M%S).log"
 echo "logging to $LOG_FILE"
 
 if [[ "$1" == "-v" ]]; then
-    ros2 launch fast_lio odometry_lslidar.launch.py rviz:=true map_file_path:=$NAVI_ROOT_DIR/maps/408/2f.pcd 2>&1 \
+    ros2 launch fast_lio odometry_lslidar.launch.py rviz:=true map_file_path:=$NAVI_ROOT_DIR/mapdata/408/2f.pcd 2>&1 \
         | stdbuf -oL -eL tee -a "$LOG_FILE"
 else
-    ros2 launch fast_lio odometry_lslidar.launch.py rviz:=false map_file_path:=$NAVI_ROOT_DIR/maps/408/2f.pcd 2>&1 \
+    ros2 launch fast_lio odometry_lslidar.launch.py rviz:=false map_file_path:=$NAVI_ROOT_DIR/mapdata/408/2f.pcd 2>&1 \
         | stdbuf -oL -eL tee -a "$LOG_FILE"
 fi
