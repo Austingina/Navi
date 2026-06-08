@@ -1,0 +1,26 @@
+# mapserver 运行依赖（固定版本 / pinned）
+# 由 mapserver/.venv 冻结生成（python 3.10.12），已排除 ROS2 系统包
+# （rclpy / *-msgs 等来自 /opt/ros/humble，不在 PyPI，运行时由系统提供）。
+#
+# 顶层依赖：fastapi（mapserver/server.py 的 HTTP 服务）、uvicorn（ASGI 运行器）。
+# 其余为其传递依赖，一并锁定以保证可复现安装。
+# client.py / manifest.py / backup.py 仅用标准库，无需额外依赖。
+#
+# 重新生成：mapserver/.venv/bin/python -m pip freeze（再剔除 /opt/ros 下的系统包）
+# 安装：python -m venv .venv && .venv/bin/pip install -r requirements.txt
+
+annotated-doc==0.0.4
+annotated-types==0.7.0
+anyio==4.13.0
+click==8.4.0
+exceptiongroup==1.3.1
+fastapi==0.136.1
+h11==0.16.0
+idna==3.15
+packaging==26.2
+pydantic==2.13.4
+pydantic_core==2.46.4
+starlette==1.0.0
+typing-inspection==0.4.2
+typing_extensions==4.15.0
+uvicorn==0.47.0

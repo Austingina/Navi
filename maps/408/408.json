@@ -1,7 +1,7 @@
 {
     "_comment": "多楼层地图配置文件 / Multi-floor map configuration",
     "global": {
-        "build_no": 20260601210346,
+        "build_no": 20260608095617,
         "default_route": "route262",
         "default_submap": "2f",
         "version": "1.0.1"
@@ -1059,8 +1059,8 @@
                 "charging point": {
                     "need_inspect": true,
                     "pose": {
-                        "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
-                        "position": { "x": 53.5455, "y": -5.551, "z": 0.0}
+                        "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": 0.7071067811865476},
+                        "position": { "x": 52.5, "y": -5.8, "z": 0.0}
                     },
                     "type": "single_pose"
                 },
