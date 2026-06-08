@@ -1,5 +1,9 @@
 #! /bin/bash
-source "$(dirname "$0")/common.sh"
+export NAVI_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export NAVI_ROOT_DIR="$(dirname "$NAVI_SCRIPT_DIR")"
+echo $NAVI_ROOT_DIR
+echo $NAVI_SCRIPT_DIR
+
 cd $NAVI_ROOT_DIR/mapserver
 SESSION="mapserver"
 
