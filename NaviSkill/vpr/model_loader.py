@@ -10,9 +10,55 @@ from __future__ import annotations
 import contextlib
 import os
 import sys
+from urllib.error import HTTPError, URLError
 
 import torch
+import torch.hub as _torch_hub
 from loguru import logger
+
+
+def _install_offline_friendly_hub_patch() -> None:
+    """让 ``torch.hub`` 在 github 探测分支失败时回退到本地缓存。
+
+    背景：``torch.hub.load("owner/repo", ...)`` 在未显式指定分支时，会先访问
+    ``https://github.com/owner/repo/tree/main/`` 来判断默认分支是 ``main`` 还是
+    ``master``。torch 自带的逻辑只对 ``URLError``（纯离线、连接被拒等 socket 级
+    失败）做缓存兜底；而当网络路径上有网关/代理返回 ``HTTP 504`` 这类 HTTP 错误
+    响应时（``HTTPError`` 且 ``code != 404``），它会直接抛出，导致即使本地已有缓存
+    也无法离线加载。
+
+    本补丁包住 ``_parse_repo_info``：仅在探测分支抛网络异常时介入，尝试用已缓存
+    的分支名兜底；若既连不上又无缓存，则原样抛出，语义与官方离线逻辑一致。
+    网络正常时补丁不触发，首次无缓存仍可正常联网下载。
+    """
+    if getattr(_torch_hub._parse_repo_info, "_offline_friendly", False):
+        return
+
+    _orig_parse_repo_info = _torch_hub._parse_repo_info
+
+    def _parse_repo_info_offline_friendly(github):
+        try:
+            return _orig_parse_repo_info(github)
+        except (HTTPError, URLError):
+            repo_info = github.split(":")[0]
+            repo_owner, repo_name = repo_info.split("/")
+            for ref in ("main", "master"):
+                cached = os.path.join(
+                    _torch_hub.get_dir(), f"{repo_owner}_{repo_name}_{ref}"
+                )
+                if os.path.exists(cached):
+                    logger.warning(
+                        "torch.hub 无法访问 github 探测分支，回退到本地缓存: {}",
+                        cached,
+                    )
+                    return repo_owner, repo_name, ref
+            raise
+
+    _parse_repo_info_offline_friendly._offline_friendly = True
+    _torch_hub._parse_repo_info = _parse_repo_info_offline_friendly
+
+
+_install_offline_friendly_hub_patch()
 
 
 @contextlib.contextmanager
