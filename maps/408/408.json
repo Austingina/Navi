@@ -1,7 +1,7 @@
 {
     "_comment": "多楼层地图配置文件 / Multi-floor map configuration",
     "global": {
-        "build_no": 20260608095617,
+        "build_no": 20260610171359,
         "default_route": "route262",
         "default_submap": "2f",
         "version": "1.0.1"
@@ -167,6 +167,10 @@
                 },
                 {
                     "semantic_point": "meetingroom_exit_2",
+                    "submap": "2f"
+                },
+                {
+                    "semantic_point": "meetingroom_exit_3",
                     "submap": "2f"
                 },
                 {
@@ -946,15 +950,23 @@
                     "need_inspect": false,
                     "pose": {
                         "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
-                        "position": { "x": 6.0875, "y": -12.3307, "z": 0.0}
+                        "position": { "x": 6.0875, "y": -12.27, "z": 0.0}
                     },
                     "type": "single_pose"
                 },
                 "meetingroom_exit_2": {
                     "need_inspect": false,
                     "pose": {
+                        "orientation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
+                        "position": { "x": 7.3, "y": -12.27, "z": 0.0}
+                    },
+                    "type": "single_pose"
+                },
+                "meetingroom_exit_3": {
+                    "need_inspect": false,
+                    "pose": {
                         "orientation": { "w": 0.7071067811865476, "x": 0.0, "y": 0.0, "z": 0.7071067811865476},
-                        "position": { "x": 8.3, "y": -12.3, "z": 0.0}
+                        "position": { "x": 8.3, "y": -12.27, "z": 0.0}
                     },
                     "type": "single_pose"
                 },
