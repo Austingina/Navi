@@ -24,11 +24,11 @@
 1. **GNSS 导航**：在没有 SLAM 地图覆盖、但有 GPS 信号的室外区域，基于步行导航生成的
    GPS waypoint 走 `gps_waypoint_follower`，并对相机图像做语义分割生成
    `semantic_segmentation_layer`，让机器人沿人行道行走并避障。
-2. **VLN 导航（Vision-Language Navigation）**：面向**交互性质**的自然语言指令，机器人基于
+2. **VLN 导航（Vision-Language Navigation）**：面向 **VLN 描述性指令**（自然语言），机器人基于
    text 指令 + 图像调用 VLN 大模型（如 StreamVLN）进行推理决策，底层用 3D 激光生成局部
    代价地图做避障。
 
-并由 FSM 把每条路线解析成异构 waypoint 序列，**逐 waypoint 按类型（map / gps / 交互指令）路由到
+并由 FSM 把每条路线解析成异构 waypoint 序列，**逐 waypoint 按类型（map / gps / VLN 描述性指令）路由到
 对应导航后端**，在段间自动切换——因此**同一条路线可同时包含 GNSS、SLAM 与 VLN 三种导航**。
 
 ### 1.1 决策总览
@@ -43,7 +43,7 @@
         逐个 waypoint 判断其类型并路由：
                           │
    ┌──────────────┬───────────────┬──────────────┐
- map 坐标系坐标   经纬度(GPS)坐标   一段交互性指令
+ map 坐标系坐标   经纬度(GPS)坐标   一段VLN描述性指令
  {x,y}/语义点     {lon,lat}        {instruction:文本}
       │               │                  │
   SLAM 导航        GNSS 导航          VLN 导航
@@ -54,10 +54,10 @@
 
 - waypoint 是 **map 坐标系坐标**（`{x, y}` 或引用语义点）→ **SLAM 导航**；
 - waypoint 是 **经纬度（GPS）坐标**（`{lon, lat}`）→ **GNSS 导航**；
-- waypoint 是 **一段交互性指令**（自然语言 `{instruction: "..."}`）→ **VLN 导航**。
+- waypoint 是 **一段 VLN 描述性指令**（自然语言 `{instruction: "..."}`）→ **VLN 导航**。
 
-> 一条路线可以是「室外 GPS 段（GNSS）→ 进楼后定点段（SLAM）→ 末端交互段如『在会议桌旁停下』
-> （VLN）」的任意组合；执行器按序推进并在段间切换模式。纯交互指令（不引用具名路线）等价于一条
+> 一条路线可以是「室外 GPS 段（GNSS）→ 进楼后定点段（SLAM）→ 末端 VLN 段如『在会议桌旁停下』
+> （VLN）」的任意组合；执行器按序推进并在段间切换模式。纯 VLN 描述性指令（不引用具名路线）等价于一条
 > 只有单个 VLN waypoint 的路线。
 
 ---
@@ -83,7 +83,7 @@
 ```mermaid
 flowchart TB
     subgraph Client["上层 Agent / 调度"]
-        CMD["指令 (command)\n- 固定路线: 按照路线xxx进行巡检\n- 交互: 按照指令xxx巡检 /\n  在走廊尽头停下,左转进第二个房间,在会议桌旁停下"]
+        CMD["指令 (command)\n- 固定路线: 按照路线xxx进行巡检\n- VLN描述性指令: 按照指令xxx巡检 /\n  在走廊尽头停下,左转进第二个房间,在会议桌旁停下"]
     end
 
     subgraph Server["server.py (FSM 化的 NavigationToolManager)"]
@@ -229,10 +229,24 @@ flowchart TB
         {"slam_map": "buildingA", "submap": "floor", "semantic_point": "会议桌"},
         {"slam_map": "buildingA", "submap": "floor", "semantic_point": "配电房"}
       ]
+    },
+    "周界到会议室巡检": {
+      "description": "混合路线：室外GPS段(GNSS) → 进楼定点段(SLAM) → 末端VLN段(VLN)",
+      "waypoints": [
+        {"lon": 113.9301, "lat": 22.5302},
+        {"lon": 113.9320, "lat": 22.5318},
+        {"slam_map": "buildingA", "submap": "floor", "semantic_point": "大厅入口"},
+        {"slam_map": "buildingA", "submap": "floor", "semantic_point": "会议室门口"},
+        {"instruction": "进门后在会议桌旁停下，面向白板"}
+      ]
     }
   }
 }
 ```
+
+上面 `周界到会议室巡检` 即一条**同时用到三种导航**的路线，`ModeRouter` 会把它切成 3 段（详见
+§6.2）：`gps`×2 → **GNSS**，`map`×2 → **SLAM**，`instruction`×1 → **VLN**，执行时按序推进并在段间
+自动切换后端。
 
 新增字段说明：
 
@@ -310,11 +324,11 @@ ENU 局部 (e, n)  ──②  WGS84Converter(origin).xy_to_lonlat ──▶  (lo
 |----------|----------|--------------------|----------|
 | 室外、无 SLAM 覆盖 | OSM 主干 | 经纬度 `{lon, lat}` | GNSS |
 | 某张 SLAM 地图覆盖范围内 | slam_map + submap | `{slam_map, submap, semantic_point}` 或 `{x, y}` | SLAM |
-| 任意（交互指令） | 实时感知，不依赖预存地图 | —（自然语言） | VLN |
+| 任意（VLN 描述性指令） | 实时感知，不依赖预存地图 | —（自然语言） | VLN |
 
 由此，第 6 章的「逐 waypoint 类型 → 选 SLAM/GNSS/VLN」裁决，本质就是在分层地图模型里判断每个
 waypoint 落在 **OSM 主干层**（gps→GNSS）、某张 **SLAM 地图层**（map→SLAM）还是**不依赖预存
-地图的实时交互**（instruction→VLN）。一条路线可在这几层之间穿插，执行器按段切换；多张 SLAM
+地图的实时 VLN 推理**（instruction→VLN）。一条路线可在这几层之间穿插，执行器按段切换；多张 SLAM
 地图之间的切换，由 SLAM 后端在 slam_map 维度扩展现有的 submap 切换逻辑完成（详见 §8.1）。
 
 ---
@@ -326,7 +340,7 @@ waypoint 落在 **OSM 主干层**（gps→GNSS）、某张 **SLAM 地图层**（
 | 状态 | 含义 |
 |------|------|
 | `IDLE` | 空闲，无导航任务。 |
-| `CLASSIFYING` | 正在对指令做意图分类（巡检 vs 交互）。 |
+| `CLASSIFYING` | 正在解析指令（具名路线 vs VLN 描述性指令），产出 waypoint 序列。 |
 | `ROUTING` | 已分类，正在裁决具体导航模式（GNSS / SLAM / VLN）。 |
 | `SLAM_NAV` | SLAM 导航执行中。 |
 | `GNSS_NAV` | GNSS 导航执行中。 |
@@ -346,7 +360,7 @@ stateDiagram-v2
 
     ROUTING --> SLAM_NAV: 首段waypoint为map坐标
     ROUTING --> GNSS_NAV: 首段waypoint为经纬度坐标
-    ROUTING --> VLN_NAV: 首段waypoint为交互指令
+    ROUTING --> VLN_NAV: 首段waypoint为VLN描述性指令
 
     SLAM_NAV --> SWITCHING: 进入下一段(类型变化)
     GNSS_NAV --> SWITCHING: 进入下一段(类型变化)
@@ -412,7 +426,7 @@ stateDiagram-v2
 > 说明：
 > - 「按照路线 xxx 巡检」与「按照指令 xxx 巡检」字面都含「巡检」二字，**不能只靠是否出现
 >   「巡检」来分类**；真正的判据是 `xxx` 能否解析为已知路线名（能→展开路线；不能→交给 VLN）。
-> - 路线内的某个 waypoint 本身也可以是 `instruction` 类型（在路线配置里直接写一段交互文本，
+> - 路线内的某个 waypoint 本身也可以是 `instruction` 类型（在路线配置里直接写一段 VLN 描述性指令，
 >   见 §6.3 / §11），从而把 VLN 段嵌入巡检路线。
 > - 分类器先用规则；规则不确定时可调用一次轻量 LLM 兜底（可选，不阻塞主链路）。
 
@@ -481,7 +495,7 @@ waypoint 经如下规则归类，并标注 `type` 供 `ModeRouter` 读取：
 | `{(slam_map,) submap, semantic_point}`（引用语义点，坐标解析为 map 系 `{x, y}`；`slam_map` 省略则用默认/当前 SLAM 地图） | `map` | SLAM |
 | `{x, y, (yaw)}`（直接 map 坐标） | `map` | SLAM |
 | `{lon, lat, (yaw)}`（经纬度 / OSM 主干 / GPS） | `gps` | GNSS |
-| `{instruction: "..."}`（一段交互性自然语言） | `instruction` | VLN |
+| `{instruction: "..."}`（一段 VLN 描述性指令，自然语言） | `instruction` | VLN |
 
 实现要点：
 
@@ -526,7 +540,7 @@ class Segment:
 
 @dataclass
 class RoutePlan:
-    route_name: Optional[str]   # 具名路线（纯交互指令时为 None）
+    route_name: Optional[str]   # 具名路线（纯 VLN 描述性指令时为 None）
     segments: list              # List[Segment]，按执行顺序排列
     raw: Dict[str, Any]         # 原始指令
 
@@ -602,8 +616,8 @@ flowchart LR
 
 ### 8.3 VLN 导航（VlnBackend）
 
-**适用**：waypoint 类型为 `instruction`（一段交互性自然语言）的段——既可以是整条独立的交互指令，
-也可以是嵌在巡检路线中间/末端的某一段（如「在会议桌旁停下」）。
+**适用**：waypoint 类型为 `instruction`（一段 VLN 描述性指令，自然语言）的段——既可以是整条独立的
+VLN 描述性指令，也可以是嵌在巡检路线中间/末端的某一段（如「在会议桌旁停下」）。
 
 ```mermaid
 flowchart LR
@@ -641,7 +655,7 @@ flowchart LR
 | 文件 | 职责 |
 |------|------|
 | `nav_fsm.py` | `NavFSM` 状态机：状态、转移、按段推进路线、当前 task / backend 管理。 |
-| `intent_classifier.py` | `IntentClassifier`：把指令解析为统一 waypoint 序列（展开具名路线 / 单条交互指令）。 |
+| `intent_classifier.py` | `IntentClassifier`：把指令解析为统一 waypoint 序列（展开具名路线 / 单条 VLN 描述性指令）。 |
 | `mode_router.py` | `ModeRouter` + `WaypointType`：逐 waypoint 标注类型(map/gps/instruction)，归并相邻同类型为段，产出 `RoutePlan`。 |
 | `gps_provider.py` | `GpsProvider`：订阅 NavSatFix，维护最新 GPS 与有效性。 |
 | `backends/base.py` | `NavBackend` 接口、`NavTask`、`BackendStatus`。 |
@@ -673,7 +687,7 @@ flowchart LR
 
 ```python
 async def navigate(self, command: dict) -> dict:
-    # 1) 解析为统一的 waypoint 序列（具名路线展开，或单条交互指令）  # CLASSIFYING
+    # 1) 解析为统一的 waypoint 序列（具名路线展开，或单条 VLN 描述性指令）  # CLASSIFYING
     waypoints = self.intent_classifier.to_waypoints(command, self.map_manager)
     # 2) 逐 waypoint 标注 type(map/gps/instruction)，归并相邻同类型为段  # ROUTING
     plan = self.mode_router.plan(waypoints)   # -> RoutePlan(segments=[Segment...])
@@ -730,7 +744,7 @@ async def navigate(self, command: dict) -> dict:
 
 ```json
 "周界到会议室巡检": {
-  "description": "室外GPS段 → 进楼SLAM定点段 → 末端交互段",
+  "description": "室外GPS段 → 进楼SLAM定点段 → 末端VLN段",
   "waypoints": [
     {"lon": 113.9301, "lat": 22.5302},
     {"lon": 113.9308, "lat": 22.5310},
@@ -759,7 +773,7 @@ async def navigate(self, command: dict) -> dict:
 | P1 | `IntentClassifier`（解析 waypoint 序列）+ `ModeRouter`（逐 waypoint 标类型、切段产出 `RoutePlan`）+ `GpsProvider`（执行期校验）；`navigate()` 入口 + `get_nav_state()`。 | 段计划与逐段执行链路打通（仍只有 SLAM 真正执行）。 |
 | P2 | `GnssBackend`：navsat_transform + `follow_gps_waypoints` + 步行 waypoint 生成。 | 室外无图区 GPS 跟踪可用。 |
 | P3 | `semantic_segmentation_layer`：分割节点 + costmap 插件，接入 GNSS costmap。 | 走人行道 + 视觉避障。 |
-| P4 | `VlnBackend`：StreamVLN 子进程 + 局部代价地图避障闭环。 | 交互指令导航可用。 |
+| P4 | `VlnBackend`：StreamVLN 子进程 + 局部代价地图避障闭环。 | VLN 描述性指令导航可用。 |
 | P5 | **混合路线段间自动切换**（GNSS↔SLAM↔VLN，含位姿衔接/交接区）、稳定性与安全限幅打磨。 | 一条路线内三模式无缝切换。 |
 
 ---
@@ -772,9 +786,9 @@ async def navigate(self, command: dict) -> dict:
   地图原点经纬度，并设计段边界的「交接区」（重叠一小段，确保下一后端定位就绪后再交棒）。
 - **段切换的连续性与停顿**：切后端会带来短暂停顿/重规划；应尽量让段边界落在开阔、低风险位置，
   并对切换耗时设上限与失败回退（切换失败 → `ERROR` → 上报）。
-- **经纬度/交互段的可达性**：GPS 段 waypoint 需落在人行道等可通行区域；instruction 段交给 VLN 时
+- **经纬度/VLN 段的可达性**：GPS 段 waypoint 需落在人行道等可通行区域；instruction 段交给 VLN 时
   环境需在相机视野内可推理，否则该段判失败。
-- **意图/类型解析误判**：把自由文本误判为路线名、或把应是路线的指令当成交互段，都会走错后端；
+- **意图/类型解析误判**：把自由文本误判为路线名、或把应是路线的指令当成 VLN 段，都会走错后端；
   建议保留显式 `route` / `instruction` / 段级 `mode_hint` 字段为主、规则/LLM 为辅，并在 `segments`
   计划中暴露每段依据便于纠偏。
 - **VLN 实时性与安全**：大模型推理延迟较高，必须由激光局部代价地图 + 急停做安全兜底，VLN 只
