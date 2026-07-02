@@ -1,0 +1,98 @@
+# =============================================================================
+# dual_ekf_navsat.yaml — 实车 GPS 融合定位（robot_localization）
+# =============================================================================
+# 目标：融合 FAST-LIO 里程计 + GPS，动态发布 map -> odom。
+#
+# 前提（本文件不负责，需另行保证）：
+#   - FAST-LIO 提供连续的 odom -> base_link TF 和 /Odometry(nav_msgs/Odometry)。
+#     => 本方案不再起本地 EKF，也不要再发静态 map->odom（会和这里冲突）。
+#   - GPS 发 /fix (sensor_msgs/NavSatFix)。
+#   - IMU 发 /livox/imu (sensor_msgs/Imu)。
+#
+# 帧约定：map -> odom -> base_link（REP-105，单父树）。
+#   本文件的全局 EKF 只输出 map->odom（world_frame=map）。
+#
+# ── 航向（heading）说明（关键！MID360 IMU 无磁力计，给不出绝对 yaw）──
+#   navsat_transform 需要一个绝对航向把 GPS 的 ENU 系对齐到机器人世界系。
+#   这里用 use_odometry_yaw: true → 采用 FAST-LIO/EKF 的 yaw 作为航向来源。
+#   但 LIO 开机时 yaw=0 是“开机朝向”，不是正北。为让经纬度航点换算正确，三选一：
+#     (A) 开机时让车头朝向已知方向（如正东），并用 yaw_offset 补偿；
+#     (B) 上双天线 GPS / 带磁力计的 IMU，改 use_odometry_yaw: false，融合其绝对 yaw；
+#     (C) 开机后先直行几米，用 GPS 轨迹估航向并写入 datum。
+#   若只在“自定义局部 ENU（原点=出生点，朝向=开机朝向）”里导航，则无需对正北，
+#   默认配置即可用。
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# 全局 EKF：融合 LIO 里程(连续) + GPS(绝对) → 发布 map->odom
+# -----------------------------------------------------------------------------
+ekf_filter_node_map:
+  ros__parameters:
+    frequency: 30.0
+    sensor_timeout: 0.2
+    two_d_mode: true            # 地面机器人：锁定 z/roll/pitch，稳定且避免 LIO z 漂移干扰
+    transform_time_offset: 0.0
+    transform_timeout: 0.0
+    print_diagnostics: true
+    debug: false
+    publish_tf: true
+
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_link
+    world_frame: map            # = map → 本节点发布 map->odom
+
+    # --- 输入0：FAST-LIO 里程计（连续、平滑，用速度 + yaw 提供航向）---
+    odom0: /Odometry
+    # 顺序: [x, y, z, roll, pitch, yaw, vx, vy, vz, vroll, vpitch, vyaw, ax, ay, az]
+    odom0_config: [false, false, false,
+                   false, false, true,
+                   true,  true,  false,
+                   false, false, true,
+                   false, false, false]
+    odom0_queue_size: 10
+    odom0_differential: false
+    odom0_relative: false
+
+    # --- 输入1：IMU（只用角速度/线加速，姿态无绝对参考不喂 yaw 绝对值）---
+    imu0: /livox/imu
+    imu0_config: [false, false, false,
+                  false, false, false,
+                  false, false, false,
+                  false, false, true,
+                  true,  false, false]
+    imu0_differential: false
+    imu0_relative: false
+    imu0_queue_size: 10
+    imu0_remove_gravitational_acceleration: true
+
+    # --- 输入2：GPS（经 navsat_transform 转成 map 系位姿，提供绝对 x/y）---
+    odom1: /odometry/gps
+    odom1_config: [true,  true,  false,
+                   false, false, false,
+                   false, false, false,
+                   false, false, false,
+                   false, false, false]
+    odom1_queue_size: 10
+    odom1_differential: false
+    odom1_relative: false
+
+    # 过程噪声/初始协方差用默认即可，需要时再调。
+    use_control: false
+
+# -----------------------------------------------------------------------------
+# navsat_transform：/fix + 航向 → GPS 在 map 系的位姿 (/odometry/gps)
+# -----------------------------------------------------------------------------
+navsat_transform:
+  ros__parameters:
+    frequency: 30.0
+    delay: 3.0                       # 启动后等 TF/里程就绪
+    magnetic_declination_radians: 0.0  # 按当地磁偏角设置（用 IMU 磁力计时才有意义）
+    yaw_offset: 0.0                  # IMU/里程 yaw 的零点相对正东的偏移，见顶部航向说明
+    zero_altitude: true             # 2D 导航，忽略高程
+    broadcast_cartesian_transform: false
+    publish_filtered_gps: true       # 输出 /gps/filtered，便于在地图上核对
+    use_odometry_yaw: true           # 无磁力计：用里程/EKF 的 yaw 作航向来源
+    wait_for_datum: false            # false=用第一帧有效 GPS + 当前航向自动定原点
+    # 如需固定原点，改 wait_for_datum: true 并设 datum: [lat, lon, yaw_rad]
+    # datum: [22.5574, 113.9357, 0.0]
