@@ -1,0 +1,354 @@
+bt_navigator:
+  ros__parameters:
+    use_sim_time: True # 仿真时为 True
+    transform_tolerance: 0.1
+    goal_reached_tol: 0.25
+    global_frame: map
+    robot_base_frame: base_link
+    enable_groot_monitoring: true
+    groot_zmq_publisher_port: 1666
+    groot_zmq_server_port: 1667
+    odom_topic: /odom
+    bt_loop_duration: 100
+    default_server_timeout: 20
+    default_nav_through_poses_bt_xml: "navigate_through_poses_w_replanning_and_recovery.xml"
+    default_nav_to_pose_bt_xml: "navigate_to_pose_w_replanning_and_recovery.xml"
+    # Jazzy 的 bt_navigator 会自动加载默认 BT 节点库，这里不再手动列 plugin_lib_names，
+    # 否则会与内置默认重复注册（报 "ID [ComputePathToPose] already registered"）。
+    error_code_names:
+      - compute_path_error_code
+      - follow_path_error_code
+
+bt_navigator_rclcpp_node:
+  ros__parameters:
+    use_sim_time: True
+
+controller_server:
+  ros__parameters:
+    use_sim_time: True
+    controller_frequency: 5.0
+    min_x_velocity_threshold: 0.01
+    min_y_velocity_threshold: 0.01
+    min_theta_velocity_threshold: 0.08
+    failure_tolerance: 0.3
+    progress_checker_plugin: "progress_checker"
+    goal_checker_plugins: ["general_goal_checker"]
+    controller_plugins: ["FollowPath"]
+
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      required_movement_radius: 0.1
+      movement_time_allowance: 10.0
+    general_goal_checker:
+      stateful: True
+      plugin: "nav2_controller::SimpleGoalChecker"
+      # 室外 + 普通 GPS 精度（数米），到点容差放大；要精确到点需 RTK 并调小。
+      xy_goal_tolerance: 1.0
+      yaw_goal_tolerance: 3.14
+    FollowPath:
+      plugin: "dwb_core::DWBLocalPlanner"
+      debug_trajectory_details: True
+      min_vel_x: 0.0
+      max_vel_x: 0.8
+      min_vel_y: -0.1
+      max_vel_y: 0.1
+      min_vel_theta: -0.5
+      max_vel_theta: 0.5
+      max_speed_xy: 0.8
+      acc_lim_x: 2.5
+      acc_lim_y: 2.5
+      acc_lim_theta: 3.2
+      decel_lim_x: -2.5
+      decel_lim_y: -2.5
+      decel_lim_theta: -3.2
+      vx_samples: 10
+      vy_samples: 10
+      vtheta_samples: 20
+      sim_time: 1.7
+      linear_granularity: 0.05
+      angular_granularity: 0.025
+      transform_tolerance: 0.3
+      xy_goal_tolerance: 1.0
+      trans_stopped_velocity: 0.05
+      short_circuit_trajectory_evaluation: True
+      stateful: True
+      critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "HeadingAlign", "PathDist", "GoalDist"]
+      BaseObstacle.scale: 10.0
+      HeadingAlign.scale: 32.0
+      HeadingAlign.forward_point_distance: 0.5
+      GoalAlign.scale: 24.0
+      GoalAlign.forward_point_distance: 0.5
+      PathDist.scale: 32.0
+      GoalDist.scale: 24.0
+      RotateToGoal.scale: 32.0
+      RotateToGoal.slowing_factor: 5.0
+      RotateToGoal.lookahead_time: -2.0
+      Oscillation.scale: 32.0
+
+controller_server_rclcpp_node:
+  ros__parameters:
+    use_sim_time: True
+
+velocity_smoother:
+  ros__parameters:
+    use_sim_time: True
+    smoothing_frequency: 20.0
+    scale_velocities: False
+    feedback: "OPEN_LOOP"
+    max_velocity: [0.8, 0.1, 0.5]
+    min_velocity: [-0.8, -0.1, -0.5]
+    max_accel: [2.5, 0.5, 1.5]
+    max_decel: [-2.5, -0.5, -1.5]
+    odom_topic: "odom"
+    odom_duration: 0.1
+    deadband_velocity: [0.0, 0.0, 0.0]
+    velocity_timeout: 1.0
+
+# -----------------------------------------------------------------------------
+# 局部代价地图：滚动窗口，global_frame = odom（对 GPS 修正的 map->odom 跳变免疫）
+# -----------------------------------------------------------------------------
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      update_frequency: 10.0
+      publish_frequency: 10.0
+      global_frame: odom
+      robot_base_frame: base_link
+      use_sim_time: True
+      transform_tolerance: 1.3
+      rolling_window: true
+      width: 10
+      height: 10
+      resolution: 0.05
+      footprint: "[ [-0.4, -0.4], [-0.4, 0.4],[0.4, 0.4],[0.4, -0.4] ]"
+      plugins: ["voxel_layer", "inflation_layer"]
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.7
+      voxel_layer:
+        plugin: "nav2_costmap_2d::VoxelLayer"
+        enabled: True
+        publish_voxel_map: True
+        # origin_z 必须低于传感器在 global_frame 里的 z（日志里 mid360 约 -0.55），
+        # 否则 voxel 层无法从传感器原点 raytrace 清障。范围顶部 = origin_z + z_voxels*z_resolution。
+        origin_z: -1.0
+        z_resolution: 0.25
+        z_voxels: 16   # -1.0 ~ +2.5m
+        # min_obstacle_height 用作粗地面过滤（global_frame=odom 下的高度）。
+        max_obstacle_height: 2.0
+        min_obstacle_height: 0.0
+        mark_threshold: 0
+        observation_sources: cloud
+        cloud:
+          topic: /mid360/points_filtered
+          max_obstacle_height: 2.0
+          min_obstacle_height: 0.0
+          clearing: True
+          marking: True
+          data_type: "PointCloud2"
+          raytrace_max_range: 10.0
+          raytrace_min_range: 0.0
+          obstacle_max_range: 6.0
+          obstacle_min_range: 0.0
+      always_send_full_costmap: True
+  local_costmap_client:
+    ros__parameters:
+      use_sim_time: True
+  local_costmap_rclcpp_node:
+    ros__parameters:
+      use_sim_time: True
+
+# -----------------------------------------------------------------------------
+# 全局代价地图：滚动窗口 + 无 static_layer，未知空间视为可通行
+# 注意：滚动窗口尺寸(width/height)必须能同时覆盖机器人与当前 GPS 目标；
+#   目标更远时应把长距离拆成一串较近的 GPS waypoint（FollowGPSWaypoints）。
+# -----------------------------------------------------------------------------
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      update_frequency: 5.0
+      publish_frequency: 5.0
+      global_frame: map
+      robot_base_frame: base_link
+      use_sim_time: True
+      transform_tolerance: 1.3
+      rolling_window: true
+      width: 60
+      height: 60
+      resolution: 0.1
+      # false：未观测格子当作 FREE，配合 planner allow_unknown:true 可朝远处目标规划。
+      track_unknown_space: false
+      footprint: "[ [-0.4, -0.4], [-0.4, 0.4],[0.4, 0.4],[0.4, -0.4] ]"
+      plugins: ["voxel_layer", "inflation_layer"]
+      voxel_layer:
+        plugin: "nav2_costmap_2d::VoxelLayer"
+        enabled: True
+        publish_voxel_map: True
+        # 见 local_costmap 说明：origin_z 需低于传感器 z(约 -0.55)。
+        origin_z: -1.0
+        z_resolution: 0.25
+        z_voxels: 16   # -1.0 ~ +2.5m
+        min_obstacle_height: 0.0
+        max_obstacle_height: 2.0
+        mark_threshold: 0
+        observation_sources: cloud
+        cloud:
+          topic: /mid360/points_filtered
+          max_obstacle_height: 2.0
+          min_obstacle_height: 0.0
+          clearing: True
+          marking: True
+          data_type: "PointCloud2"
+          raytrace_max_range: 12.0
+          raytrace_min_range: 0.0
+          obstacle_max_range: 8.0
+          obstacle_min_range: 0.0
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.7
+      always_send_full_costmap: True
+  global_costmap_client:
+    ros__parameters:
+      use_sim_time: True
+  global_costmap_rclcpp_node:
+    ros__parameters:
+      use_sim_time: True
+
+planner_server:
+  ros__parameters:
+    expected_planner_frequency: 5.0
+    use_sim_time: True
+    planner_plugins: ["GridBased"]
+    GridBased:
+      plugin: "nav2_navfn_planner::NavfnPlanner"
+      tolerance: 0.5
+      use_astar: false
+      # 室外无地图：允许把路径规划进未知空间，否则目标在感知范围外会规划失败。
+      allow_unknown: true
+
+planner_server_rclcpp_node:
+  ros__parameters:
+    use_sim_time: True
+
+smoother_server:
+  ros__parameters:
+    use_sim_time: True
+    smoother_plugins: ["simple_smoother"]
+    simple_smoother:
+      plugin: "nav2_smoother::SimpleSmoother"
+      tolerance: 1.0e-10
+      max_its: 1000
+      do_refinement: True
+
+behavior_server:
+  ros__parameters:
+    costmap_topic: local_costmap/costmap_raw
+    footprint_topic: local_costmap/published_footprint
+    cycle_frequency: 20.0
+    behavior_plugins: ["spin", "backup", "drive_on_heading", "wait"]
+    spin:
+      plugin: "nav2_behaviors::Spin"
+    backup:
+      plugin: "nav2_behaviors::BackUp"
+    drive_on_heading:
+      plugin: "nav2_behaviors::DriveOnHeading"
+    wait:
+      plugin: "nav2_behaviors::Wait"
+    # 恢复行为在 odom 系里做碰撞检查，与 local_costmap 一致。
+    global_frame: odom
+    robot_base_frame: base_link
+    transform_tolerance: 0.3
+    use_sim_time: True
+    simulate_ahead_time: 2.0
+    max_rotational_vel: 0.3
+    min_rotational_vel: 0.05
+    rotational_acc_lim: 0.3
+
+robot_state_publisher:
+  ros__parameters:
+    use_sim_time: True
+
+# GPS 航点跟踪：室外用 FollowGPSWaypoints / FollowWaypoints 逐点推进。
+waypoint_follower:
+  ros__parameters:
+    loop_rate: 20
+    stop_on_failure: false
+    waypoint_task_executor_plugin: "wait_at_waypoint"
+    wait_at_waypoint:
+      plugin: "nav2_waypoint_follower::WaitAtWaypoint"
+      enabled: True
+      waypoint_pause_duration: 200
+
+# -----------------------------------------------------------------------------
+# 碰撞监视器（Jazzy 的 navigation_launch.py 默认启动并纳入生命周期管理，必须配置）。
+# 用已有点云 /mid360/points 作观测源，FootprintApproach 多边形基于局部代价地图足迹。
+# -----------------------------------------------------------------------------
+collision_monitor:
+  ros__parameters:
+    use_sim_time: True
+    base_frame_id: "base_link"
+    odom_frame_id: "odom"
+    cmd_vel_in_topic: "cmd_vel_smoothed"
+    cmd_vel_out_topic: "cmd_vel"
+    state_topic: "collision_monitor_state"
+    transform_tolerance: 0.3
+    source_timeout: 1.0
+    base_shift_correction: True
+    stop_pub_timeout: 2.0
+    polygons: ["FootprintApproach"]
+    FootprintApproach:
+      type: "polygon"
+      action_type: "approach"
+      footprint_topic: "/local_costmap/published_footprint"
+      time_before_collision: 1.2
+      simulation_time_step: 0.1
+      min_points: 6
+      visualize: False
+      # 调试：先关掉。原始 /mid360/points 含机体自身/近地面点，approach 模式会把
+      # 速度恒缩放到 0（日志 "Robot to approach ..."），导致 /cmd_vel 全 0、机器人不动。
+      # 正式启用前需改用去自身/去地面后的点云作观测源。
+      enabled: False
+    observation_sources: ["pointcloud"]
+    pointcloud:
+      type: "pointcloud"
+      topic: "/mid360/points_filtered"
+      min_height: 0.15
+      max_height: 2.0
+      enabled: True
+
+# -----------------------------------------------------------------------------
+# 自动对接服务（Jazzy navigation_launch.py 默认启动，需最小配置以通过生命周期）。
+# -----------------------------------------------------------------------------
+docking_server:
+  ros__parameters:
+    use_sim_time: True
+    controller_frequency: 50.0
+    initial_perception_timeout: 5.0
+    wait_charge_timeout: 5.0
+    dock_approach_timeout: 30.0
+    undock_linear_tolerance: 0.05
+    undock_angular_tolerance: 0.1
+    max_retries: 3
+    base_frame: "base_link"
+    fixed_frame: "odom"
+    dock_backwards: false
+    dock_prestaging_tolerance: 0.5
+    dock_plugins: ['simple_charging_dock']
+    simple_charging_dock:
+      plugin: 'opennav_docking::SimpleChargingDock'
+      docking_threshold: 0.05
+      staging_x_offset: -0.7
+      use_external_detection_pose: true
+      use_battery_status: false
+      use_stall_detection: false
+    controller:
+      k_phi: 3.0
+      k_delta: 2.0
+      v_linear_min: 0.15
+      v_linear_max: 0.15
+      use_collision_detection: true
+      costmap_topic: "local_costmap/costmap_raw"
+      footprint_topic: "local_costmap/published_footprint"
+      transform_tolerance: 0.1

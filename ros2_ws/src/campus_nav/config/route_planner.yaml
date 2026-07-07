@@ -1,0 +1,48 @@
+/**:
+  ros__parameters:
+    source: pbf
+    dev_overlay: false
+    gpkg_overlay_table: osmfile
+    table: route_edges
+    mode: walk
+    respect_oneway: false
+    allow_private: true
+    respect_turns: false
+    frame_id: campus_map
+    datum_lat: 22.574357630323675
+    datum_lon: 113.93507078035577
+    max_snap_m: 50.0
+    publish_map: false
+    publish_network: true
+    publish_buildings: true
+    building_extruded: true
+    building_default_height: 12.0
+    building_level_height: 3.0
+    buildings_pbf_path: ""
+    map_resolution: 3.0
+    network_line_width: 1.0
+    network_z: -5.0
+    network_alpha: 0.92
+    goal_navigation_enable: true
+    goal_topic: campus_goal_pose
+    robot_frame: base_link
+    nav_waypoints_topic: campus_nav_waypoints
+    nav_waypoint_markers_topic: campus_nav_waypoint_markers
+    nav_waypoint_spacing_m: 10.0
+    send_to_nav2: true
+    nav2_action_name: navigate_through_poses
+    nav2_behavior_tree: ""
+    # Rolling waypoint batching: keep every Nav2 goal inside the global costmap
+    # window. nav2_batch_radius_m must stay < global_costmap half-size (width/2).
+    nav2_batch_enable: true
+    nav2_batch_radius_m: 25.0
+    nav2_batch_advance_m: 8.0
+    nav2_reach_tol_m: 3.0
+    nav2_batch_period_s: 1.0
+    patrol_enable: true
+    patrol_name: patrol_01
+    patrol_loop: true
+    patrol_sample_m: 5.0
+    patrol_corner_angle_deg: 12.0
+    patrol_cmd: ""
+    patrol_load: ""

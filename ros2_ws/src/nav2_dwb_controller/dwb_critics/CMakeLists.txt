@@ -17,6 +17,8 @@ find_package(nav2_util REQUIRED)
 
 nav2_package()
 
+add_compile_options(-Wno-error)
+
 include_directories(
   include
 )
