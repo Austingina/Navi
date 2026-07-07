@@ -1,20 +1,4 @@
-# =============================================================================
-# outdoor_localization.launch.py — 实车 GPS 融合定位（robot_localization）
-# =============================================================================
-# 起两个节点：
-#   1. navsat_transform_node : /fix + 航向 -> /odometry/gps（GPS 在 map 系的位姿）
-#   2. ekf_filter_node (map) : 融合 /Odometry(LIO) + /odometry/gps -> 发布 map->odom
-#
-# 与本 launch 配套但需另行启动：
-#   - FAST-LIO（提供 odom->base_link 和 /Odometry）
-#   - GPS 驱动（发 /fix）、IMU（/livox/imu）
-#   - Nav2：outdoor_nav2.launch.py
-#
-# ⚠️ 必须确保没有其它节点再发 map->odom（例如 odometry_lslidar.launch.py 里的
-#    静态 map->odom，实车 GPS 方案下要去掉），否则 TF 冲突。
-#
-# 依赖：sudo apt install ros-humble-robot-localization
-# =============================================================================
+
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
