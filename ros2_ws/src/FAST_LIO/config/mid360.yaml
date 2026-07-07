@@ -57,6 +57,13 @@
             AZ_DEBOUNCE_COUNT: 50
             AZ_MOVING_TIMEOUT: 12000
             AZ_EMA_ALPHA: 0.05
+        stationary_lock:
+            enable: true
+            chassis_speed_topic: "/motion_control/chassis_speed"
+            v_thresh: 0.005
+            w_thresh: 0.005
+            min_dur: 0.3
+            chassis_timeout: 0.5
         pcd_save:
             pcd_save_en: true
             interval: -1                 # how many LiDAR frames saved in each pcd file; 

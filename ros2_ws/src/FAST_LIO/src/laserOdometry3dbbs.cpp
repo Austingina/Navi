@@ -62,6 +62,7 @@
 #include <std_msgs/msg/bool.hpp>
 #include <tf2_ros/transform_broadcaster.h>
 #include <geometry_msgs/msg/transform_stamped.hpp>
+#include <geometry_msgs/msg/twist_stamped.hpp>
 #include <geometry_msgs/msg/vector3.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <livox_ros_driver2/msg/custom_msg.hpp>
@@ -185,6 +186,23 @@ int az_moving_frames = 0;                    // 进入 moving 后累计帧数
 int elevator_move_sign  = 0;                 // +1 = 上行启动, -1 = 下行启动
 bool elevator_decel_seen = false;            // 是否已观测到反向减速
 rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr g_pub_elevator_moving;
+
+// 静止位姿锁定（stationary pose hold）
+// 检测到底盘零速且持续一段时间后，冻结 FAST-LIO 发布的位姿（pos+rot），
+// 防止静止时激光退化/抖动让 odom→base_link 漂移——导航直接吃这条 TF。
+// 重定位/换层由 flg_first_scan 显式释放旧锚点，BBS 成功后再以新位姿重锚。
+bool   stationary_lock_enable = false;       // YAML 开关，默认关闭
+bool   stationary_locked      = false;       // 当前是否处于锁定
+double STAT_V_THRESH   = 0.02;               // m/s，线速度幅值低于此视为平移停止
+double STAT_W_THRESH   = 0.02;               // rad/s，角速度低于此视为旋转停止
+double STAT_MIN_DUR    = 0.3;                // s，持续静止多久才锁定
+double STAT_CHASSIS_TIMEOUT = 0.5;           // s，底盘轮速数据新鲜度
+std::string chassis_speed_topic = "/motion_control/chassis_speed";
+double last_chassis_speed_lin   = 0.0;       // 最近底盘线速度幅值
+double last_chassis_speed_ang   = 0.0;       // 最近底盘角速度幅值
+double last_chassis_speed_stamp = -1.0;      // 最近底盘速度接收时刻（node clock，秒）
+double stat_lock_since = -1.0;               // 静止候选起点（秒）
+state_ikfom stat_lock_state;                 // 锁定锚点（用其 pos+rot）
 
 shared_ptr<Preprocess> p_pre(new Preprocess());
 shared_ptr<ImuProcess> p_imu(new ImuProcess());
@@ -1226,6 +1244,13 @@ public:
         this->declare_parameter<int>("elevator_z_moving.AZ_DEBOUNCE_COUNT", 50);
         this->declare_parameter<int>("elevator_z_moving.AZ_MOVING_TIMEOUT", 12000);
 
+        this->declare_parameter<bool>("stationary_lock.enable", false);
+        this->declare_parameter<std::string>("stationary_lock.chassis_speed_topic", "/motion_control/chassis_speed");
+        this->declare_parameter<double>("stationary_lock.v_thresh", 0.02);
+        this->declare_parameter<double>("stationary_lock.w_thresh", 0.02);
+        this->declare_parameter<double>("stationary_lock.min_dur", 0.3);
+        this->declare_parameter<double>("stationary_lock.chassis_timeout", 0.5);
+
         this->get_parameter_or<bool>("publish.path_en", path_en, true);
         this->get_parameter_or<bool>("publish.effect_map_en", effect_pub_en, false);
         this->get_parameter_or<bool>("publish.map_en", map_pub_en, false);
@@ -1279,6 +1304,18 @@ public:
             "AZ_RELEASE_THRESH=%.4f, AZ_DEBOUNCE_COUNT=%d, AZ_MOVING_TIMEOUT=%d",
             (int)elevator_z_moving_enable, AZ_EMA_ALPHA, AZ_TRIGGER_THRESH,
             AZ_RELEASE_THRESH, AZ_DEBOUNCE_COUNT, AZ_MOVING_TIMEOUT);
+
+        this->get_parameter_or<bool>("stationary_lock.enable", stationary_lock_enable, false);
+        this->get_parameter_or<std::string>("stationary_lock.chassis_speed_topic", chassis_speed_topic, std::string("/motion_control/chassis_speed"));
+        this->get_parameter_or<double>("stationary_lock.v_thresh", STAT_V_THRESH, 0.02);
+        this->get_parameter_or<double>("stationary_lock.w_thresh", STAT_W_THRESH, 0.02);
+        this->get_parameter_or<double>("stationary_lock.min_dur", STAT_MIN_DUR, 0.3);
+        this->get_parameter_or<double>("stationary_lock.chassis_timeout", STAT_CHASSIS_TIMEOUT, 0.5);
+        RCLCPP_INFO(this->get_logger(),
+            "stationary_lock config: enable=%d, topic=%s, v_thresh=%.3f, w_thresh=%.3f, "
+            "min_dur=%.2f, chassis_timeout=%.2f",
+            (int)stationary_lock_enable, chassis_speed_topic.c_str(), STAT_V_THRESH, STAT_W_THRESH,
+            STAT_MIN_DUR, STAT_CHASSIS_TIMEOUT);
 
 	pcd_save_en = false;
 
@@ -1362,6 +1399,21 @@ public:
             "change_map", 10,
             std::bind(&LaserOdometryNode::change_map_callback, this, std::placeholders::_1));
 
+        if (stationary_lock_enable) {
+            sub_chassis_speed_ = this->create_subscription<geometry_msgs::msg::TwistStamped>(
+                chassis_speed_topic, rclcpp::QoS(rclcpp::KeepLast(30)).reliable(),
+                [this](const geometry_msgs::msg::TwistStamped::SharedPtr msg) {
+                    last_chassis_speed_lin = std::sqrt(
+                        msg->twist.linear.x * msg->twist.linear.x +
+                        msg->twist.linear.y * msg->twist.linear.y);
+                    last_chassis_speed_ang = std::fabs(msg->twist.angular.z);
+                    last_chassis_speed_stamp = this->now().seconds();
+                });
+            RCLCPP_INFO(this->get_logger(),
+                "stationary_lock enabled, subscribing chassis speed: %s",
+                chassis_speed_topic.c_str());
+        }
+
         RCLCPP_INFO(this->get_logger(), "Node init finished.");
     }
 
@@ -1389,6 +1441,11 @@ private:
             //     << "sync_packages now: " << now.seconds() << std::endl;
             if (flg_first_scan)
             {
+                // 重定位/换层进行中：丢弃旧的静止锚点。待 BBS 在新地图定位成功
+                // （flg_first_scan=false）且机器人仍静止后，apply_stationary_lock 会以
+                // 【新位姿】重新锚定，避免被旧楼层锚点拽回。
+                stationary_locked = false;
+                stat_lock_since = -1.0;
                 std::cout<<"flg_first_scan"<<std::endl;
                 if(global_localize(pubLaserCloudFull_, ndt_thresh))
                 {first_lidar_time = Measures.lidar_beg_time;
@@ -1503,6 +1560,9 @@ private:
                 // 机器人在电梯升降期间可能仍在水平方向移动，强行锁 XY 会导致位置错误。
                 kf.change_x(s_tmp);
             }
+
+            // 静止位姿锁定：放在最后，必要时整帧位姿钉回锚点（凌驾于电梯 Z 锁）
+            apply_stationary_lock();
 
             state_point = kf.get_x();
             euler_cur = SO3ToEuler(state_point.rot);
@@ -1678,6 +1738,59 @@ private:
         RCLCPP_INFO(this->get_logger(), "Map switched to: %s, relocalization triggered.", new_map_path.c_str());
     }
 
+    // 静止位姿锁定：检测到底盘持续零速时，把 kf 状态的 pos+rot 钉回锚点，
+    // 冻结发布位姿；估计跳变过大（多半是 BBS 重定位）时重锚而非对抗。
+    // 应在激光 KF 更新之后、发布里程计之前调用。
+    void apply_stationary_lock()
+    {
+        if (!stationary_lock_enable) return;
+
+        const double now_t = this->now().seconds();
+        const bool fresh = (last_chassis_speed_stamp > 0.0) &&
+                           (now_t - last_chassis_speed_stamp < STAT_CHASSIS_TIMEOUT);
+        const bool slow = fresh &&
+                          (last_chassis_speed_lin < STAT_V_THRESH) &&
+                          (last_chassis_speed_ang < STAT_W_THRESH);
+
+        if (!slow) {
+            if (stationary_locked) {
+                RCLCPP_INFO(this->get_logger(), "Stationary lock RELEASED (moving)");
+            }
+            stationary_locked = false;
+            stat_lock_since = -1.0;
+            return;
+        }
+
+        if (stat_lock_since < 0.0) {
+            stat_lock_since = now_t;   // 静止候选，等待持续
+            return;
+        }
+
+        if (!stationary_locked) {
+            if (now_t - stat_lock_since < STAT_MIN_DUR) return;
+            stationary_locked = true;
+            stat_lock_state = kf.get_x();   // 锚定（换层/重定位后由主循环释放，会以新位姿重新锚定）
+            RCLCPP_INFO(this->get_logger(),
+                "Stationary lock ENGAGED at (%.3f, %.3f, %.3f)",
+                stat_lock_state.pos(0), stat_lock_state.pos(1), stat_lock_state.pos(2));
+        }
+        // 已锁定：静止期间始终把位姿钉回锚点，不做基于跳变量的自动重锚。
+        // 重定位/换层造成的"真跳变"由主循环 flg_first_scan 分支显式释放锁来处理，
+        // 这样静止时 FAST-LIO 自身的 yaw/位置漂移再大也只会被钉回，不会误重锚。
+
+        // 把位姿钉回锚点并清零速度
+        state_ikfom s = kf.get_x();
+        s.pos = stat_lock_state.pos;
+        s.rot = stat_lock_state.rot;
+        s.vel = Eigen::Vector3d(0.0, 0.0, 0.0);
+        if (elevator_mode) {
+            // 电梯模式下 Z 仍由 elevator_mode 的锁定值负责；静止锁只钉 XY/yaw。
+            s.pos(2) = locked_z_pos;
+            s.vel(2) = locked_z_vel;
+        }
+        kf.change_x(s);
+    }
+
 private:
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudFull_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudFull_body_;
@@ -1695,6 +1808,7 @@ private:
     rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr elevator_srv_;
     rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr relocalize_pose_sub_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr change_map_sub_;
+    rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr sub_chassis_speed_;
 
     bool effect_pub_en = false, map_pub_en = false;
     int effect_feat_num = 0, frame_num = 0;
