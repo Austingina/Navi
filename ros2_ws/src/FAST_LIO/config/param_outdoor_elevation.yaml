@@ -1,0 +1,365 @@
+# =============================================================================
+# 室外导航参数（基于“实时 elevation 图 + 地面感知 2D scan”的避障链）
+#
+# 关键思路（修正版）：
+#   本系统的避障链是：
+#     实时点云 /cloud_registered_body
+#       + elevation 参照图 /grid_map_from_raw_pointcloud(layer=elevation)
+#       └─(cloud_to_2d_laserscan：逐格“点高 - 地面高”过滤)→ /livox_scan2(LaserScan)
+#           └─ nav2 ObstacleLayer → costmap
+#   因为地面过滤是“逐格相对高程”的，斜坡地面(z≈elev)会被正确剔除，
+#   斜坡本身不会被当成墙 —— 这正是室外坡地需要的。
+#
+#   室外唯一要改的，是把 elevation 参照图从“静态 PCD 一次性”换成
+#   “实时滚动 elevation 节点”(仍发布 /grid_map_from_raw_pointcloud 的 elevation 层)。
+#   ★ 因此本 costmap 配置不再需要 StaticLayer / traversability OccupancyGrid，
+#     直接复用成熟的 ObstacleLayer + /livox_scan2 链即可。
+#
+# 与 param_outdoor.yaml 的区别：
+#   - 障碍源从 VoxelLayer(/mid360/points_filtered，按固定高度阈值) 换成
+#     ObstacleLayer(/livox_scan2，地面感知 2D scan)，避免坡地被误判。
+# 与 param_r1pro.yaml 的区别：
+#   - 无 static_layer(不依赖预建静态地图)、costmap 全部 rolling、
+#     local 用 odom 系(对 GPS 修正跳变免疫)、planner allow_unknown、GPS 容差放大。
+#
+# 依赖：cloud_to_2d_laserscan 节点须在跑，且其 elevation_topic 指向实时 elevation 节点。
+# =============================================================================
+
+bt_navigator:
+  ros__parameters:
+    use_sim_time: True # 仿真时为 True
+    transform_tolerance: 0.1
+    goal_reached_tol: 0.25
+    global_frame: map
+    robot_base_frame: base_link
+    enable_groot_monitoring: true
+    groot_zmq_publisher_port: 1666
+    groot_zmq_server_port: 1667
+    odom_topic: /odom
+    bt_loop_duration: 100
+    default_server_timeout: 20
+    default_nav_through_poses_bt_xml: "navigate_through_poses_w_replanning_and_recovery.xml"
+    default_nav_to_pose_bt_xml: "navigate_to_pose_w_replanning_and_recovery.xml"
+    # Humble does not auto-load all default BT nodes, so list the BT plugins explicitly.
+    plugin_lib_names:
+      - nav2_compute_path_to_pose_action_bt_node
+      - nav2_compute_path_through_poses_action_bt_node
+      - nav2_smooth_path_action_bt_node
+      - nav2_follow_path_action_bt_node
+      - nav2_spin_action_bt_node
+      - nav2_wait_action_bt_node
+      - nav2_assisted_teleop_action_bt_node
+      - nav2_back_up_action_bt_node
+      - nav2_drive_on_heading_bt_node
+      - nav2_clear_costmap_service_bt_node
+      - nav2_is_stuck_condition_bt_node
+      - nav2_goal_reached_condition_bt_node
+      - nav2_goal_updated_condition_bt_node
+      - nav2_globally_updated_goal_condition_bt_node
+      - nav2_is_path_valid_condition_bt_node
+      - nav2_initial_pose_received_condition_bt_node
+      - nav2_reinitialize_global_localization_service_bt_node
+      - nav2_rate_controller_bt_node
+      - nav2_distance_controller_bt_node
+      - nav2_speed_controller_bt_node
+      - nav2_truncate_path_action_bt_node
+      - nav2_truncate_path_local_action_bt_node
+      - nav2_goal_updater_node_bt_node
+      - nav2_recovery_node_bt_node
+      - nav2_pipeline_sequence_bt_node
+      - nav2_round_robin_node_bt_node
+      - nav2_transform_available_condition_bt_node
+      - nav2_time_expired_condition_bt_node
+      - nav2_path_expiring_timer_condition
+      - nav2_distance_traveled_condition_bt_node
+      - nav2_single_trigger_bt_node
+      - nav2_goal_updated_controller_bt_node
+      - nav2_is_battery_low_condition_bt_node
+      - nav2_navigate_through_poses_action_bt_node
+      - nav2_navigate_to_pose_action_bt_node
+      - nav2_remove_passed_goals_action_bt_node
+      - nav2_planner_selector_bt_node
+      - nav2_controller_selector_bt_node
+      - nav2_goal_checker_selector_bt_node
+      - nav2_controller_cancel_bt_node
+      - nav2_path_longer_on_approach_bt_node
+      - nav2_wait_cancel_bt_node
+      - nav2_spin_cancel_bt_node
+      - nav2_back_up_cancel_bt_node
+      - nav2_assisted_teleop_cancel_bt_node
+      - nav2_is_battery_charging_condition_bt_node
+    error_code_names:
+      - compute_path_error_code
+      - follow_path_error_code
+
+bt_navigator_rclcpp_node:
+  ros__parameters:
+    use_sim_time: True
+
+bt_navigator_navigate_through_poses_rclcpp_node:
+  ros__parameters:
+    use_sim_time: True
+
+bt_navigator_navigate_to_pose_rclcpp_node:
+  ros__parameters:
+    use_sim_time: True
+
+controller_server:
+  ros__parameters:
+    use_sim_time: True
+    controller_frequency: 5.0
+    min_x_velocity_threshold: 0.01
+    min_y_velocity_threshold: 0.01
+    min_theta_velocity_threshold: 0.08
+    failure_tolerance: 0.3
+    progress_checker_plugin: "progress_checker"
+    goal_checker_plugins: ["general_goal_checker"]
+    controller_plugins: ["FollowPath"]
+
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      required_movement_radius: 0.1
+      movement_time_allowance: 10.0
+    general_goal_checker:
+      stateful: True
+      plugin: "nav2_controller::SimpleGoalChecker"
+      # 室外 + 普通 GPS 精度（数米），到点容差放大；要精确到点需 RTK 并调小。
+      xy_goal_tolerance: 1.0
+      yaw_goal_tolerance: 3.14
+    FollowPath:
+      plugin: "dwb_core::DWBLocalPlanner"
+      debug_trajectory_details: True
+      min_vel_x: 0.0
+      max_vel_x: 0.8
+      min_vel_y: -0.1
+      max_vel_y: 0.1
+      min_vel_theta: -0.5
+      max_vel_theta: 0.5
+      max_speed_xy: 0.8
+      acc_lim_x: 2.5
+      acc_lim_y: 2.5
+      acc_lim_theta: 3.2
+      decel_lim_x: -2.5
+      decel_lim_y: -2.5
+      decel_lim_theta: -3.2
+      vx_samples: 10
+      vy_samples: 10
+      vtheta_samples: 20
+      sim_time: 1.7
+      linear_granularity: 0.05
+      angular_granularity: 0.025
+      transform_tolerance: 0.3
+      xy_goal_tolerance: 1.0
+      trans_stopped_velocity: 0.05
+      short_circuit_trajectory_evaluation: True
+      stateful: True
+      critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "HeadingAlign", "PathDist", "GoalDist"]
+      BaseObstacle.scale: 10.0
+      HeadingAlign.scale: 32.0
+      HeadingAlign.forward_point_distance: 0.5
+      GoalAlign.scale: 24.0
+      GoalAlign.forward_point_distance: 0.5
+      PathDist.scale: 32.0
+      GoalDist.scale: 24.0
+      RotateToGoal.scale: 32.0
+      RotateToGoal.slowing_factor: 5.0
+      RotateToGoal.lookahead_time: -2.0
+      Oscillation.scale: 32.0
+
+controller_server_rclcpp_node:
+  ros__parameters:
+    use_sim_time: True
+
+velocity_smoother:
+  ros__parameters:
+    use_sim_time: True
+    smoothing_frequency: 20.0
+    scale_velocities: False
+    feedback: "OPEN_LOOP"
+    max_velocity: [0.8, 0.1, 0.5]
+    min_velocity: [-0.8, -0.1, -0.5]
+    max_accel: [2.5, 0.5, 1.5]
+    max_decel: [-2.5, -0.5, -1.5]
+    odom_topic: "odom"
+    odom_duration: 0.1
+    deadband_velocity: [0.0, 0.0, 0.0]
+    velocity_timeout: 1.0
+
+# -----------------------------------------------------------------------------
+# 局部代价地图：滚动窗口，global_frame = odom（对 GPS 修正的 map->odom 跳变免疫）
+# 障碍源 = /livox_scan2（地面感知 2D scan，来自 cloud_to_2d_laserscan）
+# -----------------------------------------------------------------------------
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      update_frequency: 10.0
+      publish_frequency: 10.0
+      global_frame: odom
+      robot_base_frame: base_link
+      use_sim_time: True
+      transform_tolerance: 1.3
+      rolling_window: true
+      width: 10
+      height: 10
+      resolution: 0.05
+      footprint: "[ [-0.4, -0.4], [-0.4, 0.4],[0.4, 0.4],[0.4, -0.4] ]"
+      plugins: ["obstacle_layer", "inflation_layer"]
+
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        combination_method: 1
+        footprint_clearing_enabled: True
+        # scan 已做地面感知过滤，高度范围放宽即可（2D 单线，本无高度维度）。
+        min_obstacle_height: -5.0
+        max_obstacle_height: 5.0
+        observation_sources: lidar_scan
+        lidar_scan:
+          topic: /livox_scan2
+          data_type: "LaserScan"
+          clearing: True
+          marking: True
+          inf_is_valid: false
+          observation_persistence: 0.0
+          raytrace_max_range: 10.0
+          raytrace_min_range: 0.0
+          obstacle_max_range: 6.0
+          obstacle_min_range: 0.0
+          max_obstacle_height: 5.0
+          min_obstacle_height: -5.0
+
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.7
+
+      always_send_full_costmap: True
+  local_costmap_client:
+    ros__parameters:
+      use_sim_time: True
+  local_costmap_rclcpp_node:
+    ros__parameters:
+      use_sim_time: True
+
+# -----------------------------------------------------------------------------
+# 全局代价地图：滚动窗口 + 无 static_layer，未知空间视为可通行
+# 注意：滚动窗口尺寸(width/height)必须能同时覆盖机器人与当前 GPS 目标；
+#   目标更远时应把长距离拆成一串较近的 GPS waypoint（FollowGPSWaypoints）。
+# -----------------------------------------------------------------------------
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      update_frequency: 5.0
+      publish_frequency: 5.0
+      global_frame: map
+      robot_base_frame: base_link
+      use_sim_time: True
+      transform_tolerance: 1.3
+      rolling_window: true
+      width: 60
+      height: 60
+      resolution: 0.1
+      # false：未观测格子当作 FREE，配合 planner allow_unknown:true 可朝远处目标规划。
+      track_unknown_space: false
+      footprint: "[ [-0.4, -0.4], [-0.4, 0.4],[0.4, 0.4],[0.4, -0.4] ]"
+      plugins: ["obstacle_layer", "inflation_layer"]
+
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        combination_method: 1
+        footprint_clearing_enabled: True
+        min_obstacle_height: -5.0
+        max_obstacle_height: 5.0
+        observation_sources: lidar_scan
+        lidar_scan:
+          topic: /livox_scan2
+          data_type: "LaserScan"
+          clearing: True
+          marking: True
+          inf_is_valid: false
+          observation_persistence: 0.0
+          raytrace_max_range: 12.0
+          raytrace_min_range: 0.0
+          obstacle_max_range: 8.0
+          obstacle_min_range: 0.0
+          max_obstacle_height: 5.0
+          min_obstacle_height: -5.0
+
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.7
+
+      always_send_full_costmap: True
+  global_costmap_client:
+    ros__parameters:
+      use_sim_time: True
+  global_costmap_rclcpp_node:
+    ros__parameters:
+      use_sim_time: True
+
+planner_server:
+  ros__parameters:
+    expected_planner_frequency: 5.0
+    use_sim_time: True
+    planner_plugins: ["GridBased"]
+    GridBased:
+      plugin: "nav2_navfn_planner/NavfnPlanner"
+      tolerance: 0.5
+      use_astar: false
+      # 室外无地图：允许把路径规划进未知空间，否则目标在感知范围外会规划失败。
+      allow_unknown: true
+
+planner_server_rclcpp_node:
+  ros__parameters:
+    use_sim_time: True
+
+smoother_server:
+  ros__parameters:
+    use_sim_time: True
+    smoother_plugins: ["simple_smoother"]
+    simple_smoother:
+      plugin: "nav2_smoother::SimpleSmoother"
+      tolerance: 1.0e-10
+      max_its: 1000
+      do_refinement: True
+
+behavior_server:
+  ros__parameters:
+    costmap_topic: local_costmap/costmap_raw
+    footprint_topic: local_costmap/published_footprint
+    cycle_frequency: 20.0
+    behavior_plugins: ["spin", "backup", "drive_on_heading", "wait"]
+    spin:
+      plugin: "nav2_behaviors/Spin"
+    backup:
+      plugin: "nav2_behaviors/BackUp"
+    drive_on_heading:
+      plugin: "nav2_behaviors/DriveOnHeading"
+    wait:
+      plugin: "nav2_behaviors/Wait"
+    # 恢复行为在 odom 系里做碰撞检查，与 local_costmap 一致。
+    global_frame: odom
+    robot_base_frame: base_link
+    transform_tolerance: 0.3
+    use_sim_time: True
+    simulate_ahead_time: 2.0
+    max_rotational_vel: 0.3
+    min_rotational_vel: 0.05
+    rotational_acc_lim: 0.3
+
+robot_state_publisher:
+  ros__parameters:
+    use_sim_time: True
+
+# GPS 航点跟踪：室外用 FollowGPSWaypoints / FollowWaypoints 逐点推进。
+waypoint_follower:
+  ros__parameters:
+    loop_rate: 20
+    stop_on_failure: false
+    waypoint_task_executor_plugin: "wait_at_waypoint"
+    wait_at_waypoint:
+      plugin: "nav2_waypoint_follower::WaitAtWaypoint"
+      enabled: True
+      waypoint_pause_duration: 200

@@ -3,13 +3,14 @@ from ament_index_python.packages import get_package_share_directory
 from nav2_common.launch import RewrittenYaml
 from launch_ros.actions import Node
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, SetEnvironmentVariable
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 
 
 def generate_launch_description():
-    use_sim_time = LaunchConfiguration('use_sim_time', default='true')
+    use_sim_time = LaunchConfiguration('use_sim_time', default='True')
+    use_composition = LaunchConfiguration('use_composition', default='False')
 
     fast_lio_dir = get_package_share_directory('fast_lio')
     fast_lio_launch = os.path.join(fast_lio_dir, 'launch')
@@ -55,6 +56,19 @@ def generate_launch_description():
             'params',
             default_value=param_file,
             description='Full path to the outdoor Nav2 param file'),
+        DeclareLaunchArgument(
+            'use_sim_time',
+            default_value='True',
+            description='Use simulation clock if true'),
+        DeclareLaunchArgument(
+            'use_composition',
+            default_value='False',
+            description='Use Nav2 composable container if true'),
+        DeclareLaunchArgument(
+            'rmw_implementation',
+            default_value='rmw_cyclonedds_cpp',
+            description='ROS middleware implementation for Nav2 processes'),
+        SetEnvironmentVariable('RMW_IMPLEMENTATION', rmw_implementation),
 
         # cmd_vel_bridge_node,
         IncludeLaunchDescription(
@@ -63,6 +77,7 @@ def generate_launch_description():
             launch_arguments={
                 'map': map_file,
                 'use_sim_time': use_sim_time,
+                'use_composition': use_composition,
                 'params_file': rewritten_params}.items(),
         ),
     ])

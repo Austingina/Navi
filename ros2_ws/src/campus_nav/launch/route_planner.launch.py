@@ -18,22 +18,27 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 
-def _nav_test_root() -> str:
-    return "/home/ai-sz-a26317-u1/nav_test"
+def _pkg_source_root() -> str:
+    """Return the campus_nav package source directory.
+
+    Derived from this launch file's location so paths stay valid with
+    colcon --symlink-install without depending on an external nav_test tree.
+    """
+    return os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 
 
 def generate_launch_description():
-    nav_root = _nav_test_root()
+    pkg_root = _pkg_source_root()
     pkg_share = get_package_share_directory("campus_nav")
     default_pbf = os.environ.get(
         "CAMPUS_PBF_PATH",
-        os.path.join(nav_root, "xili_5km_merged.osm.pbf"),
+        os.path.join(pkg_root, "xili_5km_merged.osm.pbf"),
     )
     default_gpkg_overlay = os.environ.get(
         "CAMPUS_GPKG_OVERLAY",
-        os.path.join(nav_root, "campus_nav", "new_road.gpkg"),
+        os.path.join(pkg_root, "new_road.gpkg"),
     )
-    default_patrol_out = os.path.join(nav_root, "campus_nav", "patrol_routes")
+    default_patrol_out = os.path.join(pkg_root, "patrol_routes")
 
     return LaunchDescription(
         [

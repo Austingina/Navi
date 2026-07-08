@@ -1,38 +1,3 @@
-#!/usr/bin/env python3
-"""ROS 2 (Humble) campus route planner.
-
-Builds a routing graph from the OSM GeoPackage and plans an A* path in a local
-ENU `campus_map` frame. Designed to run under the ROS system Python (rclpy +
-numpy), with no extra pip dependencies.
-
-This package does **not** publish any TF.  Campus geometry and paths use the
-`campus_map` frame (fixed datum_lat/datum_lon).  Robot localization
-(`map` -> `odom` -> `base_link`) is left to your GPS + FAST-LIO fusion stack.
-To overlay the robot on the campus map in RViz, publish `map` -> `campus_map`
-from that stack (identity if both frames share the same datum).
-
-Interface
----------
-Subscribes:
-    /campus_goal_pose (geometry_msgs/PoseStamped) -> campus road-network goal
-Publishes:
-    /campus_path          (nav_msgs/Path) -> full OSM route preview
-    /campus_nav_waypoints (nav_msgs/Path) -> sampled poses sent to Nav2
-    /campus_nav_waypoint_markers (MarkerArray) -> numbered waypoint markers
-
-All planar coordinates are ENU meters relative to the `datum_lat`/`datum_lon`
-origin.
-
-Run:
-    source /opt/ros/jazzy/setup.bash   # or humble
-    source /path/to/nav_test/env.sh    # sets NAV_TEST_ROOT + overlays ros_ws/install/
-    cd ros_ws && colcon build --packages-select campus_nav
-    ros2 launch campus_nav route_planner.launch.py
-
-    # or directly:
-    ros2 run campus_nav route_planner_node --ros-args -p pbf_path:=...
-"""
-
 import json
 import math
 import os
@@ -80,34 +45,41 @@ except ImportError:
     HAVE_MARKERS = False
 
 
-def _nav_test_root() -> str:
+def _pkg_data_root() -> str:
+    """Return the directory holding campus_nav data files.
+
+    Honors NAV_TEST_ROOT when set; otherwise derives the package source
+    directory from this file's location (realpath so colcon
+    --symlink-install resolves back to the source tree).
+    Layout: .../src/campus_nav/campus_nav/route_planner_node.py
+            -> data root: .../src/campus_nav
+    """
     root = os.environ.get("NAV_TEST_ROOT", "")
     if root:
         return root
-    # Source tree: .../nav_test/ros_ws/src/campus_nav/campus_nav/route_planner_node.py
-    return "/home/ai-sz-a26317-u1/nav_test"
+    return os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 
 
 def _default_pbf_path() -> str:
     return os.environ.get(
         "CAMPUS_PBF_PATH",
-        os.path.join(_nav_test_root(), "xili_5km_merged.osm.pbf"),
+        os.path.join(_pkg_data_root(), "xili_5km_with_extra.osm.pbf"),
     )
 
 
 def _default_gpkg_overlay() -> str:
     return os.environ.get(
         "CAMPUS_GPKG_OVERLAY",
-        os.path.join(_nav_test_root(), "campus_nav", "new_road.gpkg"),
+        os.path.join(_pkg_data_root(), "new_road.gpkg"),
     )
 
 
 def _default_gpkg_path() -> str:
-    return os.path.join(_nav_test_root(), "campus_nav.gpkg")
+    return os.path.join(_pkg_data_root(), "campus_nav.gpkg")
 
 
 def _default_patrol_out_dir() -> str:
-    d = os.path.join(_nav_test_root(), "campus_nav", "patrol_routes")
+    d = os.path.join(_pkg_data_root(), "patrol_routes")
     os.makedirs(d, exist_ok=True)
     return d
 

@@ -5,3 +5,4 @@ ros2_ws/install
 logs/
 mapdata/
 __pycache__/
+AGENTS.md
