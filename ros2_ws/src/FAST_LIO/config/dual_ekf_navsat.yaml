@@ -34,7 +34,7 @@ ekf_filter_node_map:
     transform_time_offset: 0.0
     transform_timeout: 0.0
     print_diagnostics: true
-    debug: false
+    debug: true
     publish_tf: true
 
     map_frame: map
@@ -50,21 +50,21 @@ ekf_filter_node_map:
                    true,  true,  false,
                    false, false, true,
                    false, false, false]
+    
     odom0_queue_size: 10
     odom0_differential: false
     odom0_relative: false
 
-    # --- 输入1：IMU（只用角速度/线加速，姿态无绝对参考不喂 yaw 绝对值）---
-    imu0: /livox/imu
-    imu0_config: [false, false, false,
-                  false, false, false,
-                  false, false, false,
-                  false, false, true,
-                  true,  false, false]
-    imu0_differential: false
-    imu0_relative: false
-    imu0_queue_size: 10
-    imu0_remove_gravitational_acceleration: true
+    # imu0: /livox/imu
+    # imu0_config: [false, false, false,
+    #               false, false, false,
+    #               false, false, false,
+    #               false, false, false,
+    #               false,  false, false]
+    # imu0_differential: false
+    # imu0_relative: false
+    # imu0_queue_size: 10
+    # imu0_remove_gravitational_acceleration: true
 
     # --- 输入2：GPS（经 navsat_transform 转成 map 系位姿，提供绝对 x/y）---
     odom1: /odometry/gps
@@ -89,7 +89,7 @@ navsat_transform:
     delay: 3.0                       # 启动后等 TF/里程就绪
     magnetic_declination_radians: 0.0  # 按当地磁偏角设置（用 IMU 磁力计时才有意义）
     yaw_offset: 0.0                  # IMU/里程 yaw 的零点相对正东的偏移，见顶部航向说明
-    zero_altitude: true             # 2D 导航，忽略高程
+    zero_altitude: true
     broadcast_cartesian_transform: false
     publish_filtered_gps: true       # 输出 /gps/filtered，便于在地图上核对
     use_odometry_yaw: true           # 无磁力计：用里程/EKF 的 yaw 作航向来源

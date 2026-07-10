@@ -9,7 +9,7 @@ from launch.substitutions import LaunchConfiguration
 
 
 def generate_launch_description():
-    use_sim_time = LaunchConfiguration('use_sim_time', default='True')
+    use_sim_time = LaunchConfiguration('use_sim_time', default='true')
     use_composition = LaunchConfiguration('use_composition', default='False')
 
     fast_lio_dir = get_package_share_directory('fast_lio')
@@ -58,17 +58,13 @@ def generate_launch_description():
             description='Full path to the outdoor Nav2 param file'),
         DeclareLaunchArgument(
             'use_sim_time',
-            default_value='True',
+            default_value='true',
             description='Use simulation clock if true'),
         DeclareLaunchArgument(
             'use_composition',
             default_value='False',
             description='Use Nav2 composable container if true'),
-        DeclareLaunchArgument(
-            'rmw_implementation',
-            default_value='rmw_cyclonedds_cpp',
-            description='ROS middleware implementation for Nav2 processes'),
-        SetEnvironmentVariable('RMW_IMPLEMENTATION', rmw_implementation),
+
 
         # cmd_vel_bridge_node,
         IncludeLaunchDescription(

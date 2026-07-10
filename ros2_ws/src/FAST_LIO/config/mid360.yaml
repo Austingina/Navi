@@ -3,7 +3,7 @@
         feature_extract_enable: false
         point_filter_num: 3
         max_iteration: 3
-        filter_size_surf: 0.5 //used for feats_undistort,
+        filter_size_surf: 0.5 #used for feats_undistort,
         filter_size_map: 0.5 #used for ikd-tree, incremental map
         cube_side_length: 1000.0
         runtime_pos_log_enable: false
