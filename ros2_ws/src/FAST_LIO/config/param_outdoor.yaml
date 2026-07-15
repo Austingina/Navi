@@ -185,20 +185,18 @@ local_costmap:
         plugin: "nav2_costmap_2d::VoxelLayer"
         enabled: True
         publish_voxel_map: True
-        # origin_z 必须低于传感器在 global_frame 里的 z（日志里 mid360 约 -0.55），
-        # 否则 voxel 层无法从传感器原点 raytrace 清障。范围顶部 = origin_z + z_voxels*z_resolution。
-        origin_z: -1.0
-        z_resolution: 0.25
-        z_voxels: 16   # -1.0 ~ +2.5m
+        origin_z: -0.5
+        z_resolution: 0.15
+        z_voxels: 16   # -0.5 ~ +2.5m
         # min_obstacle_height 用作粗地面过滤（global_frame=odom 下的高度）。
         max_obstacle_height: 1.5
-        min_obstacle_height: -0.6
+        min_obstacle_height: -0.2
         mark_threshold: 0
         observation_sources: cloud
         cloud:
-          topic: /mid360/points_filtered
+          topic: /cloud_registered_body
           max_obstacle_height: 1.5
-          min_obstacle_height: -0.6
+          min_obstacle_height: -0.2
           clearing: True
           marking: True
           data_type: "PointCloud2"
@@ -241,17 +239,17 @@ global_costmap:
         enabled: True
         publish_voxel_map: True
         # 见 local_costmap 说明：origin_z 需低于传感器 z(约 -0.55)。
-        origin_z: -1.0
-        z_resolution: 0.25
-        z_voxels: 16   # -1.0 ~ +2.5m
-        min_obstacle_height: -0.6
+        origin_z: -0.5
+        z_resolution: 0.15
+        z_voxels: 16   # -0.5 ~ +2.5m
+        min_obstacle_height: -0.2
         max_obstacle_height: 1.5
         mark_threshold: 0
         observation_sources: cloud
         cloud:
-          topic: /mid360/points_filtered
+          topic: /cloud_registered_body
           max_obstacle_height: 1.5
-          min_obstacle_height: -0.6
+          min_obstacle_height: -0.2
           clearing: True
           marking: True
           data_type: "PointCloud2"

@@ -2,8 +2,9 @@
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 
@@ -17,7 +18,7 @@ def generate_launch_description():
 
     # FAST-LIO sensor config, overridable from CLI.
     config_path = LaunchConfiguration('config_path', default=os.path.join(
-        fast_lio_dir, 'config', 'mid360.yaml'))
+        fast_lio_dir, 'config', 'mid360_sim.yaml'))
 
     declare_use_sim_time = DeclareLaunchArgument(
         'use_sim_time', default_value='true',
@@ -28,13 +29,18 @@ def generate_launch_description():
     declare_config_path = DeclareLaunchArgument(
         'config_path', default_value=config_path,
         description='FAST-LIO sensor yaml config path')
+    enable_elevation = LaunchConfiguration('enable_elevation')
+    declare_enable_elevation = DeclareLaunchArgument(
+        'enable_elevation', default_value='true',
+        description='Build the cupy elevation map and terrain-aware LaserScan')
+    use_cupy_elevation = IfCondition(enable_elevation)
 
     # Who publishes map->odom:  'ekf' = robot_localization EKF,
     #                           'gps' = simple translation-only node.
     # navsat runs in both cases (it produces /odometry/gps).
     map_odom_source = LaunchConfiguration('map_odom_source', default='gps')
     declare_map_odom_source = DeclareLaunchArgument(
-        'map_odom_source', default_value='ekf',
+        'map_odom_source', default_value='gps',
         description="map->odom source: 'ekf' or 'gps'")
     use_ekf = IfCondition(PythonExpression(
         ["'", map_odom_source, "' == 'ekf'"]))
@@ -64,8 +70,16 @@ def generate_launch_description():
         executable='fastlio_mapping',
         parameters=[config_path,
                     {'use_sim_time': use_sim_time,
-                     'pcd_save/pcd_save_en': 'false'}],
+                     'pcd_save.pcd_save_en': False}],
         output='screen',
+    )
+
+    cupy_elevation = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(os.path.join(
+            fast_lio_dir, 'launch',
+            'elevation_mapping_cupy_fastlio.launch.py')),
+        launch_arguments={'use_sim_time': use_sim_time}.items(),
+        condition=use_cupy_elevation,
     )
 
     # 全局 EKF：输出 map->odom。内部话题 odometry/filtered 重映射成独立名，
@@ -107,7 +121,7 @@ def generate_launch_description():
             ('imu', '/livox/imu'),
             ('gps/fix', '/gps/fix'),
             # ('odometry/filtered', '/odometry/filtered_map'),
-            ('odometry/filtered', '/Odometry'),
+            ('odometry/filtered', '/odom_gt'),
             # Output
             ('odometry/gps', '/odometry/gps'),
             ('gps/filtered', '/gps/filtered'),
@@ -118,8 +132,10 @@ def generate_launch_description():
         declare_use_sim_time,
         declare_params,
         declare_config_path,
+        declare_enable_elevation,
         declare_map_odom_source,
         fast_lio_node,
+        cupy_elevation,
         ekf_map_node,
         map_odom_gps_node,
         navsat_node,

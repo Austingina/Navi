@@ -1,0 +1,87 @@
+/**:
+  ros__parameters:
+    feature_extract_enable: false
+    point_filter_num: 1
+    max_iteration: 4
+    filter_size_surf: 0.3
+    filter_size_map: 0.3
+    cube_side_length: 1000.0
+    runtime_pos_log_enable: false
+    map_file_path: ""
+
+    common:
+      # Keep the existing Isaac-to-Livox conversion path. The converted topic
+      # is the Livox message input already verified by this workspace.
+      lid_topic: "/livox/lidar"
+      imu_topic: "/livox/imu"
+
+      # Both graphs stamp their messages from IsaacReadSimulationTime, so no
+      # software time synchronization or fixed offset is expected.
+      time_sync_en: false
+      time_offset_lidar_to_imu: 0.0
+
+    preprocess:
+      # 1 = Livox message, matching /livox/lidar. Using generic PointCloud2
+      # here makes ROS type negotiation fail and FAST-LIO receives no scans.
+      lidar_type: 1
+      scan_line: 4
+      blind: 0.3
+      timestamp_unit: 3
+      # USD livox_frame.rotationRate is 20 revolutions per second.
+      scan_rate: 10
+
+    mapping:
+      # Small non-zero process noise is preferable to a singular, perfectly
+      # noiseless simulated IMU model. Tune upward only after measuring the
+      # stationary /livox/imu standard deviation.
+      acc_cov: 0.1
+      gyr_cov: 0.01
+      b_acc_cov: 0.000001
+      b_gyr_cov: 0.000001
+      fov_degree: 360.0
+      det_range: 40.0
+
+      # In the USD, base_link/imu and base_link/livox_frame both have identity
+      # orientation and translation (0, 0, 0.5). Therefore T_L_I is exactly
+      # zero and must not be estimated online in planar simulation motion.
+      extrinsic_est_en: false
+      extrinsic_T: [0.0, 0.0, 0.0]
+      extrinsic_R: [1.0, 0.0, 0.0,
+                    0.0, 1.0, 0.0,
+                    0.0, 0.0, 1.0]
+
+    publish:
+      path_en: true
+      effect_map_en: false
+      map_en: true
+      scan_publish_en: true
+      dense_publish_en: true
+      scan_bodyframe_pub_en: true
+
+    bbs3d:
+      voxel_size: 0.15
+      score_threshold: 0.9
+      min_level_res: 0.3
+      max_level: 6
+      xy_range: 25.0
+      z_range: 5.0
+
+    elevator_z_moving:
+      enable: false
+      AZ_TRIGGER_THRESH: 0.04
+      AZ_RELEASE_THRESH: 0.015
+      AZ_DEBOUNCE_COUNT: 50
+      AZ_MOVING_TIMEOUT: 12000
+      AZ_EMA_ALPHA: 0.05
+
+    stationary_lock:
+      enable: true
+      chassis_speed_topic: "/motion_control/chassis_speed"
+      v_thresh: 0.005
+      w_thresh: 0.005
+      min_dur: 0.3
+      chassis_timeout: 0.5
+
+    pcd_save:
+      pcd_save_en: false
+      interval: -1

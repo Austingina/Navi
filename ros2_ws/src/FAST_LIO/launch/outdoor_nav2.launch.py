@@ -20,7 +20,7 @@ def generate_launch_description():
 
     param_dir = os.path.join(fast_lio_dir, 'config')
     param_file = LaunchConfiguration('params', default=os.path.join(
-        param_dir, 'param_outdoor.yaml'))
+        param_dir, 'param_outdoor_elevation.yaml'))
 
 
     bt_dir = os.path.join(param_dir, 'wheeltec_params', 'behavior_trees')

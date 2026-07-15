@@ -22,6 +22,10 @@
   <depend>nav_msgs</depend>
   <depend>rclcpp</depend>
   <exec_depend>rclpy</exec_depend>
+  <exec_depend>cloud_to_laserscan</exec_depend>
+  <exec_depend>grid_map_pcl</exec_depend>
+  <exec_depend>elevation_mapping_cupy</exec_depend>
+  <exec_depend>campus_nav</exec_depend>
   <depend>std_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>common_interfaces</depend>

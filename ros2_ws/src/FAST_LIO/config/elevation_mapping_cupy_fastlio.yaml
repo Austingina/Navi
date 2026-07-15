@@ -1,0 +1,47 @@
+elevation_mapping_node:
+  ros__parameters:
+    # FAST-LIO already publishes the timestamped odom->body transform. CuPy
+    # transforms every dense body-frame scan into this stable rolling frame.
+    map_frame: odom
+    base_frame: base_link
+    corrected_map_frame: odom
+
+    resolution: 0.2
+    map_length: 20.0
+    sensor_noise_factor: 0.03
+    mahalanobis_thresh: 2.5
+    outlier_variance: 0.02
+    min_valid_distance: 0.5
+    max_height_range: 2.0
+    max_ray_length: 10.0
+
+    update_variance_fps: 5.0
+    update_pose_fps: 10.0
+    map_acquire_fps: 5.0
+    publish_statistics_fps: 1.0
+
+    enable_edge_sharpen: true
+    enable_visibility_cleanup: true
+    enable_drift_compensation: true
+    enable_overlap_clearance: false
+    enable_pointcloud_publishing: false
+    enable_drift_corrected_TF_publishing: false
+
+    # Do not initialize a synthetic flat patch around the robot. Wait for the
+    # actual Mid-360 returns instead.
+    use_initializer_at_start: false
+    initialize_frame_id: [body]
+    initialize_tf_offset: [0.0]
+
+    subscribers:
+      mid360:
+        topic_name: /cloud_registered_body
+        data_type: pointcloud
+
+    publishers:
+      elevation_map_raw:
+        # layers: [elevation, variance, traversability]
+        layers: [elevation]
+        basic_layers: [elevation]
+        fps: 5.0
+

@@ -69,7 +69,7 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "campus_tf_y",
-                default_value="0.0",
+                default_value="-3.0",
                 description="Static TF translation y from parent_frame to frame_id",
             ),
             DeclareLaunchArgument(
@@ -99,8 +99,8 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "network_z",
-                default_value="0.0",
-                description="Z height for /campus_network road markers",
+                default_value="-0.3",
+                description="Z height for /campus_network and visual /campus_path",
             ),
             DeclareLaunchArgument(
                 "network_line_width",

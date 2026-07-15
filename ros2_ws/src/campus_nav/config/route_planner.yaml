@@ -21,7 +21,7 @@
     buildings_pbf_path: ""
     map_resolution: 3.0
     network_line_width: 1.0
-    network_z: -5.0
+    network_z: -0.3
     network_alpha: 0.92
     goal_navigation_enable: true
     goal_topic: campus_goal_pose

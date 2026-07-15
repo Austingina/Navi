@@ -379,7 +379,7 @@ class RoutePlanner(Node):
         self.declare_parameter("buildings_pbf_path", "")
         self.declare_parameter("map_resolution", 3.0)     # meters/cell (only if publish_map)
         self.declare_parameter("network_line_width", 1.0)  # line width in meters
-        self.declare_parameter("network_z", -1.0)          # lower road markers below robot layers
+        self.declare_parameter("network_z", -0.3)         # lower road/path viz below robot layers
         self.declare_parameter("network_alpha", 0.92)
         # One-click campus routing: goal from RViz, start from current robot TF.
         self.declare_parameter("goal_navigation_enable", True)
@@ -911,7 +911,10 @@ class RoutePlanner(Node):
         if built is None:
             return
         full, total, _legs = built
-        self._publish_path_msg(self.patrol_path_pub, full, total, label="patrol")
+        path_z = float(self.get_parameter("network_z").value)
+        self._publish_path_msg(
+            self.patrol_path_pub, full, total, label="patrol", z=path_z
+        )
         angle = self.get_parameter("patrol_corner_angle_deg").value
         corners = self._corner_points(full, angle, force_pts=self.patrol_pts)
         self._publish_corner_markers(corners)
@@ -927,15 +930,15 @@ class RoutePlanner(Node):
             )
         )
 
-    def _publish_path_msg(self, pub, lonlat_path, length, label="path"):
-        msg = self._path_msg_from_lonlat(lonlat_path)
+    def _publish_path_msg(self, pub, lonlat_path, length, label="path", z=0.0):
+        msg = self._path_msg_from_lonlat(lonlat_path, z=z)
         pub.publish(msg)
         self.get_logger().info(
             f"Published {label}: {len(msg.poses)} poses, {length:.1f} m."
         )
         return msg
 
-    def _path_msg_from_lonlat(self, lonlat_path):
+    def _path_msg_from_lonlat(self, lonlat_path, z=0.0):
         msg = Path()
         msg.header.frame_id = self.frame_id
         # Use time 0 so RViz/Nav2 transform with the latest available TF instead
@@ -955,6 +958,9 @@ class RoutePlanner(Node):
             ps.header = msg.header
             ps.pose.position.x = e
             ps.pose.position.y = n
+            # Visual paths may sit below the robot (match network_z); Nav2 goals
+            # must stay at z=0 so /plan does not droop to the marker height.
+            ps.pose.position.z = float(z)
             qx, qy, qz, qw = _quat_from_yaw(yaw)
             ps.pose.orientation.x = qx
             ps.pose.orientation.y = qy
@@ -1101,6 +1107,7 @@ class RoutePlanner(Node):
         # path (control points) -> /patrol_path, straight from stored map coords
         path_recs = d.get("path", [])
         if path_recs:
+            path_z = float(self.get_parameter("network_z").value)
             msg = Path()
             msg.header.frame_id = self.frame_id
             msg.header.stamp = stamp
@@ -1109,6 +1116,7 @@ class RoutePlanner(Node):
                 ps.header = msg.header
                 ps.pose.position.x = float(r["map_x"])
                 ps.pose.position.y = float(r["map_y"])
+                ps.pose.position.z = path_z
                 ps.pose.orientation.w = 1.0
                 msg.poses.append(ps)
             self.patrol_path_pub.publish(msg)
@@ -1145,7 +1153,11 @@ class RoutePlanner(Node):
             self.get_logger().error("No path: start/goal not connected.")
             return
         lonlat_path, length, _sp, _gp = result
-        self._publish_path_msg(self.path_pub, lonlat_path, length, label="campus path")
+        # Match road-network marker height for RViz; keep Nav2 goals at z=0.
+        path_z = float(self.get_parameter("network_z").value)
+        self._publish_path_msg(
+            self.path_pub, lonlat_path, length, label="campus path", z=path_z
+        )
 
         step = self.get_parameter("nav_waypoint_spacing_m").value
         nav_lonlat = self._densify(lonlat_path, step)
@@ -1154,7 +1166,7 @@ class RoutePlanner(Node):
         if len(nav_lonlat) > 1:
             nav_lonlat = nav_lonlat[1:]
         nav_msg = self._publish_path_msg(
-            self.nav_waypoints_pub, nav_lonlat, length, label="nav waypoints"
+            self.nav_waypoints_pub, nav_lonlat, length, label="nav waypoints", z=0.0
         )
         self._publish_nav_waypoint_markers(nav_msg)
         if self.get_parameter("send_to_nav2").value:
@@ -1267,7 +1279,16 @@ class RoutePlanner(Node):
             )
             return
         goal = NavigateThroughPoses.Goal()
-        goal.poses = poses
+        # Always flatten z for Nav2: visual campus_path may sit at network_z.
+        goal.poses = []
+        for p in poses:
+            q = PoseStamped()
+            q.header = p.header
+            q.pose.position.x = p.pose.position.x
+            q.pose.position.y = p.pose.position.y
+            q.pose.position.z = 0.0
+            q.pose.orientation = p.pose.orientation
+            goal.poses.append(q)
         goal.behavior_tree = self.get_parameter("nav2_behavior_tree").value
         self._nav_send_pending = True
         future = self.nav_action_client.send_goal_async(goal)
