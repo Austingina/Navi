@@ -1,30 +1,3 @@
-# =============================================================================
-# 室外导航参数（基于“实时 elevation 图 + 地面感知 2D scan”的避障链）
-#
-# 关键思路（修正版）：
-#   本系统的避障链是：
-#     实时点云 /cloud_registered_body
-#       + elevation 参照图 /grid_map_from_raw_pointcloud(layer=elevation)
-#       └─(cloud_to_2d_laserscan：逐格“点高 - 地面高”过滤)→ /livox_scan2(LaserScan)
-#           └─ nav2 ObstacleLayer → costmap
-#   因为地面过滤是“逐格相对高程”的，斜坡地面(z≈elev)会被正确剔除，
-#   斜坡本身不会被当成墙 —— 这正是室外坡地需要的。
-#
-#   室外唯一要改的，是把 elevation 参照图从“静态 PCD 一次性”换成
-#   “实时滚动 elevation 节点”(仍发布 /grid_map_from_raw_pointcloud 的 elevation 层)。
-#   ★ 因此本 costmap 配置不再需要 StaticLayer / traversability OccupancyGrid，
-#     直接复用成熟的 ObstacleLayer + /livox_scan2 链即可。
-#
-# 与 param_outdoor.yaml 的区别：
-#   - 障碍源从 VoxelLayer(/mid360/points_filtered，按固定高度阈值) 换成
-#     ObstacleLayer(/livox_scan2，地面感知 2D scan)，避免坡地被误判。
-# 与 param_r1pro.yaml 的区别：
-#   - 无 static_layer(不依赖预建静态地图)、costmap 全部 rolling、
-#     local 用 odom 系(对 GPS 修正跳变免疫)、planner allow_unknown、GPS 容差放大。
-#
-# 依赖：cloud_to_2d_laserscan 节点须在跑，且其 elevation_topic 指向实时 elevation 节点。
-# =============================================================================
-
 bt_navigator:
   ros__parameters:
     use_sim_time: True # 仿真时为 True
@@ -219,7 +192,7 @@ local_costmap:
           data_type: "LaserScan"
           clearing: True
           marking: True
-          inf_is_valid: false
+          inf_is_valid: true
           observation_persistence: 0.0
           raytrace_max_range: 10.0
           raytrace_min_range: 0.0
@@ -230,8 +203,8 @@ local_costmap:
 
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
-        inflation_radius: 0.7
+        cost_scaling_factor: 2.5
+        inflation_radius: 0.8
 
       always_send_full_costmap: True
   local_costmap_client:
@@ -277,7 +250,7 @@ global_costmap:
           data_type: "LaserScan"
           clearing: True
           marking: True
-          inf_is_valid: false
+          inf_is_valid: true
           observation_persistence: 0.0
           raytrace_max_range: 12.0
           raytrace_min_range: 0.0
@@ -289,7 +262,7 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
-        inflation_radius: 0.7
+        inflation_radius: 0.8
 
       always_send_full_costmap: True
   global_costmap_client:

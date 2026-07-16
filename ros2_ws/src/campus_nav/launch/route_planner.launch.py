@@ -64,12 +64,12 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "campus_tf_x",
-                default_value="0.0",
+                default_value="-1.5",
                 description="Static TF translation x from parent_frame to frame_id",
             ),
             DeclareLaunchArgument(
                 "campus_tf_y",
-                default_value="-3.0",
+                default_value="-2.5",
                 description="Static TF translation y from parent_frame to frame_id",
             ),
             DeclareLaunchArgument(

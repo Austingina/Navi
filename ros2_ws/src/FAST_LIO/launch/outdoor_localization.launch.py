@@ -139,6 +139,6 @@ def generate_launch_description():
         ekf_map_node,
         map_odom_gps_node,
         navsat_node,
-        tf_odom_to_camera_init,
-        tf_body_to_base_link,
+        # tf_odom_to_camera_init,
+        # tf_body_to_base_link,
     ])
