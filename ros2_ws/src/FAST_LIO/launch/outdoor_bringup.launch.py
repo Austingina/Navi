@@ -67,7 +67,7 @@ def generate_launch_description():
     # t=0 —— 定位 / 建图（TF 根基）
     localization = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(fast_lio_launch, 'outdoor_localization.launch.py')),
+            os.path.join(fast_lio_launch, 'outdoor_localization_dammy.launch.py')),
         launch_arguments={
             'use_sim_time': use_sim_time,
             'map_odom_source': map_odom_source,

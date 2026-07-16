@@ -403,6 +403,7 @@ class RoutePlanner(Node):
         # waypoint, extend/send the next batch for seamless driving.
         self.declare_parameter("nav2_batch_advance_m", 8.0)
         # A waypoint within this distance (m) counts as reached (cursor moves on).
+        # Passed waypoints (overshot along the path) also advance the cursor.
         self.declare_parameter("nav2_reach_tol_m", 3.0)
         # How often (s) to check progress and refresh the batch.
         self.declare_parameter("nav2_batch_period_s", 1.0)
@@ -493,6 +494,7 @@ class RoutePlanner(Node):
         self._nav_goal_active = False   # a Nav2 goal is accepted & executing
         self._nav_send_pending = False  # a goal was sent, awaiting accept/reject
         self._nav_goal_handle = None
+        self._nav_goal_seq = 0          # bump on each send; ignore stale result CBs
         self._nav_batch_last_xy = None  # xy of last waypoint in the sent batch
         self._nav_sent_key = None       # (cursor, batch_end) of last sent batch
         self._nav_batch_timer = None
@@ -1180,6 +1182,41 @@ class RoutePlanner(Node):
     def _pose_xy(pose):
         return pose.pose.position.x, pose.pose.position.y
 
+    @staticmethod
+    def _segment_tangent(pose_a, pose_b):
+        ax, ay = RoutePlanner._pose_xy(pose_a)
+        bx, by = RoutePlanner._pose_xy(pose_b)
+        dx, dy = bx - ax, by - ay
+        length = math.hypot(dx, dy)
+        if length < 1e-6:
+            return None
+        return dx / length, dy / length
+
+    def _waypoint_passed(self, rx, ry, poses, i, reach_tol):
+        """True when the robot reached or overshot waypoint i along the route."""
+        wx, wy = self._pose_xy(poses[i])
+        dx, dy = rx - wx, ry - wy
+        dist = math.hypot(dx, dy)
+        if dist <= reach_tol:
+            return True
+        passed_margin = max(0.5, reach_tol * 0.3)
+        if i < len(poses) - 1:
+            tangent = self._segment_tangent(poses[i], poses[i + 1])
+        elif i > 0:
+            tangent = self._segment_tangent(poses[i - 1], poses[i])
+        else:
+            return False
+        if tangent is None:
+            return False
+        return (dx * tangent[0] + dy * tangent[1]) > passed_margin
+
+    def _advance_nav_cursor(self, rx, ry, poses, cursor, reach_tol):
+        """Drop reached/overshot waypoints so Nav2 is not sent goals behind the robot."""
+        n = len(poses)
+        while cursor < n and self._waypoint_passed(rx, ry, poses, cursor, reach_tol):
+            cursor += 1
+        return cursor
+
     def _robot_xy(self):
         robot_frame = self.get_parameter("robot_frame").value
         try:
@@ -1192,6 +1229,7 @@ class RoutePlanner(Node):
 
     def _start_batched_route(self, poses):
         """Store the full route and let the timer feed it to Nav2 in batches."""
+        self._cancel_nav2_goal()
         self._nav_route_poses = list(poses)
         self._nav_cursor = 0
         self._nav_goal_active = False
@@ -1222,27 +1260,53 @@ class RoutePlanner(Node):
             px, py = self._pose_xy(poses[i])
             return math.hypot(px - rx, py - ry)
 
-        # Advance the cursor to just past the nearest waypoint (monotonic).
         reach_tol = float(self.get_parameter("nav2_reach_tol_m").value)
-        best_i, best_d = self._nav_cursor, float("inf")
-        for i in range(self._nav_cursor, n):
-            d = dist(i)
-            if d < best_d:
-                best_d, best_i = d, i
-        new_cursor = best_i + 1 if best_d <= reach_tol else best_i
-        self._nav_cursor = max(self._nav_cursor, new_cursor)
+        prev_cursor = self._nav_cursor
+        self._nav_cursor = self._advance_nav_cursor(
+            rx, ry, poses, self._nav_cursor, reach_tol
+        )
+        cursor_advanced = self._nav_cursor > prev_cursor
+        if cursor_advanced:
+            self.get_logger().info(
+                f"Nav cursor advanced {prev_cursor} -> {self._nav_cursor} "
+                f"(dropped {self._nav_cursor - prev_cursor} reached/overshot waypoint(s))."
+            )
 
         if self._nav_cursor >= n:
+            # Cancel leftover Nav2 goal so /plan is not chased back to the end.
+            self._cancel_nav2_goal()
             self._nav_running = False
             self._nav_goal_active = False
             self.get_logger().info("Batched route complete (all waypoints reached).")
             return
 
-        # Keep driving the current batch until we near its end.
+        # Active Nav2 goal still starts at a waypoint we already dropped -> must
+        # preempt immediately. Waiting for nav2_batch_advance_m here is what made
+        # the robot turn around onto a stale /plan.
+        stale_active = (
+            self._nav_goal_active
+            and self._nav_sent_key is not None
+            and self._nav_cursor > self._nav_sent_key[0]
+        )
+
+        # Keep driving the current batch until we near its end — unless the
+        # batch tail was overshot or the active goal is already stale.
         advance = float(self.get_parameter("nav2_batch_advance_m").value)
-        if self._nav_goal_active and self._nav_batch_last_xy is not None:
+        if (
+            self._nav_goal_active
+            and self._nav_batch_last_xy is not None
+            and not stale_active
+        ):
             lx, ly = self._nav_batch_last_xy
-            if math.hypot(lx - rx, ly - ry) > advance:
+            dist_to_end = math.hypot(lx - rx, ly - ry)
+            batch_end_passed = False
+            if self._nav_sent_key is not None:
+                batch_end_idx = self._nav_sent_key[1] - 1
+                if 0 <= batch_end_idx < n:
+                    batch_end_passed = self._waypoint_passed(
+                        rx, ry, poses, batch_end_idx, reach_tol
+                    )
+            if dist_to_end > advance and not batch_end_passed:
                 return
 
         # Build a contiguous batch from the cursor that stays within the radius.
@@ -1255,18 +1319,47 @@ class RoutePlanner(Node):
 
         key = (self._nav_cursor, end)
         if key == self._nav_sent_key and self._nav_goal_active:
-            return  # identical batch still executing (batch already reaches the end)
+            return  # identical batch still executing
 
         batch = poses[self._nav_cursor:end]
         self._nav_sent_key = key
         self._nav_batch_last_xy = self._pose_xy(poses[end - 1])
         self.get_logger().info(
             f"Feeding Nav2 waypoints [{self._nav_cursor}:{end}] of {n} "
-            f"(batch {len(batch)})."
+            f"(batch {len(batch)}{', preempt stale' if stale_active else ''})."
         )
-        self._send_nav2_waypoints(batch)
+        self._send_nav2_waypoints(batch, preempt=True)
 
-    def _send_nav2_waypoints(self, poses):
+    def _cancel_nav2_goal(self):
+        handle = self._nav_goal_handle
+        if handle is None:
+            return
+        try:
+            handle.cancel_goal_async()
+        except Exception as exc:  # noqa: BLE001 — best-effort preempt
+            self.get_logger().warn(f"Failed to cancel Nav2 goal: {exc}")
+        self._nav_goal_handle = None
+        self._nav_goal_active = False
+
+    def _poses_for_nav2(self, poses):
+        """Copy poses for Nav2 with z flattened. Keep the original frame
+        (campus_map); Nav2's global_frame=map transforms it, matching the
+        visual /campus_path so the /plan endpoint stays on the waypoint.
+        Note: build a fresh header — never alias p.header, or setting fields
+        here would mutate the stored route poses."""
+        out = []
+        for p in poses:
+            q = PoseStamped()
+            q.header.frame_id = p.header.frame_id
+            q.header.stamp = p.header.stamp
+            q.pose.position.x = p.pose.position.x
+            q.pose.position.y = p.pose.position.y
+            q.pose.position.z = 0.0
+            q.pose.orientation = p.pose.orientation
+            out.append(q)
+        return out
+
+    def _send_nav2_waypoints(self, poses, preempt=False):
         if not poses:
             self.get_logger().warn("No nav waypoints to send.")
             return
@@ -1278,27 +1371,26 @@ class RoutePlanner(Node):
                 "is not available; published /campus_nav_waypoints only."
             )
             return
+        if preempt:
+            self._cancel_nav2_goal()
         goal = NavigateThroughPoses.Goal()
-        # Always flatten z for Nav2: visual campus_path may sit at network_z.
-        goal.poses = []
-        for p in poses:
-            q = PoseStamped()
-            q.header = p.header
-            q.pose.position.x = p.pose.position.x
-            q.pose.position.y = p.pose.position.y
-            q.pose.position.z = 0.0
-            q.pose.orientation = p.pose.orientation
-            goal.poses.append(q)
+        goal.poses = self._poses_for_nav2(poses)
         goal.behavior_tree = self.get_parameter("nav2_behavior_tree").value
         self._nav_send_pending = True
+        self._nav_goal_seq += 1
+        seq = self._nav_goal_seq
         future = self.nav_action_client.send_goal_async(goal)
-        future.add_done_callback(self._on_nav2_goal_response)
+        future.add_done_callback(
+            lambda f, s=seq: self._on_nav2_goal_response(f, s)
+        )
         self.get_logger().info(
-            f"Sent {len(poses)} campus waypoints to Nav2 "
+            f"Sent {len(goal.poses)} campus waypoints to Nav2 "
             f"({self.get_parameter('nav2_action_name').value})."
         )
 
-    def _on_nav2_goal_response(self, future):
+    def _on_nav2_goal_response(self, future, seq):
+        if seq != self._nav_goal_seq:
+            return  # superseded by a newer send
         goal_handle = future.result()
         self._nav_send_pending = False
         if not goal_handle.accepted:
@@ -1310,11 +1402,16 @@ class RoutePlanner(Node):
         self._nav_goal_handle = goal_handle
         self._nav_goal_active = True
         result_future = goal_handle.get_result_async()
-        result_future.add_done_callback(self._on_nav2_result)
+        result_future.add_done_callback(
+            lambda f, s=seq: self._on_nav2_result(f, s)
+        )
 
-    def _on_nav2_result(self, future):
+    def _on_nav2_result(self, future, seq):
+        if seq != self._nav_goal_seq:
+            return  # preempted / superseded; ignore
         result = future.result().result
         self._nav_goal_active = False
+        self._nav_goal_handle = None
         error_code = getattr(result, "error_code", 0)
         error_msg = getattr(result, "error_msg", "")
         if error_code:
