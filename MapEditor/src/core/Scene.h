@@ -90,7 +90,15 @@ public:
     QVector<GlobalRoute>&       globalRoutes()       { return globalRoutes_; }
     const QVector<GlobalRoute>& globalRoutes() const  { return globalRoutes_; }
 
-    // ── 持久化（单文件）─────────────────────────────────────────────
+    // ── 持久化 ───────────────────────────────────────────────────────
+    /// 以「场景目录」为操作对象：目录内含 scene.json + 复制进来的 OSM/PBF + 各地图 PCD；
+    /// scene.json 内的资源引用一律用相对路径，方便整目录迁移。
+    bool saveToDir(const QString& dir);
+    bool loadFromDir(const QString& dir);
+    /// 场景所在目录（已保存/打开过才有效）。
+    QString sceneDir() const;
+
+    // 低层：直接读写指定的 scene.json（相对路径以其所在目录解析）。
     bool loadFile(const QString& jsonPath);
     bool saveFile(const QString& jsonPath);
     QString sceneFilePath() const { return sceneFilePath_; }

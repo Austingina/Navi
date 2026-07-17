@@ -251,9 +251,7 @@ bool Scene::saveFile(const QString& jsonPath) {
         ga["heading_deg"] = e.anchor.headingDeg;
         ga["scale"]       = e.anchor.scale;
         o["geo_anchor"] = ga;
-        // 落盘该地图的 PCD（保持点云可用）
-        if (e.project && !e.pcdBaseDir.isEmpty())
-            e.project->savePcds(e.pcdBaseDir);
+        // 注意：PCD 的落盘/复制由 saveToDir() 负责（此处只写 JSON 引用）。
         slamMaps[e.id] = o;
     }
     root["slam_maps"] = slamMaps;
@@ -279,6 +277,79 @@ bool Scene::saveFile(const QString& jsonPath) {
     sceneFilePath_ = jsonPath;
     qDebug() << "场景已保存:" << jsonPath << " maps=" << maps_.size();
     return true;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  目录级 保存 / 打开（自包含目录，资源相对路径引用，便于迁移）
+// ═══════════════════════════════════════════════════════════════════════
+static bool copyFileOverwrite(const QString& src, const QString& dst) {
+    if (src.isEmpty() || dst.isEmpty()) return false;
+    if (QFileInfo(src).absoluteFilePath() == QFileInfo(dst).absoluteFilePath())
+        return true;   // 同一文件，无需复制
+    QDir().mkpath(QFileInfo(dst).absolutePath());
+    if (QFile::exists(dst)) QFile::remove(dst);
+    if (!QFile::copy(src, dst)) {
+        qWarning() << "复制文件失败:" << src << "->" << dst;
+        return false;
+    }
+    return true;
+}
+
+bool Scene::saveToDir(const QString& dir) {
+    if (dir.isEmpty()) return false;
+    QDir().mkpath(dir);
+    const QDir sceneDir(dir);
+
+    // 1) OSM/PBF 底图 → <dir>/osm/<filename>
+    if (osm_ && !osmSource_.isEmpty()) {
+        const QString name = QFileInfo(osmSource_).fileName();
+        if (!name.isEmpty() && QFile::exists(osmSource_)) {
+            const QString dst = sceneDir.absoluteFilePath("osm/" + name);
+            if (copyFileOverwrite(osmSource_, dst))
+                osmSource_ = dst;   // 指向目录内副本；saveFile 里会写成相对路径
+        }
+    }
+
+    // 2) 各 SLAM 地图的 PCD → <dir>/<mapId>/<map_file>
+    for (auto& e : maps_) {
+        if (!e.project) continue;
+        const QString newBase = sceneDir.absoluteFilePath(e.id);
+        QDir().mkpath(newBase);
+        const QString oldBase = e.pcdBaseDir;
+        bool anyMissing = false;
+        for (const auto& sid : e.project->submapIds()) {
+            auto* sm = e.project->submap(sid);
+            if (!sm || sm->mapFile().isEmpty()) continue;
+            const QString dst = QDir(newBase).absoluteFilePath(sm->mapFile());
+            const QString src = oldBase.isEmpty()
+                                    ? QString()
+                                    : QDir(oldBase).absoluteFilePath(sm->mapFile());
+            if (!src.isEmpty() && QFile::exists(src))
+                copyFileOverwrite(src, dst);          // 直接复制原始 PCD（快速、无损）
+            else
+                anyMissing = true;                    // 源文件缺失，稍后用内存点云兜底
+        }
+        // 兜底：源文件缺失时，用内存点云重新落盘到目录内
+        if (anyMissing) e.project->savePcds(newBase);
+        e.pcdBaseDir = newBase;
+    }
+
+    // 3) 写 scene.json（资源引用一律相对路径）
+    return saveFile(sceneDir.absoluteFilePath("scene.json"));
+}
+
+bool Scene::loadFromDir(const QString& dir) {
+    const QString jsonPath = QDir(dir).absoluteFilePath("scene.json");
+    if (!QFile::exists(jsonPath)) {
+        qWarning() << "目录中未找到 scene.json:" << dir;
+        return false;
+    }
+    return loadFile(jsonPath);
+}
+
+QString Scene::sceneDir() const {
+    return sceneFilePath_.isEmpty() ? QString()
+                                    : QFileInfo(sceneFilePath_).absolutePath();
 }
 
 } // namespace me

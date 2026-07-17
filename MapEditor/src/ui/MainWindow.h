@@ -132,8 +132,8 @@ private:
     void setupMenuBar();
     void connectSignals();
 
-    /// 统一保存：场景底图(OSM)+所有 SLAM 地图(含 submap/内部路线)+全局路线 → 单个 json
-    bool saveSceneToPath(const QString& path);
+    /// 统一保存到「场景目录」：复制 OSM/PBF 与各地图 PCD 进目录，scene.json 用相对路径。
+    bool saveSceneToDir(const QString& dir);
 
     /// 标记工程为已修改（dirty），并刷新窗口标题（追加 *）
     void markDirty();

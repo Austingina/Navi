@@ -191,9 +191,9 @@ void MainWindow::setupUI() {
 
 void MainWindow::setupMenuBar() {
     auto* fileMenu = menuBar()->addMenu("文件(&F)");
-    fileMenu->addAction("打开场景 (scene.json)...", this, &MainWindow::onOpenScene, QKeySequence::Open);
-    fileMenu->addAction("保存场景 (统一 scene.json)", this, &MainWindow::onSave, QKeySequence::Save);
-    fileMenu->addAction("场景另存为...", this, &MainWindow::onSaveAs, QKeySequence("Ctrl+Shift+S"));
+    fileMenu->addAction("打开场景目录...", this, &MainWindow::onOpenScene, QKeySequence::Open);
+    fileMenu->addAction("保存场景 (目录)", this, &MainWindow::onSave, QKeySequence::Save);
+    fileMenu->addAction("场景另存为 (目录)...", this, &MainWindow::onSaveAs, QKeySequence("Ctrl+Shift+S"));
     fileMenu->addSeparator();
     fileMenu->addAction("导入单张地图目录 (multifloor.json)...", this, &MainWindow::onOpen);
     fileMenu->addAction("导入 OSM/PBF 底图...", this, &MainWindow::onImportOsm);
@@ -484,45 +484,44 @@ void MainWindow::onOpen() {
     updateWindowTitle();
 }
 
-// 统一保存：把「场景底图(OSM) + 所有 SLAM 地图(含 submap/内部路线) + 全局路线」
-// 写入单个 scene.json。
-bool MainWindow::saveSceneToPath(const QString& path) {
+// 统一保存到「场景目录」：目录内含 scene.json + 复制进来的 OSM/PBF 底图 + 各 SLAM
+// 地图的 PCD；scene.json 内资源引用一律用相对路径，便于整目录迁移。
+bool MainWindow::saveSceneToDir(const QString& dir) {
     syncActiveEntryFromProject();
-    if (!scene_.saveFile(path)) {
-        QMessageBox::critical(this, "错误", "保存失败: " + path);
+    statusLabel_->setText("保存场景中（复制底图/点云）...");
+    QApplication::processEvents();
+    if (!scene_.saveToDir(dir)) {
+        QMessageBox::critical(this, "错误", "保存失败: " + dir);
         return false;
     }
     project_.setDirty(false);
-    currentProjectDir_ = QFileInfo(path).absolutePath();
+    currentProjectDir_ = dir;
     updateWindowTitle();
-    statusLabel_->setText(QString("已保存场景: %1  (%2 张地图, %3 条全局路线)")
-                              .arg(path)
+    statusLabel_->setText(QString("已保存场景目录: %1  (%2 张地图, %3 条全局路线)")
+                              .arg(dir)
                               .arg(scene_.mapCount())
                               .arg(scene_.globalRoutes().size()));
     return true;
 }
 
 void MainWindow::onSave() {
-    // 已有场景文件路径 → 直接覆盖保存；否则走「另存为」让用户选位置
-    const QString path = scene_.sceneFilePath();
-    if (path.isEmpty()) {
+    // 已有场景目录 → 直接覆盖保存；否则走「另存为」让用户选目录
+    const QString dir = scene_.sceneDir();
+    if (dir.isEmpty()) {
         onSaveAs();
         return;
     }
-    saveSceneToPath(path);
+    saveSceneToDir(dir);
 }
 
 void MainWindow::onSaveAs() {
-    QString start = scene_.sceneFilePath();
-    if (start.isEmpty()) {
-        start = currentProjectDir_.isEmpty() ? QStringLiteral("scene.json")
-                                             : currentProjectDir_ + "/scene.json";
-    }
-    QString path = QFileDialog::getSaveFileName(
-        this, "保存场景 (统一 json)", start, "场景文件 (*.json)");
-    if (path.isEmpty()) return;
-    if (!path.endsWith(".json", Qt::CaseInsensitive)) path += ".json";
-    saveSceneToPath(path);
+    QString start = scene_.sceneDir();
+    if (start.isEmpty()) start = currentProjectDir_;
+    QString dir = QFileDialog::getExistingDirectory(
+        this, "选择场景保存目录（将写入 scene.json 并复制底图/点云）", start,
+        QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
+    if (dir.isEmpty()) return;
+    saveSceneToDir(dir);
 }
 
 void MainWindow::onEditVersion() {
@@ -882,13 +881,15 @@ void MainWindow::onLeftTabChanged(int index) {
 
 void MainWindow::onOpenScene() {
     if (!maybePromptSaveChanges()) return;
-    QString path = QFileDialog::getOpenFileName(
-        this, "打开场景", currentProjectDir_, "场景文件 (*.json);;所有文件 (*)");
-    if (path.isEmpty()) return;
+    QString dir = QFileDialog::getExistingDirectory(
+        this, "打开场景目录（含 scene.json）", currentProjectDir_,
+        QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
+    if (dir.isEmpty()) return;
 
     clearViewerActiveMap();
-    if (!scene_.loadFile(path)) {
-        QMessageBox::critical(this, "错误", "无法加载场景: " + path);
+    if (!scene_.loadFromDir(dir)) {
+        QMessageBox::critical(this, "错误",
+                              "无法加载场景（目录中缺少 scene.json？）: " + dir);
         return;
     }
     if (scene_.activeMap()) {
@@ -900,8 +901,8 @@ void MainWindow::onOpenScene() {
         }
     } else {
         project_ = MapProject();
-        currentProjectDir_.clear();
     }
+    currentProjectDir_ = dir;
     refreshScenePanels();
     refreshActiveMapView();
     viewer_->resetCamera();
@@ -909,7 +910,7 @@ void MainWindow::onOpenScene() {
     project_.setDirty(false);
     updateWindowTitle();
     statusLabel_->setText(QString("已加载场景: %1  (%2 张地图)")
-                              .arg(QFileInfo(path).fileName()).arg(scene_.mapCount()));
+                              .arg(QFileInfo(dir).fileName()).arg(scene_.mapCount()));
 }
 
 void MainWindow::onSaveScene() {
