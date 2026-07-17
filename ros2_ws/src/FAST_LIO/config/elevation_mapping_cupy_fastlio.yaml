@@ -35,7 +35,7 @@ elevation_mapping_node:
 
     subscribers:
       mid360:
-        topic_name: /cloud_registered_body
+        topic_name: /livox/points
         data_type: pointcloud
 
     publishers:

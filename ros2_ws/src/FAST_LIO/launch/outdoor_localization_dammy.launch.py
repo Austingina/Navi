@@ -48,19 +48,19 @@ def generate_launch_description():
         ["'", map_odom_source, "' == 'gps'"]))
 
 
-    # tf_odom_to_camera_init = Node(
-    #     package='tf2_ros', executable='static_transform_publisher',
-    #     name='statictf_odom_to_camera_init',
-    #     arguments=['0','0','0','0','0','0','odom','camera_init'],
-    #     output='screen',
-    # )
-    # tf_body_to_base_link = Node(
-    #     package='tf2_ros', executable='static_transform_publisher',
-    #     name='statictf_body_to_base_link',
-    #     # TODO: 换成 IMU->base_link 实测外参
-    #     arguments=['0','0','0','0','0','0','body','base_link'],
-    #     output='screen',
-    # )
+    tf_odom_to_camera_init = Node(
+        package='tf2_ros', executable='static_transform_publisher',
+        name='statictf_odom_to_camera_init',
+        arguments=['0','0','0','0','0','0','odom','camera_init'],
+        output='screen',
+    )
+    tf_body_to_base_link = Node(
+        package='tf2_ros', executable='static_transform_publisher',
+        name='statictf_body_to_base_link',
+        # TODO: 换成 IMU->base_link 实测外参
+        arguments=['0','0','0','0','0','0','body','base_link'],
+        output='screen',
+    )
 
 
     # FAST-LIO inertial odometry (pure LIO, builds map online, no global
@@ -121,7 +121,7 @@ def generate_launch_description():
             ('imu', '/livox/imu'),
             ('gps/fix', '/gps/fix'),
             # ('odometry/filtered', '/odometry/filtered_map'),
-            ('odometry/filtered', '/Odometry'),
+            ('odometry/filtered', '/odom_gt'),
             # Output
             ('odometry/gps', '/odometry/gps'),
             ('gps/filtered', '/gps/filtered'),

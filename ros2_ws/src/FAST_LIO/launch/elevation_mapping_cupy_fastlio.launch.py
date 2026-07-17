@@ -46,7 +46,7 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'use_sim_time': use_sim_time,
-            'cloud_topic': '/cloud_registered_body',
+            'cloud_topic': '/livox/points',
             'elevation_topic': '/grid_map_from_raw_pointcloud',
             'elevation_layer': 'elevation',
             'output_topic': '/livox_scan2',
@@ -55,7 +55,7 @@ def generate_launch_description():
             'fallback_on_unknown_elevation': False,
             # 多帧累积：把最近若干帧的存活障碍点在 odom 系累起来再投 2D，
             # 单帧稀疏被时间窗补满，障碍不再闪烁/缺角。
-            'accumulate_enable': False,     # 重校验必须配合累积才有意义
+            'accumulate_enable': True,     # 重校验必须配合累积才有意义
             'accumulate_time': 0.3,        # 滑动窗时长 [s]
             'accumulate_max_frames': 10,   # 帧数硬上限
             # 邻域中位数地面参照：对 elevation 图里的凹陷格免疫,避免地面误判成障碍。

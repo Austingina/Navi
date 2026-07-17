@@ -32,11 +32,11 @@ def generate_launch_description():
     pkg_share = get_package_share_directory("campus_nav")
     default_pbf = os.environ.get(
         "CAMPUS_PBF_PATH",
-        os.path.join(pkg_root, "xili_5km_merged.osm.pbf"),
+        os.path.join(pkg_root, "xili_5km_finetuned.osm.pbf"),
     )
     default_gpkg_overlay = os.environ.get(
         "CAMPUS_GPKG_OVERLAY",
-        os.path.join(pkg_root, "new_road.gpkg"),
+        os.path.join(pkg_root, "finetuned_road.gpkg"),
     )
     default_patrol_out = os.path.join(pkg_root, "patrol_routes")
 
@@ -64,12 +64,12 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "campus_tf_x",
-                default_value="-1.5",
+                default_value="-3.0",
                 description="Static TF translation x from parent_frame to frame_id",
             ),
             DeclareLaunchArgument(
                 "campus_tf_y",
-                default_value="-2.5",
+                default_value="-0.5",
                 description="Static TF translation y from parent_frame to frame_id",
             ),
             DeclareLaunchArgument(
@@ -104,7 +104,7 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "network_line_width",
-                default_value="1.0",
+                default_value="0.5",
                 description="Line width in meters for /campus_network road markers",
             ),
             DeclareLaunchArgument(
