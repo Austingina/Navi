@@ -57,6 +57,13 @@ private slots:
     void onOrthoVisibilityChanged(const QString& slamMapId, bool visible);
     void onLeftTabChanged(int index);
 
+    // ── 场景地图 Tab：右侧属性栏（OSM 底图 / SLAM geo_anchor）─────────
+    void onOsmSelected();
+    /// 在总览里高亮某张 SLAM 地图，并在右侧属性栏显示其 geo_anchor
+    void showSlamGeoInPanel(const QString& slamMapId);
+    /// 右侧属性栏编辑 geo_anchor → 写回场景并刷新总览
+    void onSlamGeoAnchorEdited(const QString& slamMapId, const GeoAnchor& anchor);
+
     // ── 全局路线 ─────────────────────────────────────────────────────
     void onAddGlobalRoute();
     void onRemoveGlobalRoute(const QString& name);
@@ -124,6 +131,9 @@ private:
     void setupUI();
     void setupMenuBar();
     void connectSignals();
+
+    /// 统一保存：场景底图(OSM)+所有 SLAM 地图(含 submap/内部路线)+全局路线 → 单个 json
+    bool saveSceneToPath(const QString& path);
 
     /// 标记工程为已修改（dirty），并刷新窗口标题（追加 *）
     void markDirty();

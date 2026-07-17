@@ -191,15 +191,13 @@ void MainWindow::setupUI() {
 
 void MainWindow::setupMenuBar() {
     auto* fileMenu = menuBar()->addMenu("文件(&F)");
-    fileMenu->addAction("打开 multifloor.json...", this, &MainWindow::onOpen, QKeySequence::Open);
-    fileMenu->addAction("保存", this, &MainWindow::onSave, QKeySequence::Save);
-    fileMenu->addAction("另存为...", this, &MainWindow::onSaveAs, QKeySequence("Ctrl+Shift+S"));
+    fileMenu->addAction("打开场景 (scene.json)...", this, &MainWindow::onOpenScene, QKeySequence::Open);
+    fileMenu->addAction("保存场景 (统一 scene.json)", this, &MainWindow::onSave, QKeySequence::Save);
+    fileMenu->addAction("场景另存为...", this, &MainWindow::onSaveAs, QKeySequence("Ctrl+Shift+S"));
     fileMenu->addSeparator();
+    fileMenu->addAction("导入单张地图目录 (multifloor.json)...", this, &MainWindow::onOpen);
     fileMenu->addAction("导入 OSM/PBF 底图...", this, &MainWindow::onImportOsm);
     fileMenu->addAction("导入 SLAM 地图...", this, &MainWindow::onImportSlamMap);
-    fileMenu->addSeparator();
-    fileMenu->addAction("打开场景 (scene.json)...", this, &MainWindow::onOpenScene);
-    fileMenu->addAction("保存场景 (scene.json)...", this, &MainWindow::onSaveScene);
     fileMenu->addSeparator();
     fileMenu->addAction("修改版本号...", this, &MainWindow::onEditVersion);
     fileMenu->addSeparator();
@@ -326,23 +324,40 @@ void MainWindow::connectSignals() {
             this, &MainWindow::onRemoveSlamMap);
     connect(scenePanel_, &ScenePanel::slamMapActivated,
             this, &MainWindow::onSlamMapActivated);
-    connect(scenePanel_, &ScenePanel::slamMapSelected, this, [this](const QString& id) {
-        int i = sceneView_->indexOfItem(id);
-        if (i >= 0) sceneView_->setSelected(i);
-    });
+    connect(scenePanel_, &ScenePanel::slamMapSelected,
+            this, &MainWindow::showSlamGeoInPanel);
+    connect(scenePanel_, &ScenePanel::osmSelected,
+            this, &MainWindow::onOsmSelected);
     connect(scenePanel_, &ScenePanel::orthoVisibilityChanged,
             this, &MainWindow::onOrthoVisibilityChanged);
 
-    // 在总览里拖拽足迹 → 写回该地图 geo_anchor
+    // 在总览里点击足迹选中 → 右侧属性栏显示该地图 geo_anchor
+    connect(sceneView_, &SceneAlignView::selectionChanged, this, [this](int index) {
+        if (index < 0 || index >= sceneViewRowToId_.size()) return;
+        showSlamGeoInPanel(sceneViewRowToId_[index]);
+    });
+    // 鼠标在总览上移动 → 右侧属性栏更新经纬度
+    connect(sceneView_, &SceneAlignView::mouseGeoMoved, this,
+            [this](double lon, double lat, bool valid) {
+        propsPanel_->setMouseGeo(lon, lat, valid);
+    });
+
+    // 在总览里拖拽足迹 → 写回该地图 geo_anchor（并同步属性栏编辑框）
     connect(sceneView_, &SceneAlignView::anchorEdited, this,
             [this](int index, const GeoAnchor& anchor) {
         if (index < 0 || index >= sceneViewRowToId_.size()) return;
-        auto* e = scene_.mapById(sceneViewRowToId_[index]);
+        const QString id = sceneViewRowToId_[index];
+        auto* e = scene_.mapById(id);
         if (!e) return;
         e->anchor = anchor;
+        propsPanel_->updateSlamGeoAnchor(id, anchor);
         scenePanel_->rebuild(&scene_);
         markDirty();
     });
+
+    // 右侧属性栏编辑 geo_anchor → 写回场景 + 刷新总览足迹
+    connect(propsPanel_, &PropertiesPanel::slamGeoAnchorChanged,
+            this, &MainWindow::onSlamGeoAnchorEdited);
 
     // 兼容：SLAM地图 Tab 内若仍触发这些信号
     connect(submapPanel_, &SubmapPanel::slamMapSelected,
@@ -469,35 +484,45 @@ void MainWindow::onOpen() {
     updateWindowTitle();
 }
 
+// 统一保存：把「场景底图(OSM) + 所有 SLAM 地图(含 submap/内部路线) + 全局路线」
+// 写入单个 scene.json。
+bool MainWindow::saveSceneToPath(const QString& path) {
+    syncActiveEntryFromProject();
+    if (!scene_.saveFile(path)) {
+        QMessageBox::critical(this, "错误", "保存失败: " + path);
+        return false;
+    }
+    project_.setDirty(false);
+    currentProjectDir_ = QFileInfo(path).absolutePath();
+    updateWindowTitle();
+    statusLabel_->setText(QString("已保存场景: %1  (%2 张地图, %3 条全局路线)")
+                              .arg(path)
+                              .arg(scene_.mapCount())
+                              .arg(scene_.globalRoutes().size()));
+    return true;
+}
+
 void MainWindow::onSave() {
-    if (currentProjectDir_.isEmpty()) {
+    // 已有场景文件路径 → 直接覆盖保存；否则走「另存为」让用户选位置
+    const QString path = scene_.sceneFilePath();
+    if (path.isEmpty()) {
         onSaveAs();
         return;
     }
-    // 检查是否存在 default_submap，若不存在则提示并阻止保存
-    QString defId = project_.defaultSubmapId();
-    if (defId.isEmpty() || !project_.submap(defId)) {
-        QMessageBox::warning(this, "提示",
-                             "当前项目缺少 default_submap，保存前请设置默认子地图。");
-        return;
-    }
-    if (project_.save(currentProjectDir_)) {
-        project_.setDirty(false);
-        updateWindowTitle();
-        statusLabel_->setText("已保存: " + currentProjectDir_);
-    } else {
-        QMessageBox::critical(this, "错误", "保存失败");
-    }
+    saveSceneToPath(path);
 }
 
 void MainWindow::onSaveAs() {
-    QString path = QFileDialog::getExistingDirectory(
-        this, "选择保存目录", currentProjectDir_,
-        QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
+    QString start = scene_.sceneFilePath();
+    if (start.isEmpty()) {
+        start = currentProjectDir_.isEmpty() ? QStringLiteral("scene.json")
+                                             : currentProjectDir_ + "/scene.json";
+    }
+    QString path = QFileDialog::getSaveFileName(
+        this, "保存场景 (统一 json)", start, "场景文件 (*.json)");
     if (path.isEmpty()) return;
-    currentProjectDir_ = path;
-    updateWindowTitle();
-    onSave();
+    if (!path.endsWith(".json", Qt::CaseInsensitive)) path += ".json";
+    saveSceneToPath(path);
 }
 
 void MainWindow::onEditVersion() {
@@ -749,6 +774,42 @@ void MainWindow::onOrthoVisibilityChanged(const QString& slamMapId, bool visible
     markDirty();
 }
 
+// ── 场景地图 Tab：右侧属性栏（OSM 底图 / SLAM geo_anchor）─────────────
+void MainWindow::onOsmSelected() {
+    auto osm = scene_.osm();
+    const QString src = scene_.hasOsm() ? QFileInfo(scene_.osmSource()).fileName()
+                                        : QString();
+    if (osm && osm->hasBounds())
+        propsPanel_->showOsmProperties(true, osm->minLon(), osm->minLat(),
+                                       osm->maxLon(), osm->maxLat(), src);
+    else
+        propsPanel_->showOsmProperties(false, 0, 0, 0, 0, src);
+}
+
+void MainWindow::showSlamGeoInPanel(const QString& slamMapId) {
+    int i = sceneView_->indexOfItem(slamMapId);
+    if (i >= 0) sceneView_->setSelected(i);
+    auto* e = scene_.mapById(slamMapId);
+    if (!e) return;
+    // 若该地图尚无 anchor，用场景原点兜底展示
+    GeoAnchor a = e->anchor;
+    if (!a.valid && scene_.hasOrigin()) {
+        a.lon = scene_.originLon();
+        a.lat = scene_.originLat();
+    }
+    propsPanel_->showSlamGeoProperties(slamMapId, e->name.isEmpty() ? e->id : e->name, a);
+}
+
+void MainWindow::onSlamGeoAnchorEdited(const QString& slamMapId, const GeoAnchor& anchor) {
+    auto* e = scene_.mapById(slamMapId);
+    if (!e) return;
+    e->anchor = anchor;
+    int i = sceneView_->indexOfItem(slamMapId);
+    if (i >= 0) sceneView_->updateAnchor(i, anchor);
+    scenePanel_->rebuild(&scene_);
+    markDirty();
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 //  正交叠加对齐窗口：各 SLAM 地图俯视投影叠加到 OSM 底图
 // ═══════════════════════════════════════════════════════════════════════
@@ -852,22 +913,8 @@ void MainWindow::onOpenScene() {
 }
 
 void MainWindow::onSaveScene() {
-    QString start = scene_.sceneFilePath().isEmpty()
-                        ? (currentProjectDir_.isEmpty() ? QString() : currentProjectDir_ + "/scene.json")
-                        : scene_.sceneFilePath();
-    QString path = QFileDialog::getSaveFileName(
-        this, "保存场景", start, "场景文件 (*.json)");
-    if (path.isEmpty()) return;
-    if (!path.endsWith(".json", Qt::CaseInsensitive)) path += ".json";
-
-    syncActiveEntryFromProject();
-    if (scene_.saveFile(path)) {
-        project_.setDirty(false);
-        updateWindowTitle();
-        statusLabel_->setText("场景已保存: " + path);
-    } else {
-        QMessageBox::critical(this, "错误", "场景保存失败");
-    }
+    // 与「另存为」一致：统一保存到单个 scene.json
+    onSaveAs();
 }
 
 // ═══════════════════════════════════════════════════════════════════════

@@ -5,6 +5,7 @@
 
 #include "core/Types.h"
 #include "core/SubMap.h"
+#include "core/SceneModel.h"   // GeoAnchor
 #include <QWidget>
 #include <QLabel>
 #include <QLineEdit>
@@ -34,6 +35,19 @@ public:
     void setSemanticPositionLocal(double x, double y, double z);
     /// 显示 portal 属性
     void showPortalProperties(SubMap* sm, int portalIdx, const QStringList& allSubmapIds);
+
+    // ── 场景地图 Tab：OSM 底图 / SLAM 地图 geo_anchor ─────────────────
+    /// 显示 OSM 底图属性：经纬度范围（xmin/xmax/ymin/ymax）+ 鼠标位置经纬度
+    void showOsmProperties(bool hasBounds, double minLon, double minLat,
+                           double maxLon, double maxLat, const QString& sourceName);
+    /// 更新「当前鼠标位置」经纬度（仅在 OSM 页显示时生效）
+    void setMouseGeo(double lon, double lat, bool valid);
+    /// 显示某张 SLAM 地图的 geo_anchor（原点经纬度 + X 轴朝向，可编辑微调）
+    void showSlamGeoProperties(const QString& mapId, const QString& mapName,
+                               const GeoAnchor& anchor);
+    /// 外部（在总览里拖拽足迹）改动了 anchor 时，同步刷新 geo_anchor 编辑框
+    void updateSlamGeoAnchor(const QString& mapId, const GeoAnchor& anchor);
+
     /// 清空面板
     void clear();
 
@@ -45,12 +59,16 @@ signals:
     void voxelSizeChanged(const QString& submapId, float size);
     /// 语义点页：请求在点云上拾取以填写 position
     void pickSemanticPositionRequested(const QString& submapId);
+    /// SLAM geo_anchor 编辑框被用户修改（经纬度/朝向/缩放）
+    void slamGeoAnchorChanged(const QString& mapId, const GeoAnchor& anchor);
 
 private:
     void setupUI();
     void setupSubmapPage();
     void setupSemanticPointPage();
     void setupPortalPage();
+    void setupOsmPage();
+    void setupSlamGeoPage();
 
     QStackedWidget* stack_ = nullptr;
 
@@ -106,6 +124,27 @@ private:
     QComboBox*      ptTarget_ = nullptr;
     SubMap*         ptSm_ = nullptr;
     int             ptIdx_ = -1;  ///< >=0 编辑已有传送门；-1 表示未打开传送门页
+
+    // ── OSM 底图页面 ─────────────────────────────────────────────────
+    QWidget* osmPage_       = nullptr;
+    QLabel*  osmSourceLbl_  = nullptr;
+    QLabel*  osmLonMinLbl_  = nullptr;
+    QLabel*  osmLonMaxLbl_  = nullptr;
+    QLabel*  osmLatMinLbl_  = nullptr;
+    QLabel*  osmLatMaxLbl_  = nullptr;
+    QLabel*  osmMouseLbl_   = nullptr;
+
+    // ── SLAM geo_anchor 页面 ─────────────────────────────────────────
+    QWidget*        geoPage_    = nullptr;
+    QLabel*         geoNameLbl_ = nullptr;
+    QDoubleSpinBox* geoLon_     = nullptr;
+    QDoubleSpinBox* geoLat_     = nullptr;
+    QDoubleSpinBox* geoAlt_     = nullptr;
+    QDoubleSpinBox* geoHeading_ = nullptr;
+    QDoubleSpinBox* geoScale_   = nullptr;
+    QString         geoMapId_;
+    bool            geoSyncGuard_ = false;
+    void onGeoSpinChanged();
 
     // helpers
     QDoubleSpinBox* makeSpinBox(double min = -9999, double max = 9999, int decimals = 4);

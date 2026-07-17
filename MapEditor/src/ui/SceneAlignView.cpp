@@ -458,6 +458,13 @@ void SceneAlignView::mouseMoveEvent(QMouseEvent* e) {
     const QPointF cur = e->pos();
     const QPointF d = cur - lastPos_;
 
+    // 实时上报光标处经纬度（用于右侧属性栏显示）
+    {
+        double ce, cn; screenToEnu(cur, ce, cn);
+        double lon, lat; conv_.toLonLat(ce, cn, lon, lat);
+        emit mouseGeoMoved(lon, lat, conv_.hasOrigin() && osm_ != nullptr);
+    }
+
     switch (mode_) {
         case Mode::PanView: {
             viewCenterE_ -= d.x() / viewScale_;
@@ -521,6 +528,11 @@ void SceneAlignView::mouseReleaseEvent(QMouseEvent* e) {
         emit anchorEdited(selected_, items_[selected_].anchor);
     }
     mode_ = Mode::None;
+}
+
+void SceneAlignView::leaveEvent(QEvent* e) {
+    Q_UNUSED(e);
+    emit mouseGeoMoved(0.0, 0.0, false);
 }
 
 void SceneAlignView::wheelEvent(QWheelEvent* e) {

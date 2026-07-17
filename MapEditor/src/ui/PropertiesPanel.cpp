@@ -68,6 +68,8 @@ void PropertiesPanel::setupUI() {
     setupSubmapPage();       // index 1
     setupSemanticPointPage();// index 2
     setupPortalPage();       // index 3
+    setupOsmPage();          // index 4
+    setupSlamGeoPage();      // index 5
 
     auto* scroll = new QScrollArea();
     scroll->setWidget(stack_);
@@ -555,6 +557,166 @@ void PropertiesPanel::showPortalProperties(SubMap* sm, int portalIdx, const QStr
     stack_->setCurrentIndex(3);
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+//  OSM 底图属性页（经纬度范围 + 鼠标位置经纬度）
+// ═══════════════════════════════════════════════════════════════════════
+
+void PropertiesPanel::setupOsmPage() {
+    osmPage_ = new QWidget();
+    auto* layout = new QVBoxLayout(osmPage_);
+
+    auto* infoGroup = new QGroupBox("OSM 底图");
+    auto* infoForm = new QFormLayout(infoGroup);
+    infoForm->setContentsMargins(10, 20, 10, 10);
+    osmSourceLbl_ = new QLabel("—");
+    osmSourceLbl_->setWordWrap(true);
+    infoForm->addRow("文件:", osmSourceLbl_);
+    layout->addWidget(infoGroup);
+
+    auto* rangeGroup = new QGroupBox("经纬度范围");
+    auto* rangeForm = new QFormLayout(rangeGroup);
+    rangeForm->setContentsMargins(10, 20, 10, 10);
+    osmLonMinLbl_ = new QLabel("—");
+    osmLonMaxLbl_ = new QLabel("—");
+    osmLatMinLbl_ = new QLabel("—");
+    osmLatMaxLbl_ = new QLabel("—");
+    rangeForm->addRow("经度 xmin:", osmLonMinLbl_);
+    rangeForm->addRow("经度 xmax:", osmLonMaxLbl_);
+    rangeForm->addRow("纬度 ymin:", osmLatMinLbl_);
+    rangeForm->addRow("纬度 ymax:", osmLatMaxLbl_);
+    layout->addWidget(rangeGroup);
+
+    auto* mouseGroup = new QGroupBox("鼠标位置");
+    auto* mouseForm = new QFormLayout(mouseGroup);
+    mouseForm->setContentsMargins(10, 20, 10, 10);
+    osmMouseLbl_ = new QLabel("移动鼠标到场景总览上查看经纬度");
+    osmMouseLbl_->setWordWrap(true);
+    mouseForm->addRow("经纬度:", osmMouseLbl_);
+    layout->addWidget(mouseGroup);
+
+    layout->addStretch();
+    stack_->addWidget(osmPage_);  // index 4
+}
+
+void PropertiesPanel::showOsmProperties(bool hasBounds, double minLon, double minLat,
+                                        double maxLon, double maxLat,
+                                        const QString& sourceName) {
+    osmSourceLbl_->setText(sourceName.isEmpty() ? "（未导入）" : sourceName);
+    if (hasBounds) {
+        osmLonMinLbl_->setText(QString::number(minLon, 'f', 7));
+        osmLonMaxLbl_->setText(QString::number(maxLon, 'f', 7));
+        osmLatMinLbl_->setText(QString::number(minLat, 'f', 7));
+        osmLatMaxLbl_->setText(QString::number(maxLat, 'f', 7));
+    } else {
+        osmLonMinLbl_->setText("—");
+        osmLonMaxLbl_->setText("—");
+        osmLatMinLbl_->setText("—");
+        osmLatMaxLbl_->setText("—");
+    }
+    stack_->setCurrentIndex(4);
+}
+
+void PropertiesPanel::setMouseGeo(double lon, double lat, bool valid) {
+    if (!osmMouseLbl_) return;
+    if (valid)
+        osmMouseLbl_->setText(QString("lon %1, lat %2")
+                                  .arg(lon, 0, 'f', 7).arg(lat, 0, 'f', 7));
+    else
+        osmMouseLbl_->setText("—");
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  SLAM 地图 geo_anchor 编辑页（原点经纬度 + X 轴朝向 + 缩放，可微调）
+// ═══════════════════════════════════════════════════════════════════════
+
+void PropertiesPanel::setupSlamGeoPage() {
+    geoPage_ = new QWidget();
+    auto* layout = new QVBoxLayout(geoPage_);
+
+    auto* infoGroup = new QGroupBox("SLAM 地图");
+    auto* infoForm = new QFormLayout(infoGroup);
+    infoForm->setContentsMargins(10, 20, 10, 10);
+    geoNameLbl_ = new QLabel("—");
+    geoNameLbl_->setWordWrap(true);
+    infoForm->addRow("名称:", geoNameLbl_);
+    layout->addWidget(infoGroup);
+
+    auto* anchorGroup = new QGroupBox("原点对齐 (geo_anchor)");
+    auto* form = new QFormLayout(anchorGroup);
+    form->setContentsMargins(10, 20, 10, 10);
+
+    auto mkSpin = [](double lo, double hi, int dec, double step) {
+        auto* s = new QDoubleSpinBox();
+        s->setRange(lo, hi);
+        s->setDecimals(dec);
+        s->setSingleStep(step);
+        s->setKeyboardTracking(false);
+        return s;
+    };
+    geoLon_     = mkSpin(-180.0, 180.0, 8, 0.00001);
+    geoLat_     = mkSpin(-90.0, 90.0, 8, 0.00001);
+    geoAlt_     = mkSpin(-1000.0, 10000.0, 3, 0.1);
+    geoHeading_ = mkSpin(-180.0, 180.0, 2, 1.0);
+    geoHeading_->setWrapping(true);
+    geoScale_   = mkSpin(0.05, 20.0, 4, 0.01);
+    form->addRow("经度 lon:", geoLon_);
+    form->addRow("纬度 lat:", geoLat_);
+    form->addRow("海拔 alt:", geoAlt_);
+    form->addRow("X轴朝向 heading(°):", geoHeading_);
+    form->addRow("缩放 scale:", geoScale_);
+    layout->addWidget(anchorGroup);
+
+    auto* hint = new QLabel("提示：也可在总览中直接拖拽足迹对齐（左键平移 / 右键或 Alt+左键旋转 / Shift+左键缩放）。");
+    hint->setWordWrap(true);
+    hint->setStyleSheet("color:#8a8f99;");
+    layout->addWidget(hint);
+
+    layout->addStretch();
+
+    for (auto* s : {geoLon_, geoLat_, geoAlt_, geoHeading_, geoScale_})
+        connect(s, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+                this, [this](double) { onGeoSpinChanged(); });
+
+    stack_->addWidget(geoPage_);  // index 5
+}
+
+void PropertiesPanel::showSlamGeoProperties(const QString& mapId, const QString& mapName,
+                                            const GeoAnchor& anchor) {
+    geoMapId_ = mapId;
+    geoNameLbl_->setText(mapName.isEmpty() ? mapId : mapName);
+    geoSyncGuard_ = true;
+    geoLon_->setValue(anchor.lon);
+    geoLat_->setValue(anchor.lat);
+    geoAlt_->setValue(anchor.alt);
+    geoHeading_->setValue(anchor.headingDeg);
+    geoScale_->setValue(anchor.scale != 0.0 ? anchor.scale : 1.0);
+    geoSyncGuard_ = false;
+    stack_->setCurrentIndex(5);
+}
+
+void PropertiesPanel::updateSlamGeoAnchor(const QString& mapId, const GeoAnchor& anchor) {
+    if (mapId != geoMapId_ || stack_->currentIndex() != 5) return;
+    geoSyncGuard_ = true;
+    geoLon_->setValue(anchor.lon);
+    geoLat_->setValue(anchor.lat);
+    geoAlt_->setValue(anchor.alt);
+    geoHeading_->setValue(anchor.headingDeg);
+    geoScale_->setValue(anchor.scale != 0.0 ? anchor.scale : 1.0);
+    geoSyncGuard_ = false;
+}
+
+void PropertiesPanel::onGeoSpinChanged() {
+    if (geoSyncGuard_ || geoMapId_.isEmpty()) return;
+    GeoAnchor a;
+    a.valid      = true;
+    a.lon        = geoLon_->value();
+    a.lat        = geoLat_->value();
+    a.alt        = geoAlt_->value();
+    a.headingDeg = geoHeading_->value();
+    a.scale      = geoScale_->value();
+    emit slamGeoAnchorChanged(geoMapId_, a);
+}
+
 void PropertiesPanel::clear() {
     stack_->setCurrentIndex(0);
     currentSm_ = nullptr;
@@ -562,6 +724,7 @@ void PropertiesPanel::clear() {
     spCurrentName_.clear();
     ptSm_ = nullptr;
     ptIdx_ = -1;
+    geoMapId_.clear();
 }
 
 } // namespace me

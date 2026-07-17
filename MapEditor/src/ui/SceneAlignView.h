@@ -65,6 +65,8 @@ signals:
     void anchorEdited(int index, const GeoAnchor& anchor);
     /// 通过点击画布改变了选中项（-1 表示取消选中）。
     void selectionChanged(int index);
+    /// 鼠标在画布上移动时的经纬度（valid=false 表示无底图/移出画布）。
+    void mouseGeoMoved(double lon, double lat, bool valid);
 
 protected:
     void paintEvent(QPaintEvent*) override;
@@ -72,6 +74,7 @@ protected:
     void mouseMoveEvent(QMouseEvent*) override;
     void mouseReleaseEvent(QMouseEvent*) override;
     void wheelEvent(QWheelEvent*) override;
+    void leaveEvent(QEvent*) override;
 
 private:
     struct SlamItem {

@@ -83,8 +83,11 @@ void ScenePanel::rebuild(Scene* scene) {
 
 void ScenePanel::onItemClicked(QTreeWidgetItem* item, int) {
     if (!item) return;
-    if (item->data(0, RoleType).toInt() == TSlam)
+    int type = item->data(0, RoleType).toInt();
+    if (type == TSlam)
         emit slamMapSelected(item->data(0, RoleId).toString());
+    else if (type == TOsm)
+        emit osmSelected();
 }
 
 void ScenePanel::onItemDoubleClicked(QTreeWidgetItem* item, int) {

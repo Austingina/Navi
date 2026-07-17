@@ -25,6 +25,7 @@ signals:
     void removeSlamMapRequested(const QString& id);
     void slamMapActivated(const QString& id);                 ///< 双击：激活并进入编辑
     void slamMapSelected(const QString& id);                  ///< 单击：在总览里高亮
+    void osmSelected();                                        ///< 单击 OSM 底图节点
     void orthoVisibilityChanged(const QString& id, bool visible);
 
 private slots:
