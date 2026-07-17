@@ -9,7 +9,9 @@
 #include <QDataStream>
 #include <QCheckBox>
 #include <QFile>
+#include <QFileInfo>
 #include <QDir>
+#include <functional>
 
 namespace me {
 
@@ -236,6 +238,146 @@ void SubmapPanel::rebuild(MapProject* project) {
     tree_->blockSignals(false);
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+//  从 Scene 重建地图树：OSM(root) → SLAM 地图 → 活跃地图的 submap
+// ═══════════════════════════════════════════════════════════════════════
+void SubmapPanel::rebuildScene(Scene* scene) {
+    scene_ = scene;
+    project_ = scene ? (scene->activeMap() ? scene->activeMap()->project.get() : nullptr)
+                     : nullptr;
+
+    // 记录展开状态
+    QSet<QString> expandedSubmaps, expandedSemFolders, expandedMaps;
+    std::function<void(QTreeWidgetItem*)> scan = [&](QTreeWidgetItem* it) {
+        if (!it) return;
+        int type = it->data(0, RoleType).toInt();
+        if (type == TypeSlamMap && it->isExpanded())
+            expandedMaps.insert(it->data(0, RoleSlamMapId).toString());
+        if (type == TypeSubmap && it->isExpanded()) {
+            QString sid = it->data(0, RoleSubmapId).toString();
+            expandedSubmaps.insert(sid);
+            for (int k = 0; k < it->childCount(); ++k) {
+                auto* gc = it->child(k);
+                if (gc && gc->data(0, RoleType).toInt() == TypeSemPointsFolder && gc->isExpanded())
+                    expandedSemFolders.insert(sid);
+            }
+        }
+        for (int i = 0; i < it->childCount(); ++i) scan(it->child(i));
+    };
+    for (int i = 0; i < tree_->topLevelItemCount(); ++i) scan(tree_->topLevelItem(i));
+
+    tree_->blockSignals(true);
+    tree_->clear();
+
+    // ── OSM 底图 root ──────────────────────────────────────────────────
+    QString osmLabel = "🗺️ OSM 底图 (base layer)";
+    if (scene_ && scene_->hasOsm())
+        osmLabel += QString(" — %1").arg(QFileInfo(scene_->osmSource()).fileName());
+    else
+        osmLabel += " — 未导入";
+    auto* osmRoot = new QTreeWidgetItem(tree_, {osmLabel});
+    osmRoot->setData(0, RoleType, TypeOsmRoot);
+    osmRoot->setExpanded(true);
+
+    if (scene_) {
+        const auto& maps = scene_->maps();
+        for (int i = 0; i < maps.size(); ++i) {
+            bool active = (i == scene_->activeIndex());
+            auto* mItem = makeSlamMapItem(maps[i], active);
+            osmRoot->addChild(mItem);
+            if (active || expandedMaps.contains(maps[i].id)) mItem->setExpanded(true);
+
+            if (active && project_) {
+                for (const auto& id : project_->submapIds()) {
+                    auto* sm = project_->submap(id);
+                    if (!sm) continue;
+                    auto* smItem = makeSubmapItem(id, sm);
+                    mItem->addChild(smItem);
+                    if (expandedSubmaps.contains(id)) smItem->setExpanded(true);
+                    if (expandedSemFolders.contains(id)) {
+                        for (int c = 0; c < smItem->childCount(); ++c) {
+                            auto* sc = smItem->child(c);
+                            if (sc && sc->data(0, RoleType).toInt() == TypeSemPointsFolder) {
+                                sc->setExpanded(true); break;
+                            }
+                        }
+                    }
+                }
+            } else {
+                auto* hint = new QTreeWidgetItem({"（点击选中该地图以加载 / 编辑）"});
+                hint->setFlags(hint->flags() & ~Qt::ItemIsSelectable);
+                hint->setForeground(0, QColor(150, 150, 150));
+                mItem->addChild(hint);
+            }
+        }
+    }
+
+    tree_->blockSignals(false);
+}
+
+void SubmapPanel::rebuildActiveMap(MapProject* project) {
+    scene_ = nullptr;
+    project_ = project;
+
+    QSet<QString> expandedSubmaps, expandedSemFolders;
+    for (int i = 0; i < tree_->topLevelItemCount(); ++i) {
+        auto* root = tree_->topLevelItem(i);
+        for (int j = 0; j < root->childCount(); ++j) {
+            auto* c = root->child(j);
+            if (c->data(0, RoleType).toInt() == TypeSubmap && c->isExpanded()) {
+                QString sid = c->data(0, RoleSubmapId).toString();
+                expandedSubmaps.insert(sid);
+                for (int k = 0; k < c->childCount(); ++k) {
+                    auto* gc = c->child(k);
+                    if (gc && gc->data(0, RoleType).toInt() == TypeSemPointsFolder && gc->isExpanded())
+                        expandedSemFolders.insert(sid);
+                }
+            }
+        }
+    }
+
+    tree_->blockSignals(true);
+    tree_->clear();
+
+    auto* submapRoot = new QTreeWidgetItem(tree_, {"📦 子地图 (Submaps)"});
+    submapRoot->setData(0, RoleType, TypeSubmapRoot);
+    submapRoot->setExpanded(true);
+    submapRoot->setFlags(submapRoot->flags() & ~Qt::ItemIsSelectable);
+
+    if (project_) {
+        for (const auto& id : project_->submapIds()) {
+            auto* sm = project_->submap(id);
+            if (!sm) continue;
+            auto* smItem = makeSubmapItem(id, sm);
+            submapRoot->addChild(smItem);
+            if (expandedSubmaps.contains(id)) smItem->setExpanded(true);
+            if (expandedSemFolders.contains(id)) {
+                for (int c = 0; c < smItem->childCount(); ++c) {
+                    auto* sc = smItem->child(c);
+                    if (sc && sc->data(0, RoleType).toInt() == TypeSemPointsFolder) {
+                        sc->setExpanded(true); break;
+                    }
+                }
+            }
+        }
+    }
+    tree_->blockSignals(false);
+}
+
+QTreeWidgetItem* SubmapPanel::makeSlamMapItem(const SlamMapEntry& e, bool active) {
+    QString label = QString("🏢 %1 (%2)").arg(e.name.isEmpty() ? e.id : e.name, e.id);
+    if (active) label += " ⭐";
+    if (e.anchor.valid)
+        label += QString("  [lon %1, lat %2, %3°]")
+                     .arg(e.anchor.lon, 0, 'f', 6)
+                     .arg(e.anchor.lat, 0, 'f', 6)
+                     .arg(e.anchor.headingDeg, 0, 'f', 1);
+    auto* item = new QTreeWidgetItem({label});
+    item->setData(0, RoleType, TypeSlamMap);
+    item->setData(0, RoleSlamMapId, e.id);
+    return item;
+}
+
 void SubmapPanel::expandRoute(const QString& routeName) {
     for (int i = 0; i < tree_->topLevelItemCount(); ++i) {
         auto* root = tree_->topLevelItem(i);
@@ -367,6 +509,12 @@ void SubmapPanel::onItemClicked(QTreeWidgetItem* item, int /*column*/) {
     QString smId = item->data(0, RoleSubmapId).toString();
 
     switch (type) {
+    case TypeOsmRoot:
+        emit osmSelected();
+        break;
+    case TypeSlamMap:
+        emit slamMapSelected(item->data(0, RoleSlamMapId).toString());
+        break;
     case TypeSubmap:
         emit submapSelected(smId);
         break;
@@ -472,6 +620,21 @@ void SubmapPanel::onContextMenu(const QPoint& pos) {
     QMenu menu;
 
     switch (type) {
+    case TypeOsmRoot:
+        if (scene_ && scene_->hasOsm())
+            menu.addAction("🧭 查看底图 / 对齐 (正交叠加)...", [this]() { emit alignSlamMapRequested(QString()); });
+        menu.addAction("🗺️ 导入 OSM/PBF 底图...", [this]() { emit importOsmRequested(); });
+        menu.addAction("🏢 导入 SLAM 地图...", [this]() { emit addSlamMapRequested(); });
+        break;
+    case TypeSlamMap: {
+        QString mapId = item->data(0, RoleSlamMapId).toString();
+        menu.addAction("✅ 选中并编辑此地图", [this, mapId]() { emit slamMapSelected(mapId); });
+        menu.addAction("🧭 对齐到底图 (正交叠加)...", [this, mapId]() { emit alignSlamMapRequested(mapId); });
+        menu.addSeparator();
+        menu.addAction("🏢 导入 SLAM 地图...", [this]() { emit addSlamMapRequested(); });
+        menu.addAction("🗑️ 移除此地图", [this, mapId]() { emit removeSlamMapRequested(mapId); });
+        break;
+    }
     case TypeSubmap: {
         bool isDefault = (project_ && project_->defaultSubmapId() == smId);
         if (!isDefault) {

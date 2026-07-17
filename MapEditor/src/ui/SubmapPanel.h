@@ -4,6 +4,7 @@
 // ═══════════════════════════════════════════════════════════════════════
 
 #include "core/MapProject.h"
+#include "core/Scene.h"
 #include <QWidget>
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
@@ -46,8 +47,14 @@ class SubmapPanel : public QWidget {
 public:
     explicit SubmapPanel(QWidget* parent = nullptr);
 
-    /// 从 MapProject 刷新整棵树
+    /// 从 MapProject 刷新整棵树（旧的单图模式，保留兼容）
     void rebuild(MapProject* project);
+
+    /// 从 Scene 刷新地图树：OSM 底图(root) → 各 SLAM 地图 → 当前活跃地图的 submap。
+    void rebuildScene(Scene* scene);
+
+    /// 仅展示单张（活跃）SLAM 地图的 submap 树（「SLAM地图」Tab 用）。
+    void rebuildActiveMap(MapProject* project);
 
     /// 展开指定路线项
     void expandRoute(const QString& routeName);
@@ -56,6 +63,14 @@ public:
     bool orbitCenterFollowsSemantic() const;
 
 signals:
+    // ── 场景级事件 ───────────────────────────────────────────────────
+    void slamMapSelected(const QString& slamMapId);   ///< 选中/切换活跃 SLAM 地图
+    void osmSelected();                                ///< 选中 OSM 底图节点
+    void importOsmRequested();                         ///< 请求导入 OSM/PBF 底图
+    void addSlamMapRequested();                        ///< 请求导入 SLAM 地图
+    void removeSlamMapRequested(const QString& slamMapId);
+    void alignSlamMapRequested(const QString& slamMapId);  ///< 打开对齐(正交叠加)
+
     // ── 选中事件 ─────────────────────────────────────────────────────
     void submapSelected(const QString& submapId);
     void semanticPointSelected(const QString& submapId, const QString& pointName);
@@ -113,18 +128,22 @@ private:
     void setupUI();
     QTreeWidgetItem* makeSubmapItem(const QString& id, SubMap* sm);
     QTreeWidgetItem* makeRouteItem(const QString& name, const Route& route);
+    QTreeWidgetItem* makeSlamMapItem(const SlamMapEntry& e, bool active);
 
     DragDropTree* tree_ = nullptr;
     QPushButton* btnAdd_ = nullptr;
     QCheckBox* orbitSemanticCenterCk_ = nullptr;
 
     // 记录 item 类型和数据
-    enum ItemRole { RoleType = Qt::UserRole, RoleSubmapId, RolePointName, RolePortalIdx, RoleRouteName };
+    enum ItemRole { RoleType = Qt::UserRole, RoleSubmapId, RolePointName, RolePortalIdx,
+                    RoleRouteName, RoleSlamMapId };
     enum ItemType { TypeSubmapRoot, TypeSubmap, TypeMapCloud, TypeSemPointsFolder, TypeSemPoint,
                     TypePortalsFolder, TypePortal, TypeVprFeatures,
-                    TypeRoutesRoot, TypeRoute, TypeRouteWaypoint };
+                    TypeRoutesRoot, TypeRoute, TypeRouteWaypoint,
+                    TypeOsmRoot, TypeSlamMap };
 
     MapProject* project_ = nullptr;
+    Scene*      scene_   = nullptr;
 
     friend class DragDropTree;
 };

@@ -30,15 +30,21 @@ list(REMOVE_ITEM PCL_LIBRARIES "vtkproj4")
 # ── Sources ───────────────────────────────────────────────────────────
 set(CORE_SOURCES
     src/core/Types.h
+    src/core/Wgs84.h
     src/core/SubMap.h          src/core/SubMap.cpp
     src/core/MapProject.h      src/core/MapProject.cpp
     src/core/VprDatabaseData.h src/core/VprDatabaseData.cpp
+    src/core/OsmData.h         src/core/OsmData.cpp
+    src/core/SceneModel.h      src/core/SceneModel.cpp
+    src/core/Scene.h           src/core/Scene.cpp
 )
 
 set(UI_SOURCES
     src/ui/MainWindow.h        src/ui/MainWindow.cpp
     src/ui/PointCloudViewer.h  src/ui/PointCloudViewer.cpp
     src/ui/SubmapPanel.h       src/ui/SubmapPanel.cpp
+    src/ui/ScenePanel.h        src/ui/ScenePanel.cpp
+    src/ui/RoutePanel.h        src/ui/RoutePanel.cpp
     src/ui/PropertiesPanel.h   src/ui/PropertiesPanel.cpp
     src/ui/AddSubmapDialog.h   src/ui/AddSubmapDialog.cpp
     src/ui/AlignSubmapDialog.h src/ui/AlignSubmapDialog.cpp
@@ -46,6 +52,8 @@ set(UI_SOURCES
     src/ui/BuildVprDatabaseDialog.h src/ui/BuildVprDatabaseDialog.cpp
     src/ui/VprDatabaseInfoDialog.h  src/ui/VprDatabaseInfoDialog.cpp
     src/ui/VprImageViewer.h         src/ui/VprImageViewer.cpp
+    src/ui/SceneAlignView.h         src/ui/SceneAlignView.cpp
+    src/ui/SceneAlignDialog.h       src/ui/SceneAlignDialog.cpp
 )
 
 set(ALGO_SOURCES

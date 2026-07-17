@@ -5,8 +5,15 @@
 
 #include "core/MapProject.h"
 #include "core/VprDatabaseData.h"
+#include "core/Scene.h"
 #include "ui/PointCloudViewer.h"
 #include "ui/SubmapPanel.h"
+#include "ui/ScenePanel.h"
+#include "ui/RoutePanel.h"
+#include "ui/SceneAlignView.h"
+
+class QStackedWidget;
+class QTabWidget;
 #include "ui/PropertiesPanel.h"
 #include "ui/BuildVprDatabaseDialog.h"
 #include <QMainWindow>
@@ -36,6 +43,30 @@ private slots:
     void onSaveAs();
     void onEditVersion();
     void onResetView();
+    void onOpenSceneAlign();
+
+    // ── 场景：导入 / 选择 / 对齐 ─────────────────────────────────────
+    void onImportOsm();
+    void onImportSlamMap();
+    void onOpenScene();
+    void onSaveScene();
+    void onSlamMapSelected(const QString& slamMapId);
+    void onSlamMapActivated(const QString& slamMapId);
+    void onRemoveSlamMap(const QString& slamMapId);
+    void onAlignSlamMap(const QString& slamMapId);
+    void onOrthoVisibilityChanged(const QString& slamMapId, bool visible);
+    void onLeftTabChanged(int index);
+
+    // ── 全局路线 ─────────────────────────────────────────────────────
+    void onAddGlobalRoute();
+    void onRemoveGlobalRoute(const QString& name);
+    void onRenameGlobalRoute(const QString& oldName, const QString& newName);
+    void onAddGlobalWaypoint(const QString& routeName);
+    void onRemoveGlobalWaypoint(const QString& routeName, int index);
+
+    // ── 内部路线（属于某张 SLAM 地图）───────────────────────────────
+    void onAddInternalRoute(const QString& mapId);
+    void onRemoveInternalRoute(const QString& mapId, const QString& routeName);
 
     // ── Submap 面板事件 ──────────────────────────────────────────────
     void onSubmapSelected(const QString& id);
@@ -116,12 +147,43 @@ private:
     /// 为新增 submap 分配一个默认颜色
     QColor nextColor();
 
+    // ── 场景（分层地图：OSM + 多张 SLAM 地图 + 全局路线）─────────────
+    Scene scene_;
+    /// 把当前 project_ 的内容写回活跃 SLAM 地图条目（切换/保存/刷新前调用）
+    void syncActiveEntryFromProject();
+    /// 从活跃条目载入到 project_
+    void loadProjectFromActiveEntry();
+    /// 从 3D 视图移除当前活跃地图的所有显示（切换地图前调用）
+    void clearViewerActiveMap();
+    /// 刷新左侧两个面板（地图树 + 路线）
+    void refreshScenePanels();
+    /// 刷新活跃地图在 3D 中的显示（点云/标记/路线/VPR）
+    void refreshActiveMapView();
+    /// 在主视图（场景总览）里重建 OSM + 各 SLAM 地图正交投影
+    void rebuildSceneOverview();
+    /// 进入「场景地图」Tab 时确保总览已构建（惰性）
+    void ensureSceneOverview();
+    /// 切到某个左侧 Tab（0=场景地图 1=SLAM地图 2=路线）并同步主视图
+    void showLeftTab(int index);
+    /// 取某张地图的可编辑 MapProject（活跃→project_；否则→条目内 project）
+    MapProject* projectForMap(const QString& mapId);
+    QString activeMapId() const;
+
     // ── 组件 ─────────────────────────────────────────────────────────
+    QStackedWidget*   centralStack_ = nullptr;   ///< [0]=场景总览 [1]=3D 活跃地图
+    SceneAlignView*   sceneView_ = nullptr;       ///< 场景总览：OSM + 各地图正交投影
     PointCloudViewer* viewer_ = nullptr;
-    SubmapPanel*      submapPanel_ = nullptr;
+    QTabWidget*       leftTabs_ = nullptr;
+    ScenePanel*       scenePanel_ = nullptr;       ///< 「场景地图」Tab
+    SubmapPanel*      submapPanel_ = nullptr;       ///< 「SLAM地图」Tab
+    RoutePanel*       routePanel_ = nullptr;        ///< 「路线」Tab
     PropertiesPanel*  propsPanel_ = nullptr;
     QLabel*           statusLabel_ = nullptr;
     QDoubleSpinBox*   globalVoxelSpin_ = nullptr;
+
+    bool sceneOverviewDirty_ = true;   ///< 场景组成变化后需重建总览足迹
+    QVector<QString> sceneViewRowToId_;  ///< 总览足迹行 → SLAM 地图 id
+    static constexpr int kSceneTab = 0, kSlamTab = 1, kRouteTab = 2;
 
     MapProject project_;
     QString    currentProjectDir_;

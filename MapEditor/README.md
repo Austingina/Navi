@@ -195,9 +195,47 @@ MapEditor/
 └── src/
     ├── main.cpp
     ├── core/           # Types, SubMap, MapProject（目录与 JSON/PCD）
+    │                   # Wgs84, OsmData, SceneModel（分层地图/场景对齐）
     ├── ui/             # MainWindow, PointCloudViewer, SubmapPanel, PropertiesPanel, 对话框
+    │                   # SceneAlignView, SceneAlignDialog（OSM+SLAM 对齐）
     └── algorithms/     # VoxelGridFilter, CloudMatcher, BBS3DWrapper.cu
 ```
+
+---
+
+## 11.5 场景对齐：OSM 底图 + SLAM 地图（分层地图模型）
+
+对应设计文档 `NaviSkill/docs/fsm_navigation_design.md` §4「地图结构（分层地图模型）」：
+以 **OSM（经纬度）作为超大型场景主干底图**，把一张或多张 **SLAM 地图** 通过
+`geo_anchor` 对齐（锚定）到底图上。
+
+菜单 **场景(&S) → 场景对齐 (OSM + SLAM)…**（快捷键 `Ctrl+M`）打开独立的
+**2D 俯视对齐窗口**：
+
+1. **导入 OSM 底图**：支持 `.osm`（OpenStreetMap XML）与 `.pbf` / `.osm.pbf`
+   （OSM PBF 二进制，protobuf + zlib，自包含解码，无需额外工具）。解析道路 / 人行道 /
+   建筑 / 水体等要素并投影到局部 ENU 平面显示；底图 `bounds` 中心默认作为场景 ENU 原点。
+2. **导入 SLAM 地图**：可选 **地图工程目录**（复用 `MapProject`，各 submap 按 TF 树
+   合并到 `default_submap` 根系）或单个 **`.pcd`**；程序把点云 **XY 俯视投影** 栅格化为
+   足迹叠加到底图上。
+3. **对齐（拖拽 / 旋转 / 缩放）**：在画布上操作选中的 SLAM 足迹——
+
+   | 操作 | 作用 | 改动字段 |
+   |------|------|----------|
+   | 左键拖拽足迹 | 平移 | `geo_anchor.origin` (lon/lat) |
+   | 右键拖拽 / `Alt`+左键 | 绕自身原点旋转 | `geo_anchor.heading_deg` |
+   | `Shift`+左键拖拽 | 缩放（可视微调） | `geo_anchor.scale` |
+   | 左键空白处拖拽 / 中键 | 平移整个视图 | — |
+   | 滚轮 | 视图缩放（以光标为中心） | — |
+
+   右侧 `对齐 (geo_anchor)` 面板可直接输入 `lon/lat/alt/heading/scale` 精确调整。
+   `heading_deg` 定义为 map `+X` 轴相对 ENU 正东的方位角（逆时针为正）。
+4. **保存 / 打开场景**：写出/读取 `scene + slam_maps` 结构的 JSON（见设计 §4.3）。
+   `osm.source` 与各 `slam_maps.<id>.source` 以 **相对场景 JSON 目录** 的路径保存，
+   便于整体迁移。
+
+> 说明：SLAM 与 OSM 均为米制，`scale` 仅用于可视对齐微调，通常保持 `1.0`。经纬度↔局部
+> 平面换算与 `NaviSkill/wgs84.py` 采用一致的小范围球面近似（`src/core/Wgs84.h`）。
 
 ---
 

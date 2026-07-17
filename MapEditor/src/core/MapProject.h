@@ -23,6 +23,14 @@ public:
     /// 注意：保存时会把 ``buildNo_`` 自动更新为当前 epoch 秒（因此非 const）。
     bool save(const QString& dirPath);
 
+    // ── JSON 对象级 (供场景 single-file 内联复用) ───────────────────
+    /// 从 JSON 对象加载（不读磁盘 JSON）；pcdBaseDir 解析 map_file 相对路径并加载 PCD。
+    bool loadFromObject(const QJsonObject& root, const QString& pcdBaseDir);
+    /// 导出为 JSON 对象（含 global/submaps/routes；不写文件、不更新 build_no）。
+    QJsonObject toObject() const;
+    /// 把各 submap 的 PCD 写到 pcdBaseDir + map_file（供场景保存时落盘）。
+    bool savePcds(const QString& pcdBaseDir) const;
+
     // ── 版本号 / 构建号 ──────────────────────────────────────────────
     /// 工程语义版本号，默认 "1.0"，由用户在 MapEditor 中显式修改。
     QString version() const { return version_; }
@@ -59,6 +67,8 @@ public:
 
     const QMap<QString, Route>& routes() const { return routes_; }
     Route* route(const QString& name);
+    /// const 版查找：不会触发隐式共享 QMap 的 detach（避免遍历时迭代器失效）。
+    const Route* route(const QString& name) const;
     void addRoute(const Route& r) { routes_[r.name] = r; }
     void removeRoute(const QString& name);
     bool renameRoute(const QString& oldName, const QString& newName);
@@ -76,6 +86,9 @@ public:
     void setDirty(bool d = true) { dirty_ = d; }
 
 private:
+    /// 解析 root 对象里的 global/submaps/routes 到内部结构（PCD 从 projectDir_ 加载）。
+    void parseRootObject(const QJsonObject& root);
+
     // JSON 解析助手
     Pose           parsePose(const QJsonObject& obj) const;
     QJsonObject    poseToJson(const Pose& p) const;

@@ -46,6 +46,8 @@ public:
     void removeSemanticPoint(const QString& name)     { semanticPoints_.remove(name); }
     bool hasSemanticPoint(const QString& name) const  { return semanticPoints_.contains(name); }
     SemanticPoint* semanticPoint(const QString& name);
+    /// const 版查找：不触发隐式共享 QMap 的 detach。
+    const SemanticPoint* semanticPoint(const QString& name) const;
 
     // ── 传送门 ───────────────────────────────────────────────────────
     const QVector<Portal>& portals() const         { return portals_; }

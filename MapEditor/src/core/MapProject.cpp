@@ -203,6 +203,23 @@ bool MapProject::load(const QString& dirPath) {
     auto root = doc.object();
     projectDir_ = dir.absolutePath();
 
+    parseRootObject(root);
+
+    qDebug() << "地图工程加载完成. Submaps:" << submaps_.size()
+             << " Routes:" << routes_.size();
+    return true;
+}
+
+bool MapProject::loadFromObject(const QJsonObject& root, const QString& pcdBaseDir) {
+    projectDir_ = pcdBaseDir;
+    parseRootObject(root);
+    return true;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  解析 root 对象（global / submaps / routes）
+// ═══════════════════════════════════════════════════════════════════════
+void MapProject::parseRootObject(const QJsonObject& root) {
     // ── global ───────────────────────────────────────────────────────
     if (root.contains("global")) {
         auto global = root["global"].toObject();
@@ -319,9 +336,6 @@ bool MapProject::load(const QString& dirPath) {
     }
 
     dirty_ = false;
-    qDebug() << "地图工程加载完成. Submaps:" << submaps_.size()
-             << " Routes:" << routes_.size();
-    return true;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -345,91 +359,7 @@ bool MapProject::save(const QString& dirPath) {
                    .toString(QStringLiteral("yyyyMMddhhmmss"))
                    .toLongLong();
 
-    QJsonObject root;
-
-    // ── global ───────────────────────────────────────────────────────
-    root["_comment"] = QString("多楼层地图配置文件 / Multi-floor map configuration");
-    QString savedDefaultRoute = defaultRouteId_;
-    if (savedDefaultRoute.isEmpty() || !routes_.contains(savedDefaultRoute)) {
-        if (!routes_.isEmpty())
-            savedDefaultRoute = routes_.firstKey();
-    }
-    QJsonObject globalObj;
-    globalObj["default_submap"] = defaultSubmapId_;
-    globalObj["default_route"]  = savedDefaultRoute;
-    globalObj["version"]        = version_;
-    // 用 QJsonValue(qint64) 显式构造，避免被隐式转 double 后再科学计数
-    globalObj["build_no"]       = QJsonValue(static_cast<qint64>(buildNo_));
-    root["global"] = globalObj;
-
-    // ── submaps ──────────────────────────────────────────────────────
-    QJsonObject submapsObj;
-    for (auto it = submaps_.begin(); it != submaps_.end(); ++it) {
-        const auto& sm = it.value();
-        QJsonObject smObj;
-        smObj["name"]        = sm->name();
-        smObj["description"] = sm->description();
-        smObj["map_file"]    = sm->mapFile();
-        if (!sm->parentSubmapId().isEmpty())
-            smObj["parent_submap"] = sm->parentSubmapId();
-        smObj["transform"]   = transformToJson(sm->transform());
-
-        // submap_portals
-        QJsonArray portalsArr;
-        for (const auto& p : sm->portals()) {
-            portalsArr.append(QJsonObject{
-                {"portal", p.portalName},
-                {"submap", p.targetSubmap}
-            });
-        }
-        smObj["submap_portals"] = portalsArr;
-
-        // semantic_points
-        QJsonObject spObj;
-        for (auto sit = sm->semanticPoints().begin();
-             sit != sm->semanticPoints().end(); ++sit) {
-            const auto& sp = sit.value();
-            QJsonObject spData;
-            spData["type"] = sp.type;
-            if (sp.type == "multi_pose") {
-                QJsonArray posesArr;
-                for (const auto& pose : sp.poses) {
-                    posesArr.append(poseToJson(pose));
-                }
-                spData["poses"] = posesArr;
-            } else if (!sp.poses.isEmpty()) {
-                spData["pose"] = poseToJson(sp.poses.first());
-            }
-            spData["need_inspect"] = sp.needInspect;
-            spObj[sp.name] = spData;
-        }
-        smObj["semantic_points"] = spObj;
-
-        submapsObj[it.key()] = smObj;
-    }
-    root["submaps"] = submapsObj;
-
-    // ── routes ───────────────────────────────────────────────────────
-    QJsonObject routesObj;
-    for (auto it = routes_.begin(); it != routes_.end(); ++it) {
-        const auto& r = it.value();
-        QJsonObject rObj;
-        rObj["description"] = r.description;
-        QJsonArray wpArr;
-        for (const auto& wp : r.waypoints) {
-            if (wp.isRouteRef()) {
-                wpArr.append(QJsonObject{{"route", wp.routeRef}});
-            } else {
-                wpArr.append(QJsonObject{
-                    {"submap", wp.submapId},
-                    {"semantic_point", wp.semanticPoint}
-                });
-            }
-        }
-        rObj["waypoints"] = wpArr;
-        routesObj[it.key()] = rObj;
-    }
-    root["routes"] = routesObj;
+    QJsonObject root = toObject();
 
     // ── 写文件 ───────────────────────────────────────────────────────
     QFile file(jsonPath);
@@ -449,16 +379,104 @@ bool MapProject::save(const QString& dirPath) {
     file.close();
 
     // 保存各 submap 的 PCD (原始精度)
+    savePcds(dir.absolutePath());
+
+    qDebug() << "地图工程已保存至:" << jsonPath;
+    return true;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  JSON 对象导出 (供文件保存与场景 single-file 内联复用)
+// ═══════════════════════════════════════════════════════════════════════
+QJsonObject MapProject::toObject() const {
+    QJsonObject root;
+    root["_comment"] = QString("多楼层地图配置文件 / Multi-floor map configuration");
+
+    QString savedDefaultRoute = defaultRouteId_;
+    if (savedDefaultRoute.isEmpty() || !routes_.contains(savedDefaultRoute)) {
+        if (!routes_.isEmpty())
+            savedDefaultRoute = routes_.firstKey();
+    }
+    QJsonObject globalObj;
+    globalObj["default_submap"] = defaultSubmapId_;
+    globalObj["default_route"]  = savedDefaultRoute;
+    globalObj["version"]        = version_;
+    globalObj["build_no"]       = QJsonValue(static_cast<qint64>(buildNo_));
+    root["global"] = globalObj;
+
+    QJsonObject submapsObj;
+    for (auto it = submaps_.begin(); it != submaps_.end(); ++it) {
+        const auto& sm = it.value();
+        QJsonObject smObj;
+        smObj["name"]        = sm->name();
+        smObj["description"] = sm->description();
+        smObj["map_file"]    = sm->mapFile();
+        if (!sm->parentSubmapId().isEmpty())
+            smObj["parent_submap"] = sm->parentSubmapId();
+        smObj["transform"]   = transformToJson(sm->transform());
+
+        QJsonArray portalsArr;
+        for (const auto& p : sm->portals()) {
+            portalsArr.append(QJsonObject{
+                {"portal", p.portalName}, {"submap", p.targetSubmap}});
+        }
+        smObj["submap_portals"] = portalsArr;
+
+        QJsonObject spObj;
+        for (auto sit = sm->semanticPoints().begin();
+             sit != sm->semanticPoints().end(); ++sit) {
+            const auto& sp = sit.value();
+            QJsonObject spData;
+            spData["type"] = sp.type;
+            if (sp.type == "multi_pose") {
+                QJsonArray posesArr;
+                for (const auto& pose : sp.poses) posesArr.append(poseToJson(pose));
+                spData["poses"] = posesArr;
+            } else if (!sp.poses.isEmpty()) {
+                spData["pose"] = poseToJson(sp.poses.first());
+            }
+            spData["need_inspect"] = sp.needInspect;
+            spObj[sp.name] = spData;
+        }
+        smObj["semantic_points"] = spObj;
+        submapsObj[it.key()] = smObj;
+    }
+    root["submaps"] = submapsObj;
+
+    QJsonObject routesObj;
+    for (auto it = routes_.begin(); it != routes_.end(); ++it) {
+        const auto& r = it.value();
+        QJsonObject rObj;
+        rObj["description"] = r.description;
+        QJsonArray wpArr;
+        for (const auto& wp : r.waypoints) {
+            if (wp.isRouteRef()) {
+                wpArr.append(QJsonObject{{"route", wp.routeRef}});
+            } else {
+                wpArr.append(QJsonObject{
+                    {"submap", wp.submapId}, {"semantic_point", wp.semanticPoint}});
+            }
+        }
+        rObj["waypoints"] = wpArr;
+        routesObj[it.key()] = rObj;
+    }
+    root["routes"] = routesObj;
+    return root;
+}
+
+bool MapProject::savePcds(const QString& pcdBaseDir) const {
+    QDir dir(pcdBaseDir);
+    if (!dir.exists()) QDir().mkpath(pcdBaseDir);
+    bool ok = true;
     for (auto it = submaps_.begin(); it != submaps_.end(); ++it) {
         const auto& sm = it.value();
         if (sm->cloud() && !sm->mapFile().isEmpty()) {
             QString pcdPath = dir.absoluteFilePath(sm->mapFile());
-            savePcd(pcdPath, sm->cloud());
+            QFileInfo(pcdPath).absoluteDir().mkpath(".");
+            if (!savePcd(pcdPath, sm->cloud())) ok = false;
         }
     }
-
-    qDebug() << "地图工程已保存至:" << jsonPath;
-    return true;
+    return ok;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -537,6 +555,11 @@ bool MapProject::isTreeRoot(const QString& id) const {
 Route* MapProject::route(const QString& name) {
     auto it = routes_.find(name);
     return (it != routes_.end()) ? &it.value() : nullptr;
+}
+
+const Route* MapProject::route(const QString& name) const {
+    auto it = routes_.constFind(name);
+    return (it != routes_.constEnd()) ? &it.value() : nullptr;
 }
 
 void MapProject::removeRoute(const QString& name) {

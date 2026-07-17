@@ -23,6 +23,11 @@ SemanticPoint* SubMap::semanticPoint(const QString& name) {
     return (it != semanticPoints_.end()) ? &it.value() : nullptr;
 }
 
+const SemanticPoint* SubMap::semanticPoint(const QString& name) const {
+    auto it = semanticPoints_.constFind(name);
+    return (it != semanticPoints_.constEnd()) ? &it.value() : nullptr;
+}
+
 void SubMap::removePortal(int index) {
     if (index >= 0 && index < portals_.size())
         portals_.removeAt(index);

@@ -5,11 +5,18 @@
 #include "ui/PortalEditorDialog.h"
 #include "ui/VprDatabaseInfoDialog.h"
 #include "ui/VprImageViewer.h"
+#include "ui/SceneAlignDialog.h"
+
+#include "ui/SceneAlignView.h"
 
 #include <QMenuBar>
 #include <QToolBar>
 #include <QDockWidget>
+#include <QTabWidget>
+#include <QStackedWidget>
+#include <QVBoxLayout>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QMessageBox>
 #include <QInputDialog>
 #include <QSplitter>
@@ -21,7 +28,9 @@
 #include <QDir>
 
 #include <Eigen/Geometry>
+#include <pcl/common/transforms.h>
 #include <QSet>
+#include <QColor>
 #include <functional>
 
 namespace me {
@@ -144,15 +153,28 @@ void MainWindow::closeEvent(QCloseEvent* event) {
 }
 
 void MainWindow::setupUI() {
-    // ── 中心: 3D Viewer ──────────────────────────────────────────────
-    viewer_ = new PointCloudViewer();
-    setCentralWidget(viewer_);
+    // ── 中心: 堆叠视图 [0]=场景总览(正交叠加)  [1]=3D 活跃地图 ────────
+    sceneView_ = new SceneAlignView();
+    viewer_    = new PointCloudViewer();
+    centralStack_ = new QStackedWidget();
+    centralStack_->addWidget(sceneView_);   // index 0
+    centralStack_->addWidget(viewer_);      // index 1
+    centralStack_->setCurrentIndex(1);
+    setCentralWidget(centralStack_);
 
-    // ── 左侧: Submap 面板 ───────────────────────────────────────────
+    // ── 左侧: 场景地图 / SLAM地图 / 路线 三个 Tab ────────────────────
+    scenePanel_  = new ScenePanel();
     submapPanel_ = new SubmapPanel();
-    auto* leftDock = new QDockWidget("子地图管理", this);
-    leftDock->setWidget(submapPanel_);
-    leftDock->setMinimumWidth(260);
+    routePanel_  = new RoutePanel();
+    leftTabs_ = new QTabWidget();
+    leftTabs_->addTab(scenePanel_,  "场景地图");   // kSceneTab = 0
+    leftTabs_->addTab(submapPanel_, "SLAM地图");   // kSlamTab  = 1
+    leftTabs_->addTab(routePanel_,  "路线");        // kRouteTab = 2
+    leftTabs_->setCurrentIndex(kSlamTab);
+    connect(leftTabs_, &QTabWidget::currentChanged, this, &MainWindow::onLeftTabChanged);
+    auto* leftDock = new QDockWidget("场景管理", this);
+    leftDock->setWidget(leftTabs_);
+    leftDock->setMinimumWidth(280);
     addDockWidget(Qt::LeftDockWidgetArea, leftDock);
 
     // ── 右侧: 属性面板 ──────────────────────────────────────────────
@@ -173,6 +195,12 @@ void MainWindow::setupMenuBar() {
     fileMenu->addAction("保存", this, &MainWindow::onSave, QKeySequence::Save);
     fileMenu->addAction("另存为...", this, &MainWindow::onSaveAs, QKeySequence("Ctrl+Shift+S"));
     fileMenu->addSeparator();
+    fileMenu->addAction("导入 OSM/PBF 底图...", this, &MainWindow::onImportOsm);
+    fileMenu->addAction("导入 SLAM 地图...", this, &MainWindow::onImportSlamMap);
+    fileMenu->addSeparator();
+    fileMenu->addAction("打开场景 (scene.json)...", this, &MainWindow::onOpenScene);
+    fileMenu->addAction("保存场景 (scene.json)...", this, &MainWindow::onSaveScene);
+    fileMenu->addSeparator();
     fileMenu->addAction("修改版本号...", this, &MainWindow::onEditVersion);
     fileMenu->addSeparator();
     fileMenu->addAction("退出", this, &QMainWindow::close, QKeySequence::Quit);
@@ -184,6 +212,10 @@ void MainWindow::setupMenuBar() {
     editMenu->addAction("撤销拖拽", this, &MainWindow::undoMarkerDrag, QKeySequence::Undo);
     editMenu->addSeparator();
     editMenu->addAction("新增 Submap...", this, &MainWindow::onAddSubmap, QKeySequence("Ctrl+N"));
+
+    auto* sceneMenu = menuBar()->addMenu("场景(&S)");
+    sceneMenu->addAction("场景对齐 (OSM + SLAM)...", this,
+                         &MainWindow::onOpenSceneAlign, QKeySequence("Ctrl+M"));
 
     // 工具栏
     auto* toolbar = addToolBar("主工具栏");
@@ -285,6 +317,61 @@ void MainWindow::connectSignals() {
     connect(submapPanel_, &SubmapPanel::showTfTreeRequested,
             this, &MainWindow::onShowTfTree);
 
+    // ── 场景地图 Tab ──────────────────────────────────────────────────
+    connect(scenePanel_, &ScenePanel::importOsmRequested,
+            this, &MainWindow::onImportOsm);
+    connect(scenePanel_, &ScenePanel::addSlamMapRequested,
+            this, &MainWindow::onImportSlamMap);
+    connect(scenePanel_, &ScenePanel::removeSlamMapRequested,
+            this, &MainWindow::onRemoveSlamMap);
+    connect(scenePanel_, &ScenePanel::slamMapActivated,
+            this, &MainWindow::onSlamMapActivated);
+    connect(scenePanel_, &ScenePanel::slamMapSelected, this, [this](const QString& id) {
+        int i = sceneView_->indexOfItem(id);
+        if (i >= 0) sceneView_->setSelected(i);
+    });
+    connect(scenePanel_, &ScenePanel::orthoVisibilityChanged,
+            this, &MainWindow::onOrthoVisibilityChanged);
+
+    // 在总览里拖拽足迹 → 写回该地图 geo_anchor
+    connect(sceneView_, &SceneAlignView::anchorEdited, this,
+            [this](int index, const GeoAnchor& anchor) {
+        if (index < 0 || index >= sceneViewRowToId_.size()) return;
+        auto* e = scene_.mapById(sceneViewRowToId_[index]);
+        if (!e) return;
+        e->anchor = anchor;
+        scenePanel_->rebuild(&scene_);
+        markDirty();
+    });
+
+    // 兼容：SLAM地图 Tab 内若仍触发这些信号
+    connect(submapPanel_, &SubmapPanel::slamMapSelected,
+            this, &MainWindow::onSlamMapSelected);
+    connect(submapPanel_, &SubmapPanel::importOsmRequested,
+            this, &MainWindow::onImportOsm);
+    connect(submapPanel_, &SubmapPanel::addSlamMapRequested,
+            this, &MainWindow::onImportSlamMap);
+    connect(submapPanel_, &SubmapPanel::removeSlamMapRequested,
+            this, &MainWindow::onRemoveSlamMap);
+    connect(submapPanel_, &SubmapPanel::alignSlamMapRequested,
+            this, &MainWindow::onAlignSlamMap);
+
+    // ── 路线 Tab ──────────────────────────────────────────────────────
+    connect(routePanel_, &RoutePanel::addGlobalRouteRequested,
+            this, &MainWindow::onAddGlobalRoute);
+    connect(routePanel_, &RoutePanel::removeGlobalRouteRequested,
+            this, &MainWindow::onRemoveGlobalRoute);
+    connect(routePanel_, &RoutePanel::renameGlobalRouteRequested,
+            this, &MainWindow::onRenameGlobalRoute);
+    connect(routePanel_, &RoutePanel::addGlobalWaypointRequested,
+            this, &MainWindow::onAddGlobalWaypoint);
+    connect(routePanel_, &RoutePanel::removeGlobalWaypointRequested,
+            this, &MainWindow::onRemoveGlobalWaypoint);
+    connect(routePanel_, &RoutePanel::addInternalRouteRequested,
+            this, &MainWindow::onAddInternalRoute);
+    connect(routePanel_, &RoutePanel::removeInternalRouteRequested,
+            this, &MainWindow::onRemoveInternalRoute);
+
     // ── Properties Panel ─────────────────────────────────────────────
     connect(propsPanel_, &PropertiesPanel::submapPropertiesChanged,
             this, &MainWindow::onSubmapPropertiesChanged);
@@ -346,7 +433,20 @@ void MainWindow::onOpen() {
         }
     }
 
-    submapPanel_->rebuild(&project_);
+    // 把打开的单张地图包装为场景中的一张 SLAM 地图（OSM 未导入）
+    scene_.clear();
+    {
+        SlamMapEntry e;
+        e.id   = scene_.uniqueMapId(QFileInfo(path).completeBaseName());
+        e.name = QFileInfo(path).completeBaseName();
+        e.pcdBaseDir = path;
+        e.anchor.valid = false;
+        e.project = std::make_shared<MapProject>(project_);
+        scene_.addMap(e);
+        scene_.setActiveIndex(0);
+    }
+
+    refreshScenePanels();
     refreshAllSubmaps();
     refreshMarkers();
     refreshRouteLines();
@@ -445,6 +545,443 @@ void MainWindow::onEditVersion() {
 
 void MainWindow::onResetView() {
     viewer_->resetCamera();
+}
+
+void MainWindow::onOpenSceneAlign() {
+    showLeftTab(kSceneTab);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  场景：活跃地图与 project_ 的同步
+// ═══════════════════════════════════════════════════════════════════════
+
+QString MainWindow::activeMapId() const {
+    if (scene_.activeIndex() >= 0 && scene_.activeIndex() < scene_.maps().size())
+        return scene_.maps()[scene_.activeIndex()].id;
+    return QString();
+}
+
+void MainWindow::syncActiveEntryFromProject() {
+    auto* e = scene_.activeMap();
+    if (!e) return;
+    if (!e->project) e->project = std::make_shared<MapProject>();
+    *e->project = project_;
+    if (!currentProjectDir_.isEmpty()) e->pcdBaseDir = currentProjectDir_;
+}
+
+void MainWindow::loadProjectFromActiveEntry() {
+    auto* e = scene_.activeMap();
+    if (!e || !e->project) return;
+    project_ = *e->project;
+    currentProjectDir_ = e->pcdBaseDir;
+}
+
+MapProject* MainWindow::projectForMap(const QString& mapId) {
+    if (mapId == activeMapId()) return &project_;
+    auto* e = scene_.mapById(mapId);
+    return e ? e->project.get() : nullptr;
+}
+
+void MainWindow::clearViewerActiveMap() {
+    for (const auto& id : project_.submapIds()) {
+        viewer_->removeSubmap(id);
+        viewer_->removeVprPoints(id);
+    }
+    viewer_->clearAllRouteLines();
+    vprDbs_.clear();
+    vprSelection_.clear();
+}
+
+void MainWindow::refreshScenePanels() {
+    syncActiveEntryFromProject();
+    scenePanel_->rebuild(&scene_);
+    submapPanel_->rebuildActiveMap(scene_.activeMap() ? &project_ : nullptr);
+    routePanel_->rebuild(&scene_);
+    sceneOverviewDirty_ = true;
+    if (leftTabs_ && leftTabs_->currentIndex() == kSceneTab) rebuildSceneOverview();
+}
+
+void MainWindow::refreshActiveMapView() {
+    colorIndex_ = 0;
+    for (const auto& id : project_.submapIds()) {
+        auto* sm = project_.submap(id);
+        if (sm && !sm->displayOptions().color.isValid())
+            sm->displayOptions().color = nextColor();
+    }
+    refreshAllSubmaps();
+    refreshMarkers();
+    refreshRouteLines();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  场景：导入 OSM / SLAM 地图
+// ═══════════════════════════════════════════════════════════════════════
+
+void MainWindow::onImportOsm() {
+    QString path = QFileDialog::getOpenFileName(
+        this, "导入 OSM/PBF 底图", currentProjectDir_,
+        "OSM 地图 (*.osm *.pbf *.osm.pbf);;OSM XML (*.osm);;OSM PBF (*.pbf *.osm.pbf);;所有文件 (*)");
+    if (path.isEmpty()) return;
+
+    statusLabel_->setText("加载底图中...");
+    QApplication::processEvents();
+
+    auto osm = std::make_shared<OsmData>();
+    if (!osm->load(path) || osm->isEmpty()) {
+        QMessageBox::critical(this, "错误", "无法解析 OSM 底图: " + path);
+        statusLabel_->setText("底图加载失败");
+        return;
+    }
+    scene_.setOsm(osm, path);
+    refreshScenePanels();
+    // 切到「场景地图」Tab，主视图即显示 OSM 底图 + 各 SLAM 地图正交投影
+    showLeftTab(kSceneTab);
+    statusLabel_->setText(QString("已导入底图: %1  (中心 lon %2, lat %3)")
+                              .arg(QFileInfo(path).fileName())
+                              .arg(scene_.originLon(), 0, 'f', 6)
+                              .arg(scene_.originLat(), 0, 'f', 6));
+}
+
+void MainWindow::onImportSlamMap() {
+    QString path = QFileDialog::getExistingDirectory(
+        this, "选择 SLAM 地图工程目录", currentProjectDir_,
+        QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
+    if (path.isEmpty()) return;
+
+    statusLabel_->setText("加载 SLAM 地图中...");
+    QApplication::processEvents();
+
+    auto proj = std::make_shared<MapProject>();
+    if (!proj->load(path)) {
+        QMessageBox::critical(this, "错误", "无法加载 SLAM 地图: " + path);
+        statusLabel_->setText("SLAM 地图加载失败");
+        return;
+    }
+
+    // 先把当前活跃地图的编辑写回，再追加新地图并切换为活跃
+    syncActiveEntryFromProject();
+    clearViewerActiveMap();
+
+    SlamMapEntry e;
+    e.id   = scene_.uniqueMapId(QFileInfo(path).completeBaseName());
+    e.name = QFileInfo(path).completeBaseName();
+    e.pcdBaseDir = path;
+    e.project = proj;
+    e.anchor.valid = true;
+    if (scene_.hasOrigin()) { e.anchor.lon = scene_.originLon(); e.anchor.lat = scene_.originLat(); }
+    scene_.addMap(e);   // 设为活跃
+
+    loadProjectFromActiveEntry();
+    for (const auto& id : project_.submapIds()) {
+        auto* sm = project_.submap(id);
+        if (sm) sm->displayOptions().color = nextColor();
+    }
+    refreshScenePanels();
+    refreshActiveMapView();
+    viewer_->resetCamera();
+    showLeftTab(kSlamTab);
+    markDirty();
+    statusLabel_->setText(QString("已导入 SLAM 地图: %1  (%2 个子地图)")
+                              .arg(e.name).arg(proj->submapCount()));
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  场景：选择 / 移除 / 对齐 SLAM 地图
+// ═══════════════════════════════════════════════════════════════════════
+
+void MainWindow::onSlamMapSelected(const QString& slamMapId) {
+    int idx = scene_.indexOfMap(slamMapId);
+    if (idx < 0 || idx == scene_.activeIndex()) return;
+
+    syncActiveEntryFromProject();
+    clearViewerActiveMap();
+    selectedSemanticSmId_.clear();
+    selectedSemanticPtName_.clear();
+
+    scene_.setActiveIndex(idx);
+    loadProjectFromActiveEntry();
+
+    refreshScenePanels();
+    refreshActiveMapView();
+    viewer_->resetCamera();
+    updateWindowTitle();
+    statusLabel_->setText(QString("当前编辑地图: %1").arg(scene_.maps()[idx].name));
+}
+
+void MainWindow::onRemoveSlamMap(const QString& slamMapId) {
+    int idx = scene_.indexOfMap(slamMapId);
+    if (idx < 0) return;
+    if (QMessageBox::question(this, "移除地图",
+            QString("确定从场景移除 SLAM 地图「%1」？（不会删除磁盘文件）")
+                .arg(scene_.maps()[idx].name)) != QMessageBox::Yes)
+        return;
+
+    bool wasActive = (idx == scene_.activeIndex());
+    if (wasActive) clearViewerActiveMap();
+    scene_.removeMapAt(idx);
+
+    if (scene_.activeIndex() >= 0) {
+        loadProjectFromActiveEntry();
+        refreshActiveMapView();
+    } else {
+        project_ = MapProject();
+        currentProjectDir_.clear();
+    }
+    refreshScenePanels();
+    statusLabel_->setText("已移除地图");
+}
+
+void MainWindow::onAlignSlamMap(const QString& slamMapId) {
+    showLeftTab(kSceneTab);
+    int i = sceneView_->indexOfItem(slamMapId);
+    if (i >= 0) sceneView_->setSelected(i);
+}
+
+void MainWindow::onSlamMapActivated(const QString& slamMapId) {
+    onSlamMapSelected(slamMapId);   // 切换活跃地图并刷新 3D
+    showLeftTab(kSlamTab);          // 进入其内部 submap 编辑
+}
+
+void MainWindow::onOrthoVisibilityChanged(const QString& slamMapId, bool visible) {
+    auto* e = scene_.mapById(slamMapId);
+    if (e) e->orthoVisible = visible;
+    sceneView_->setItemVisible(slamMapId, visible);
+    markDirty();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  正交叠加对齐窗口：各 SLAM 地图俯视投影叠加到 OSM 底图
+// ═══════════════════════════════════════════════════════════════════════
+
+static CloudPtr mergeProjectRootCloud(MapProject* proj) {
+    CloudPtr merged(new CloudT);
+    if (!proj) return merged;
+    for (const auto& id : proj->submapIds()) {
+        auto* sm = proj->submap(id);
+        if (!sm || !sm->cloud() || sm->cloud()->empty()) continue;
+        CloudT tmp;
+        pcl::transformPointCloud(*sm->cloud(), tmp,
+                                 proj->submapToRootMatrix(id).cast<float>());
+        *merged += tmp;
+    }
+    return merged;
+}
+
+void MainWindow::rebuildSceneOverview() {
+    syncActiveEntryFromProject();
+    sceneView_->clearItems();
+    sceneViewRowToId_.clear();
+
+    double oLon = scene_.hasOrigin() ? scene_.originLon() : 0.0;
+    double oLat = scene_.hasOrigin() ? scene_.originLat() : 0.0;
+    sceneView_->setOsm(scene_.osm(), oLon, oLat);
+
+    static const QVector<QColor> palette = {
+        QColor(255,130,80), QColor(120,220,120), QColor(120,170,255),
+        QColor(220,130,220), QColor(255,220,80), QColor(80,220,210)};
+    for (int i = 0; i < scene_.maps().size(); ++i) {
+        auto& e = scene_.maps()[i];
+        CloudPtr cloud = (e.id == activeMapId()) ? mergeProjectRootCloud(&project_)
+                                                 : mergeProjectRootCloud(e.project.get());
+        if (!cloud || cloud->empty()) continue;
+        GeoAnchor a = e.anchor;
+        if (!a.valid && scene_.hasOrigin()) { a.lon = oLon; a.lat = oLat; a.valid = true; }
+        sceneView_->addSlamItem(e.id, e.name, cloud, palette[i % palette.size()], a);
+        sceneView_->setItemVisible(e.id, e.orthoVisible);
+        sceneViewRowToId_.append(e.id);
+    }
+    sceneView_->setSelected(-1);
+    sceneView_->fitView();
+    sceneOverviewDirty_ = false;
+}
+
+void MainWindow::ensureSceneOverview() {
+    if (sceneOverviewDirty_) rebuildSceneOverview();
+}
+
+void MainWindow::showLeftTab(int index) {
+    if (leftTabs_->currentIndex() != index)
+        leftTabs_->setCurrentIndex(index);   // 触发 onLeftTabChanged
+    else
+        onLeftTabChanged(index);
+}
+
+void MainWindow::onLeftTabChanged(int index) {
+    if (index == kSceneTab) {
+        ensureSceneOverview();
+        centralStack_->setCurrentWidget(sceneView_);
+    } else {
+        centralStack_->setCurrentWidget(viewer_);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  场景：打开 / 保存（单文件 scene.json）
+// ═══════════════════════════════════════════════════════════════════════
+
+void MainWindow::onOpenScene() {
+    if (!maybePromptSaveChanges()) return;
+    QString path = QFileDialog::getOpenFileName(
+        this, "打开场景", currentProjectDir_, "场景文件 (*.json);;所有文件 (*)");
+    if (path.isEmpty()) return;
+
+    clearViewerActiveMap();
+    if (!scene_.loadFile(path)) {
+        QMessageBox::critical(this, "错误", "无法加载场景: " + path);
+        return;
+    }
+    if (scene_.activeMap()) {
+        loadProjectFromActiveEntry();
+        colorIndex_ = 0;
+        for (const auto& id : project_.submapIds()) {
+            auto* sm = project_.submap(id);
+            if (sm) sm->displayOptions().color = nextColor();
+        }
+    } else {
+        project_ = MapProject();
+        currentProjectDir_.clear();
+    }
+    refreshScenePanels();
+    refreshActiveMapView();
+    viewer_->resetCamera();
+    showLeftTab(scene_.hasOsm() ? kSceneTab : kSlamTab);
+    project_.setDirty(false);
+    updateWindowTitle();
+    statusLabel_->setText(QString("已加载场景: %1  (%2 张地图)")
+                              .arg(QFileInfo(path).fileName()).arg(scene_.mapCount()));
+}
+
+void MainWindow::onSaveScene() {
+    QString start = scene_.sceneFilePath().isEmpty()
+                        ? (currentProjectDir_.isEmpty() ? QString() : currentProjectDir_ + "/scene.json")
+                        : scene_.sceneFilePath();
+    QString path = QFileDialog::getSaveFileName(
+        this, "保存场景", start, "场景文件 (*.json)");
+    if (path.isEmpty()) return;
+    if (!path.endsWith(".json", Qt::CaseInsensitive)) path += ".json";
+
+    syncActiveEntryFromProject();
+    if (scene_.saveFile(path)) {
+        project_.setDirty(false);
+        updateWindowTitle();
+        statusLabel_->setText("场景已保存: " + path);
+    } else {
+        QMessageBox::critical(this, "错误", "场景保存失败");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  全局路线
+// ═══════════════════════════════════════════════════════════════════════
+
+void MainWindow::onAddGlobalRoute() {
+    bool ok = false;
+    QString name = QInputDialog::getText(this, "新增全局路线",
+        "全局路线名称:", QLineEdit::Normal, "", &ok);
+    name = name.trimmed();
+    if (!ok || name.isEmpty()) return;
+    for (const auto& r : scene_.globalRoutes())
+        if (r.name == name) { QMessageBox::warning(this, "提示", "同名路线已存在"); return; }
+    GlobalRoute r; r.name = name;
+    scene_.globalRoutes().append(r);
+    routePanel_->rebuild(&scene_);
+    markDirty();
+}
+
+void MainWindow::onRemoveGlobalRoute(const QString& name) {
+    auto& rs = scene_.globalRoutes();
+    for (int i = 0; i < rs.size(); ++i)
+        if (rs[i].name == name) { rs.remove(i); break; }
+    routePanel_->rebuild(&scene_);
+    markDirty();
+}
+
+void MainWindow::onRenameGlobalRoute(const QString& oldName, const QString& newName) {
+    for (auto& r : scene_.globalRoutes())
+        if (r.name == oldName) { r.name = newName; break; }
+    routePanel_->rebuild(&scene_);
+    markDirty();
+}
+
+void MainWindow::onAddGlobalWaypoint(const QString& routeName) {
+    GlobalRoute* route = nullptr;
+    for (auto& r : scene_.globalRoutes())
+        if (r.name == routeName) { route = &r; break; }
+    if (!route) return;
+
+    QStringList kinds{"地图点位 (slam_map/submap/semantic_point)", "GPS 经纬度", "指令 (instruction)"};
+    bool ok = false;
+    QString kind = QInputDialog::getItem(this, "途经点类型", "选择途经点类型:", kinds, 0, false, &ok);
+    if (!ok) return;
+
+    GlobalWaypoint wp;
+    if (kind == kinds[0]) {
+        wp.kind = GlobalWaypoint::Map;
+        QStringList mapIds;
+        for (const auto& e : scene_.maps()) mapIds << e.id;
+        if (mapIds.isEmpty()) { QMessageBox::warning(this, "提示", "场景中还没有 SLAM 地图"); return; }
+        wp.slamMap = QInputDialog::getItem(this, "选择地图", "slam_map:", mapIds, 0, false, &ok);
+        if (!ok) return;
+        MapProject* proj = projectForMap(wp.slamMap);
+        QStringList subs = proj ? proj->submapIds() : QStringList();
+        wp.submap = QInputDialog::getItem(this, "选择子地图", "submap:", subs, 0, true, &ok);
+        if (!ok) return;
+        wp.semanticPoint = QInputDialog::getText(this, "语义点", "semantic_point:",
+                                                 QLineEdit::Normal, "", &ok);
+        if (!ok) return;
+    } else if (kind == kinds[1]) {
+        wp.kind = GlobalWaypoint::Gps;
+        wp.lon = QInputDialog::getDouble(this, "GPS", "经度 lon:", 0, -180, 180, 8, &ok);
+        if (!ok) return;
+        wp.lat = QInputDialog::getDouble(this, "GPS", "纬度 lat:", 0, -90, 90, 8, &ok);
+        if (!ok) return;
+    } else {
+        wp.kind = GlobalWaypoint::Instruction;
+        wp.instruction = QInputDialog::getText(this, "指令", "instruction:",
+                                               QLineEdit::Normal, "", &ok);
+        if (!ok || wp.instruction.isEmpty()) return;
+    }
+    route->waypoints.append(wp);
+    routePanel_->rebuild(&scene_);
+    markDirty();
+}
+
+void MainWindow::onRemoveGlobalWaypoint(const QString& routeName, int index) {
+    for (auto& r : scene_.globalRoutes()) {
+        if (r.name == routeName) {
+            if (index >= 0 && index < r.waypoints.size()) r.waypoints.remove(index);
+            break;
+        }
+    }
+    routePanel_->rebuild(&scene_);
+    markDirty();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  内部路线（属于某张 SLAM 地图）
+// ═══════════════════════════════════════════════════════════════════════
+
+void MainWindow::onAddInternalRoute(const QString& mapId) {
+    MapProject* proj = projectForMap(mapId);
+    if (!proj) return;
+    bool ok = false;
+    QString name = QInputDialog::getText(this, "新增内部路线",
+        "路线名称:", QLineEdit::Normal, "", &ok);
+    name = name.trimmed();
+    if (!ok || name.isEmpty()) return;
+    if (proj->routes().contains(name)) { QMessageBox::warning(this, "提示", "同名路线已存在"); return; }
+    Route r; r.name = name;
+    proj->addRoute(r);
+    if (mapId == activeMapId()) markDirty();
+    refreshScenePanels();
+}
+
+void MainWindow::onRemoveInternalRoute(const QString& mapId, const QString& routeName) {
+    MapProject* proj = projectForMap(mapId);
+    if (!proj) return;
+    proj->removeRoute(routeName);
+    if (mapId == activeMapId()) { markDirty(); refreshRouteLines(); }
+    refreshScenePanels();
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -722,6 +1259,12 @@ void MainWindow::refreshRouteLines() {
 
     viewer_->clearAllRouteLines();
 
+    // 全程使用 const 引用做查找：project_ 的 routes_/submaps_ 在导入其它 SLAM 地图后
+    // 可能与场景条目里的 MapProject 处于隐式共享(COW)状态；若在遍历 routes() 的同时
+    // 调用非 const 的 route()/submap()，QMap 会 detach 并重新分配，导致外层迭代器失效
+    // → 读到已释放的内存而崩溃。const 查找不会触发 detach。
+    const MapProject& cproj = project_;
+
     // 递归展开嵌套路线引用为扁平 waypoint 列表
     std::function<QVector<RouteWaypoint>(const Route&, QSet<QString>&)> flattenRoute =
         [&](const Route& route, QSet<QString>& visited) -> QVector<RouteWaypoint> {
@@ -729,7 +1272,7 @@ void MainWindow::refreshRouteLines() {
         for (const auto& wp : route.waypoints) {
             if (wp.isRouteRef()) {
                 if (visited.contains(wp.routeRef)) continue;  // 防止循环引用
-                auto* nested = project_.route(wp.routeRef);
+                const auto* nested = cproj.route(wp.routeRef);
                 if (!nested) continue;
                 visited.insert(wp.routeRef);
                 flat += flattenRoute(*nested, visited);
@@ -741,19 +1284,19 @@ void MainWindow::refreshRouteLines() {
         return flat;
     };
 
-    for (auto it = project_.routes().begin(); it != project_.routes().end(); ++it) {
+    for (auto it = cproj.routes().begin(); it != cproj.routes().end(); ++it) {
         QSet<QString> visited;
         visited.insert(it.key());
         auto flatWaypoints = flattenRoute(it.value(), visited);
         QVector<MarkerVertex> lineVerts;
 
         for (const auto& wp : flatWaypoints) {
-            auto* sm = project_.submap(wp.submapId);
+            const auto* sm = cproj.submap(wp.submapId);
             if (!sm) continue;
-            auto* sp = sm->semanticPoint(wp.semanticPoint);
+            const auto* sp = sm->semanticPoint(wp.semanticPoint);
             if (!sp || sp->poses.isEmpty()) continue;
 
-            Eigen::Matrix4d T = project_.submapToRootMatrix(wp.submapId);
+            Eigen::Matrix4d T = cproj.submapToRootMatrix(wp.submapId);
             const auto& pos = sp->poses.first().position;
             Eigen::Vector4d pw = T * Eigen::Vector4d(pos.x(), pos.y(), pos.z(), 1.0);
 
