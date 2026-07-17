@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""Bake QGIS-edited GPKG roads into a single OSM PBF (production artifact).
+"""Bake a QGIS-edited GPKG road layer into a single OSM PBF (production artifact).
 
-Reads the base pbf + gpkg overlay (same osm_id merge as build_graph_merged),
-writes a new .osm.pbf with updated way geometries/tags. Nodes are reused when
-coordinates match; new vertices get new node ids.
+Full-layer replace: the base pbf's entire ``highway`` layer is dropped and
+replaced by the GPKG roads. Buildings and relations (multipolygon buildings,
+turn restrictions) are kept from the base pbf; a base highway is only kept when
+a kept relation still references it and the overlay does not re-supply that
+osm_id. Nodes are reused when coordinates match; new vertices get new node ids.
 
 Usage:
     /usr/bin/python3 scripts/merge_pbf_gpkg.py
     /usr/bin/python3 scripts/merge_pbf_gpkg.py \\
         --pbf ../../xili_5km_with_extra.osm.pbf \\
-        --gpkg ../new_road.gpkg \\
+        --gpkg ../finetuned_road.gpkg \\
         --output ../../xili_5km_merged.osm.pbf
 
 After merge, run the planner on the merged pbf with dev overlay OFF:
@@ -29,11 +31,12 @@ from pathlib import Path
 import osmium
 from osmium.osm.mutable import Node, Relation, Way
 
-# Parent campus_nav/ for route_graph
+# campus_nav/ package root; route_graph now lives in the inner campus_nav/ pkg.
 _CAMPUS = Path(__file__).resolve().parent.parent
 _REPO = _CAMPUS.parent
-if str(_CAMPUS) not in sys.path:
-    sys.path.insert(0, str(_CAMPUS))
+_PKG = _CAMPUS / "campus_nav"
+if str(_PKG) not in sys.path:
+    sys.path.insert(0, str(_PKG))
 
 from route_graph import QUANT, _parse_gpkg_blob
 
@@ -52,31 +55,48 @@ def _tags_dict(obj) -> dict:
     return {t.k: t.v for t in obj.tags}
 
 
-def load_gpkg_overlay(gpkg_path: str, table: str = "osmfile") -> dict:
-    """osm_id -> {tags: dict, lines: list of [(lon,lat), ...]}."""
+def load_gpkg_overlay(gpkg_path: str, table: str = "finetuned_road") -> dict:
+    """fid -> {osm_id: str|None, tags: dict, lines: [(lon,lat), ...]}.
+
+    Keyed by fid (always unique) so newly drawn QGIS roads with a blank/NULL
+    osm_id are kept (they get fresh way ids at merge time) instead of being
+    filtered out or colliding on a shared osm_id key. A road still needs a
+    highway=* tag to be treated as a road; name/osm_id are optional."""
     con = sqlite3.connect(gpkg_path)
     cols = [
         r[1] for r in con.execute(f"PRAGMA table_info({table})")
         if r[1] not in ("fid", "geom")
     ]
-    sel = ", ".join(f'"{c}"' for c in ["osm_id", "geom"] + [c for c in cols if c != "osm_id"])
+    tag_cols = [c for c in cols if c != "osm_id"]
+    sel = ", ".join(f'"{c}"' for c in ["fid", "osm_id", "geom"] + tag_cols)
     out = {}
-    for row in con.execute(f"SELECT {sel} FROM {table} WHERE osm_id IS NOT NULL"):
-        osm_id = str(row[0])
-        geom = row[1]
-        tag_vals = row[2:]
-        tag_cols = [c for c in cols if c != "osm_id"]
+    n_no_geom = n_no_highway = 0
+    for row in con.execute(f"SELECT {sel} FROM {table}"):
+        fid = row[0]
+        osm_id_raw = row[1]
+        geom = row[2]
+        tag_vals = row[3:]
         tags = {
             k: v for k, v in zip(tag_cols, tag_vals)
             if k not in _SKIP_TAG_COLS and v is not None and v != ""
         }
         lines = _parse_gpkg_blob(geom)
         if not lines:
+            n_no_geom += 1
             continue
         if "highway" not in tags:
+            n_no_highway += 1
             continue
-        out[osm_id] = {"tags": tags, "lines": lines}
+        osm_id = None
+        if osm_id_raw is not None and str(osm_id_raw) != "":
+            osm_id = str(osm_id_raw)
+        out[fid] = {"osm_id": osm_id, "tags": tags, "lines": lines}
     con.close()
+    if n_no_geom or n_no_highway:
+        print(
+            f"note: skipped {n_no_geom} row(s) without geometry, "
+            f"{n_no_highway} row(s) without a highway=* tag"
+        )
     return out
 
 
@@ -111,6 +131,10 @@ class _Collector(osmium.SimpleHandler):
     def __init__(self, overlay: dict, keep_rel_ids: set, keep_member_ways: set):
         super().__init__()
         self.overlay = overlay
+        # osm_ids the overlay re-supplies (records may have a blank osm_id).
+        self.overlay_osm_ids = {
+            rec["osm_id"] for rec in overlay.values() if rec.get("osm_id")
+        }
         self.keep_rel_ids = keep_rel_ids
         self.keep_member_ways = keep_member_ways
         self.nodes: dict[int, tuple[float, float]] = {}
@@ -119,11 +143,10 @@ class _Collector(osmium.SimpleHandler):
         self.relations: dict[int, Relation] = {}
         self.max_node_id = 0
         self._next_node_id = None
-        self.overlay_seen: set[str] = set()
         self.max_way_id = 0
         self.stats = {
             "nodes": 0, "ways_kept": 0, "ways_building": 0,
-            "ways_overridden": 0, "ways_added": 0, "relations": 0, "new_nodes": 0,
+            "ways_dropped": 0, "ways_added": 0, "relations": 0, "new_nodes": 0,
         }
 
     def _register_node(self, nid: int, lon: float, lat: float):
@@ -152,34 +175,23 @@ class _Collector(osmium.SimpleHandler):
     def way(self, w):
         if w.id > self.max_way_id:
             self.max_way_id = w.id
-        wid = str(w.id)
-        if wid in self.overlay:
-            gw = self.overlay[wid]
-            line = gw["lines"][0]
-            if gw["tags"].get("oneway") == "-1":
-                line = line[::-1]
-            nids = [self._resolve_node(lon, lat) for lon, lat in line]
-            if len(nids) < 2:
-                return
-            tags = merge_tags(_tags_dict(w), gw["tags"])
-            self.ways[w.id] = Way(id=w.id, nodes=nids, tags=tags)
-            self.overlay_seen.add(wid)
-            self.stats["ways_overridden"] += 1
-            return
         tags = _tags_dict(w)
-        # Keep roads, buildings, and any way referenced by a kept relation
-        # (e.g. multipolygon building outer/inner rings, which carry no tag).
-        keep = (
-            "highway" in tags
-            or "building" in tags
-            or w.id in self.keep_member_ways
-        )
-        if not keep:
-            return
-        self.ways[w.id] = Way(id=w.id, nodes=list(w.nodes), tags=tags)
+        is_member = w.id in self.keep_member_ways
+        # Full-layer replace: drop the base road layer entirely; the GPKG roads
+        # become the new highway layer (added in add_new_overlay_ways()). Keep a
+        # base highway only when a kept relation references it and the overlay
+        # does not re-supply that osm_id, so the relation stays valid.
         if "highway" in tags:
-            self.stats["ways_kept"] += 1
-        else:
+            if is_member and str(w.id) not in self.overlay_osm_ids:
+                self.ways[w.id] = Way(id=w.id, nodes=list(w.nodes), tags=tags)
+                self.stats["ways_kept"] += 1
+            else:
+                self.stats["ways_dropped"] += 1
+            return
+        # Non-road ways: keep buildings and relation members (building rings,
+        # which often carry no tag of their own).
+        if "building" in tags or is_member:
+            self.ways[w.id] = Way(id=w.id, nodes=list(w.nodes), tags=tags)
             self.stats["ways_building"] += 1
 
     def relation(self, r):
@@ -192,29 +204,33 @@ class _Collector(osmium.SimpleHandler):
         self.stats["relations"] += 1
 
     def add_new_overlay_ways(self):
-        """Emit overlay ways whose osm_id is NOT in the base pbf as brand-new
-        ways (new geometry). New vertices reuse existing nodes when coordinates
-        match (connects new roads to the current network), else get new ids."""
+        """Emit the GPKG road layer as the ways. In full-layer-replace mode the
+        base highways were dropped in way(), so every overlay way is emitted
+        here. Vertices reuse existing nodes when coordinates match (so overlay
+        roads connect to each other and to kept buildings/members), else get new
+        ids. Overlay ways keep their osm_id unless it collides with a kept way."""
         next_wid = self.max_way_id + 1
         self.added_way_ids: set[int] = set()
-        for osm_id, gw in self.overlay.items():
-            if osm_id in self.overlay_seen:
-                continue
-            for line in gw["lines"]:
-                if gw["tags"].get("oneway") == "-1":
+        for rec in self.overlay.values():
+            osm_id = rec["osm_id"]
+            for line in rec["lines"]:
+                if rec["tags"].get("oneway") == "-1":
                     line = line[::-1]
                 nids = [self._resolve_node(lon, lat) for lon, lat in line]
                 if len(nids) < 2:
                     continue
-                try:
-                    wid = int(osm_id)
-                except (TypeError, ValueError):
+                # Reuse the original osm_id as way id when present; new roads
+                # (blank osm_id) or id collisions get a fresh id.
+                wid = None
+                if osm_id is not None:
+                    try:
+                        wid = int(osm_id)
+                    except (TypeError, ValueError):
+                        wid = None
+                if wid is None or wid in self.ways:
                     wid = next_wid
                     next_wid += 1
-                if wid in self.ways:
-                    wid = next_wid
-                    next_wid += 1
-                self.ways[wid] = Way(id=wid, nodes=nids, tags=dict(gw["tags"]))
+                self.ways[wid] = Way(id=wid, nodes=nids, tags=dict(rec["tags"]))
                 self.added_way_ids.add(wid)
                 self.stats["ways_added"] += 1
 
@@ -360,11 +376,11 @@ def main():
         help="Base OSM PBF",
     )
     ap.add_argument(
-        "--gpkg", default=str(_CAMPUS / "new_road.gpkg"),
+        "--gpkg", default=str(_CAMPUS / "finetuned_road.gpkg"),
         help="QGIS-edited GPKG overlay",
     )
     ap.add_argument(
-        "--table", default="osmfile", help="Highway layer name in GPKG",
+        "--table", default="finetuned_road", help="Highway layer name in GPKG",
     )
     ap.add_argument(
         "--output", default=str(_REPO / "xili_5km_merged.osm.pbf"),
