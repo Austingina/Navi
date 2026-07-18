@@ -28,6 +28,15 @@ signals:
     void osmSelected();                                        ///< 单击 OSM 底图节点
     void orthoVisibilityChanged(const QString& id, bool visible);
 
+    // ── 全局路线（跨多张 SLAM 地图 / OSM，展示在场景地图下面）───────────
+    void addGlobalRouteRequested();
+    void removeGlobalRouteRequested(const QString& name);
+    void renameGlobalRouteRequested(const QString& oldName, const QString& newName);
+    void addGlobalWaypointRequested(const QString& routeName);
+    void removeGlobalWaypointRequested(const QString& routeName, int index);
+    void globalRouteSelected(const QString& name);
+    void globalRouteVisibilityChanged(const QString& name, bool visible);
+
 private slots:
     void onItemClicked(QTreeWidgetItem* item, int column);
     void onItemDoubleClicked(QTreeWidgetItem* item, int column);
@@ -40,8 +49,8 @@ private:
     QTreeWidget* tree_ = nullptr;
     Scene* scene_ = nullptr;
 
-    enum ItemRole { RoleType = Qt::UserRole, RoleId };
-    enum ItemType { TOsm, TSlam };
+    enum ItemRole { RoleType = Qt::UserRole, RoleId, RoleName, RoleIndex };
+    enum ItemType { TOsm, TSlam, TGlobalRoot, TGlobalRoute, TWaypoint };
 };
 
 } // namespace me

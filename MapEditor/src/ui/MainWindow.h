@@ -9,7 +9,6 @@
 #include "ui/PointCloudViewer.h"
 #include "ui/SubmapPanel.h"
 #include "ui/ScenePanel.h"
-#include "ui/RoutePanel.h"
 #include "ui/SceneAlignView.h"
 
 class QStackedWidget;
@@ -173,7 +172,7 @@ private:
     void rebuildSceneOverview();
     /// 进入「场景地图」Tab 时确保总览已构建（惰性）
     void ensureSceneOverview();
-    /// 切到某个左侧 Tab（0=场景地图 1=SLAM地图 2=路线）并同步主视图
+    /// 切到某个左侧 Tab（0=场景地图 1=SLAM地图）并同步主视图
     void showLeftTab(int index);
     /// 取某张地图的可编辑 MapProject（活跃→project_；否则→条目内 project）
     MapProject* projectForMap(const QString& mapId);
@@ -184,16 +183,15 @@ private:
     SceneAlignView*   sceneView_ = nullptr;       ///< 场景总览：OSM + 各地图正交投影
     PointCloudViewer* viewer_ = nullptr;
     QTabWidget*       leftTabs_ = nullptr;
-    ScenePanel*       scenePanel_ = nullptr;       ///< 「场景地图」Tab
-    SubmapPanel*      submapPanel_ = nullptr;       ///< 「SLAM地图」Tab
-    RoutePanel*       routePanel_ = nullptr;        ///< 「路线」Tab
+    ScenePanel*       scenePanel_ = nullptr;       ///< 「场景地图」Tab（含全局路线）
+    SubmapPanel*      submapPanel_ = nullptr;       ///< 「SLAM地图」Tab（含活跃地图内部路线）
     PropertiesPanel*  propsPanel_ = nullptr;
     QLabel*           statusLabel_ = nullptr;
     QDoubleSpinBox*   globalVoxelSpin_ = nullptr;
 
     bool sceneOverviewDirty_ = true;   ///< 场景组成变化后需重建总览足迹
     QVector<QString> sceneViewRowToId_;  ///< 总览足迹行 → SLAM 地图 id
-    static constexpr int kSceneTab = 0, kSlamTab = 1, kRouteTab = 2;
+    static constexpr int kSceneTab = 0, kSlamTab = 1;
 
     MapProject project_;
     QString    currentProjectDir_;

@@ -162,14 +162,14 @@ void MainWindow::setupUI() {
     centralStack_->setCurrentIndex(1);
     setCentralWidget(centralStack_);
 
-    // ── 左侧: 场景地图 / SLAM地图 / 路线 三个 Tab ────────────────────
+    // ── 左侧: 场景地图 / SLAM地图 两个 Tab ───────────────────────────
+    //   · 场景地图：OSM 底图 + 各 SLAM 地图 + 全局路线（跨地图）
+    //   · SLAM地图：活跃地图内部 submap + 其内部路线
     scenePanel_  = new ScenePanel();
     submapPanel_ = new SubmapPanel();
-    routePanel_  = new RoutePanel();
     leftTabs_ = new QTabWidget();
     leftTabs_->addTab(scenePanel_,  "场景地图");   // kSceneTab = 0
     leftTabs_->addTab(submapPanel_, "SLAM地图");   // kSlamTab  = 1
-    leftTabs_->addTab(routePanel_,  "路线");        // kRouteTab = 2
     leftTabs_->setCurrentIndex(kSlamTab);
     connect(leftTabs_, &QTabWidget::currentChanged, this, &MainWindow::onLeftTabChanged);
     auto* leftDock = new QDockWidget("场景管理", this);
@@ -371,21 +371,21 @@ void MainWindow::connectSignals() {
     connect(submapPanel_, &SubmapPanel::alignSlamMapRequested,
             this, &MainWindow::onAlignSlamMap);
 
-    // ── 路线 Tab ──────────────────────────────────────────────────────
-    connect(routePanel_, &RoutePanel::addGlobalRouteRequested,
+    // ── 全局路线（在「场景地图」Tab 下管理）──────────────────────────
+    connect(scenePanel_, &ScenePanel::addGlobalRouteRequested,
             this, &MainWindow::onAddGlobalRoute);
-    connect(routePanel_, &RoutePanel::removeGlobalRouteRequested,
+    connect(scenePanel_, &ScenePanel::removeGlobalRouteRequested,
             this, &MainWindow::onRemoveGlobalRoute);
-    connect(routePanel_, &RoutePanel::renameGlobalRouteRequested,
+    connect(scenePanel_, &ScenePanel::renameGlobalRouteRequested,
             this, &MainWindow::onRenameGlobalRoute);
-    connect(routePanel_, &RoutePanel::addGlobalWaypointRequested,
+    connect(scenePanel_, &ScenePanel::addGlobalWaypointRequested,
             this, &MainWindow::onAddGlobalWaypoint);
-    connect(routePanel_, &RoutePanel::removeGlobalWaypointRequested,
+    connect(scenePanel_, &ScenePanel::removeGlobalWaypointRequested,
             this, &MainWindow::onRemoveGlobalWaypoint);
-    connect(routePanel_, &RoutePanel::addInternalRouteRequested,
-            this, &MainWindow::onAddInternalRoute);
-    connect(routePanel_, &RoutePanel::removeInternalRouteRequested,
-            this, &MainWindow::onRemoveInternalRoute);
+
+    // ── 内部路线：删除（走活跃地图）──────────────────────────────────
+    connect(submapPanel_, &SubmapPanel::removeRouteRequested, this,
+            [this](const QString& name) { onRemoveInternalRoute(activeMapId(), name); });
 
     // ── Properties Panel ─────────────────────────────────────────────
     connect(propsPanel_, &PropertiesPanel::submapPropertiesChanged,
@@ -620,7 +620,6 @@ void MainWindow::refreshScenePanels() {
     syncActiveEntryFromProject();
     scenePanel_->rebuild(&scene_);
     submapPanel_->rebuildActiveMap(scene_.activeMap() ? &project_ : nullptr);
-    routePanel_->rebuild(&scene_);
     sceneOverviewDirty_ = true;
     if (leftTabs_ && leftTabs_->currentIndex() == kSceneTab) rebuildSceneOverview();
 }
@@ -932,7 +931,7 @@ void MainWindow::onAddGlobalRoute() {
         if (r.name == name) { QMessageBox::warning(this, "提示", "同名路线已存在"); return; }
     GlobalRoute r; r.name = name;
     scene_.globalRoutes().append(r);
-    routePanel_->rebuild(&scene_);
+    scenePanel_->rebuild(&scene_);
     markDirty();
 }
 
@@ -940,14 +939,14 @@ void MainWindow::onRemoveGlobalRoute(const QString& name) {
     auto& rs = scene_.globalRoutes();
     for (int i = 0; i < rs.size(); ++i)
         if (rs[i].name == name) { rs.remove(i); break; }
-    routePanel_->rebuild(&scene_);
+    scenePanel_->rebuild(&scene_);
     markDirty();
 }
 
 void MainWindow::onRenameGlobalRoute(const QString& oldName, const QString& newName) {
     for (auto& r : scene_.globalRoutes())
         if (r.name == oldName) { r.name = newName; break; }
-    routePanel_->rebuild(&scene_);
+    scenePanel_->rebuild(&scene_);
     markDirty();
 }
 
@@ -990,7 +989,7 @@ void MainWindow::onAddGlobalWaypoint(const QString& routeName) {
         if (!ok || wp.instruction.isEmpty()) return;
     }
     route->waypoints.append(wp);
-    routePanel_->rebuild(&scene_);
+    scenePanel_->rebuild(&scene_);
     markDirty();
 }
 
@@ -1001,7 +1000,7 @@ void MainWindow::onRemoveGlobalWaypoint(const QString& routeName, int index) {
             break;
         }
     }
-    routePanel_->rebuild(&scene_);
+    scenePanel_->rebuild(&scene_);
     markDirty();
 }
 

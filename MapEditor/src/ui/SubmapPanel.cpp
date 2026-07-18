@@ -319,12 +319,16 @@ void SubmapPanel::rebuildActiveMap(MapProject* project) {
     scene_ = nullptr;
     project_ = project;
 
-    QSet<QString> expandedSubmaps, expandedSemFolders;
+    QSet<QString> expandedSubmaps, expandedSemFolders, expandedRoutes;
     for (int i = 0; i < tree_->topLevelItemCount(); ++i) {
         auto* root = tree_->topLevelItem(i);
         for (int j = 0; j < root->childCount(); ++j) {
             auto* c = root->child(j);
-            if (c->data(0, RoleType).toInt() == TypeSubmap && c->isExpanded()) {
+            if (!c->isExpanded()) continue;
+            int type = c->data(0, RoleType).toInt();
+            if (type == TypeRoute) {
+                expandedRoutes.insert(c->data(0, RoleRouteName).toString());
+            } else if (type == TypeSubmap) {
                 QString sid = c->data(0, RoleSubmapId).toString();
                 expandedSubmaps.insert(sid);
                 for (int k = 0; k < c->childCount(); ++k) {
@@ -361,6 +365,21 @@ void SubmapPanel::rebuildActiveMap(MapProject* project) {
             }
         }
     }
+
+    // ── 内部路线（活跃 SLAM 地图自身的路线）─────────────────────────────
+    auto* routeRoot = new QTreeWidgetItem(tree_, {"🛤️ 内部路线 (Routes)"});
+    routeRoot->setData(0, RoleType, TypeRoutesRoot);
+    routeRoot->setExpanded(true);
+    routeRoot->setFlags(routeRoot->flags() & ~Qt::ItemIsSelectable);
+
+    if (project_) {
+        for (auto it = project_->routes().begin(); it != project_->routes().end(); ++it) {
+            auto* rItem = makeRouteItem(it.key(), it.value());
+            routeRoot->addChild(rItem);
+            if (expandedRoutes.contains(it.key())) rItem->setExpanded(true);
+        }
+    }
+
     tree_->blockSignals(false);
 }
 
