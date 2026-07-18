@@ -1,0 +1,2075 @@
+{
+    "routes": {
+    },
+    "scene": {
+        "crs": "WGS84",
+        "name": "未命名场景",
+        "origin": {
+            "lat": 22.6373916,
+            "lon": 114.0165988
+        },
+        "osm": {
+            "bounds": {
+                "max": {
+                    "lat": 22.7783044,
+                    "lon": 114.2856187
+                },
+                "min": {
+                    "lat": 22.496478800000002,
+                    "lon": 113.74757890000001
+                }
+            },
+            "source": "osm/xili_5km_merged.osm.pbf"
+        }
+    },
+    "slam_maps": {
+        "408": {
+            "_comment": "多楼层地图配置文件 / Multi-floor map configuration",
+            "geo_anchor": {
+                "heading_deg": -90,
+                "origin": {
+                    "alt": 0,
+                    "lat": 22.558114576985663,
+                    "lon": 113.93600953636465
+                },
+                "scale": 1
+            },
+            "global": {
+                "build_no": 20260717160629,
+                "default_route": "route262",
+                "default_submap": "2f",
+                "version": "1.0.1"
+            },
+            "name": "408",
+            "ortho_visible": true,
+            "pcd_base": "408",
+            "routes": {
+                "1f_cp_ua": {
+                    "description": "",
+                    "waypoints": [
+                        {
+                            "semantic_point": "charge point",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "hall_exit",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "unload_area_from_hall_1",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "unload_area_from_hall_2",
+                            "submap": "1f"
+                        }
+                    ]
+                },
+                "1f_eh": {
+                    "description": "",
+                    "waypoints": [
+                        {
+                            "semantic_point": "elevator_hall_entrance 1",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "elevator_hall_entrance 2",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "elevator_hall_entrance 3",
+                            "submap": "1f"
+                        }
+                    ]
+                },
+                "1f_mm_sw": {
+                    "description": "",
+                    "waypoints": [
+                        {
+                            "semantic_point": "middle_middle_from_hall",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "west_middle",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "underground park",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "park out",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "south_west",
+                            "submap": "1f"
+                        }
+                    ]
+                },
+                "1f_outdoor": {
+                    "description": "",
+                    "waypoints": [
+                        {
+                            "semantic_point": "elevator_hall_exit_1",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "elevator_hall_exit_2",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "elevator_hall_exit_3",
+                            "submap": "1f"
+                        }
+                    ]
+                },
+                "1f_sm_ne": {
+                    "description": "",
+                    "waypoints": [
+                        {
+                            "semantic_point": "south_middle",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "south_east",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "middle_east",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "north_east",
+                            "submap": "1f"
+                        }
+                    ]
+                },
+                "1f_ua_cp": {
+                    "description": "",
+                    "waypoints": [
+                        {
+                            "semantic_point": "unload_area_to_hall_1",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "unload_area_to_hall_2",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "hall_entrance",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "charge point",
+                            "submap": "1f"
+                        }
+                    ]
+                },
+                "2f_c_mrp": {
+                    "description": "",
+                    "waypoints": [
+                        {
+                            "semantic_point": "corridor",
+                            "submap": "2f"
+                        },
+                        {
+                            "semantic_point": "office_entrance_1",
+                            "submap": "2f"
+                        },
+                        {
+                            "semantic_point": "office_entrance_2",
+                            "submap": "2f"
+                        },
+                        {
+                            "semantic_point": "meetingroom_entrance_1",
+                            "submap": "2f"
+                        },
+                        {
+                            "semantic_point": "meetingroom_entrance_2",
+                            "submap": "2f"
+                        },
+                        {
+                            "semantic_point": "meetingroom_patrol",
+                            "submap": "2f"
+                        }
+                    ]
+                },
+                "2f_mro_eh": {
+                    "description": "",
+                    "waypoints": [
+                        {
+                            "semantic_point": "meetingroom_exit_1",
+                            "submap": "2f"
+                        },
+                        {
+                            "semantic_point": "meetingroom_exit_2",
+                            "submap": "2f"
+                        },
+                        {
+                            "semantic_point": "meetingroom_exit_3",
+                            "submap": "2f"
+                        },
+                        {
+                            "semantic_point": "office_exit_1",
+                            "submap": "2f"
+                        },
+                        {
+                            "semantic_point": "office_exit_2",
+                            "submap": "2f"
+                        },
+                        {
+                            "semantic_point": "elevator_hall",
+                            "submap": "2f"
+                        }
+                    ]
+                },
+                "elevatorF_f1": {
+                    "description": "",
+                    "waypoints": [
+                        {
+                            "semantic_point": "elevator_press",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "elevator_wait",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "elevator_in",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "elevator_in_press",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "elevator_out",
+                            "submap": "1f"
+                        }
+                    ]
+                },
+                "elevatorF_f2": {
+                    "description": "",
+                    "waypoints": [
+                        {
+                            "semantic_point": "elevator_press",
+                            "submap": "2f"
+                        },
+                        {
+                            "semantic_point": "elevator_wait",
+                            "submap": "2f"
+                        },
+                        {
+                            "semantic_point": "elevator_in",
+                            "submap": "2f"
+                        },
+                        {
+                            "semantic_point": "elevator_in_press",
+                            "submap": "2f"
+                        },
+                        {
+                            "semantic_point": "elevator_out",
+                            "submap": "2f"
+                        }
+                    ]
+                },
+                "elevatorF_f5": {
+                    "description": "",
+                    "waypoints": [
+                        {
+                            "semantic_point": "elevator_press",
+                            "submap": "5f"
+                        },
+                        {
+                            "semantic_point": "elevator_wait",
+                            "submap": "5f"
+                        },
+                        {
+                            "semantic_point": "elevator_in",
+                            "submap": "5f"
+                        },
+                        {
+                            "semantic_point": "elevator_in_press",
+                            "submap": "5f"
+                        },
+                        {
+                            "semantic_point": "elevator_out",
+                            "submap": "5f"
+                        }
+                    ]
+                },
+                "elevatorF_f6": {
+                    "description": "",
+                    "waypoints": [
+                        {
+                            "semantic_point": "elevator_press",
+                            "submap": "6f"
+                        },
+                        {
+                            "semantic_point": "elevator_wait",
+                            "submap": "6f"
+                        },
+                        {
+                            "semantic_point": "elevator_in",
+                            "submap": "6f"
+                        },
+                        {
+                            "semantic_point": "elevator_in_press",
+                            "submap": "6f"
+                        },
+                        {
+                            "semantic_point": "elevator_out",
+                            "submap": "6f"
+                        }
+                    ]
+                },
+                "route2": {
+                    "description": "",
+                    "waypoints": [
+                        {
+                            "semantic_point": "start",
+                            "submap": "2f"
+                        },
+                        {
+                            "route": "2f_c_mrp"
+                        },
+                        {
+                            "route": "2f_mro_eh"
+                        },
+                        {
+                            "semantic_point": "elevator_press",
+                            "submap": "2f"
+                        },
+                        {
+                            "semantic_point": "start",
+                            "submap": "2f"
+                        }
+                    ]
+                },
+                "route212": {
+                    "description": "",
+                    "waypoints": [
+                        {
+                            "semantic_point": "start",
+                            "submap": "2f"
+                        },
+                        {
+                            "route": "elevatorF_f2"
+                        },
+                        {
+                            "route": "1f_outdoor"
+                        },
+                        {
+                            "route": "1f_eh"
+                        },
+                        {
+                            "route": "elevatorF_f1"
+                        },
+                        {
+                            "semantic_point": "start",
+                            "submap": "2f"
+                        }
+                    ]
+                },
+                "route212_from231": {
+                    "description": "",
+                    "waypoints": [
+                        {
+                            "semantic_point": "charging point",
+                            "submap": "2f231"
+                        },
+                        {
+                            "semantic_point": "231_door_exit",
+                            "submap": "2f231"
+                        },
+                        {
+                            "route": "elevatorF_f2"
+                        },
+                        {
+                            "route": "1f_outdoor"
+                        },
+                        {
+                            "route": "1f_eh"
+                        },
+                        {
+                            "route": "elevatorF_f1"
+                        },
+                        {
+                            "semantic_point": "elevator_hall",
+                            "submap": "2f"
+                        },
+                        {
+                            "semantic_point": "231_door_entrance",
+                            "submap": "2f231"
+                        },
+                        {
+                            "semantic_point": "charging point",
+                            "submap": "2f231"
+                        }
+                    ]
+                },
+                "route212_outdoor": {
+                    "description": "",
+                    "waypoints": [
+                        {
+                            "semantic_point": "start",
+                            "submap": "2f"
+                        },
+                        {
+                            "route": "elevatorF_f2"
+                        },
+                        {
+                            "route": "1f_outdoor"
+                        },
+                        {
+                            "semantic_point": "north_middle",
+                            "submap": "1f"
+                        },
+                        {
+                            "route": "1f_mm_sw"
+                        },
+                        {
+                            "route": "1f_sm_ne"
+                        },
+                        {
+                            "route": "1f_eh"
+                        },
+                        {
+                            "route": "elevatorF_f1"
+                        },
+                        {
+                            "semantic_point": "start",
+                            "submap": "2f"
+                        }
+                    ]
+                },
+                "route252": {
+                    "description": "",
+                    "waypoints": [
+                        {
+                            "semantic_point": "start",
+                            "submap": "2f"
+                        },
+                        {
+                            "route": "elevatorF_f2"
+                        },
+                        {
+                            "semantic_point": "charge point",
+                            "submap": "5f"
+                        },
+                        {
+                            "semantic_point": "corridor",
+                            "submap": "5f"
+                        },
+                        {
+                            "route": "elevatorF_f5"
+                        },
+                        {
+                            "route": "2f_c_mrp"
+                        },
+                        {
+                            "route": "2f_mro_eh"
+                        },
+                        {
+                            "semantic_point": "start",
+                            "submap": "2f"
+                        }
+                    ]
+                },
+                "route252_from231": {
+                    "description": "",
+                    "waypoints": [
+                        {
+                            "semantic_point": "charging point",
+                            "submap": "2f231"
+                        },
+                        {
+                            "semantic_point": "231_door_exit",
+                            "submap": "2f231"
+                        },
+                        {
+                            "route": "elevatorF_f2"
+                        },
+                        {
+                            "semantic_point": "charge point",
+                            "submap": "5f"
+                        },
+                        {
+                            "semantic_point": "corridor",
+                            "submap": "5f"
+                        },
+                        {
+                            "route": "elevatorF_f5"
+                        },
+                        {
+                            "semantic_point": "elevator_hall",
+                            "submap": "2f"
+                        },
+                        {
+                            "semantic_point": "231_door_entrance",
+                            "submap": "2f231"
+                        },
+                        {
+                            "semantic_point": "charging point",
+                            "submap": "2f231"
+                        }
+                    ]
+                },
+                "route262": {
+                    "description": "",
+                    "waypoints": [
+                        {
+                            "semantic_point": "start",
+                            "submap": "2f"
+                        },
+                        {
+                            "route": "elevatorF_f2"
+                        },
+                        {
+                            "semantic_point": "control point 1",
+                            "submap": "6f"
+                        },
+                        {
+                            "semantic_point": "charge point",
+                            "submap": "6f"
+                        },
+                        {
+                            "route": "elevatorF_f6"
+                        },
+                        {
+                            "route": "2f_c_mrp"
+                        },
+                        {
+                            "route": "2f_mro_eh"
+                        },
+                        {
+                            "semantic_point": "start",
+                            "submap": "2f"
+                        }
+                    ]
+                },
+                "route262d": {
+                    "description": "",
+                    "waypoints": [
+                        {
+                            "semantic_point": "start",
+                            "submap": "2f"
+                        },
+                        {
+                            "semantic_point": "office_entrance_1",
+                            "submap": "2f"
+                        },
+                        {
+                            "semantic_point": "d_elevator_press",
+                            "submap": "2f"
+                        },
+                        {
+                            "semantic_point": "d_elevator_wait",
+                            "submap": "2f"
+                        },
+                        {
+                            "semantic_point": "d_elevator_in",
+                            "submap": "2f"
+                        },
+                        {
+                            "semantic_point": "d_elevator_out",
+                            "submap": "2f"
+                        },
+                        {
+                            "semantic_point": "charge point",
+                            "submap": "6f"
+                        },
+                        {
+                            "semantic_point": "d_elevator_press",
+                            "submap": "6f"
+                        },
+                        {
+                            "semantic_point": "d_elevator_wait",
+                            "submap": "6f"
+                        },
+                        {
+                            "semantic_point": "d_elevator_in",
+                            "submap": "6f"
+                        },
+                        {
+                            "semantic_point": "d_elevator_out",
+                            "submap": "6f"
+                        },
+                        {
+                            "semantic_point": "office_entrance_1",
+                            "submap": "2f"
+                        },
+                        {
+                            "semantic_point": "meetingroom_entrance_1",
+                            "submap": "2f"
+                        },
+                        {
+                            "semantic_point": "office_exit_1",
+                            "submap": "2f"
+                        },
+                        {
+                            "semantic_point": "start",
+                            "submap": "2f"
+                        }
+                    ]
+                }
+            },
+            "submaps": {
+                "1f": {
+                    "description": "",
+                    "map_file": "1f.pcd",
+                    "name": "1楼",
+                    "parent_submap": "2f",
+                    "semantic_points": {
+                        "charge point": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 1
+                                },
+                                "position": {
+                                    "x": 48,
+                                    "y": -31.4564,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "elevator_hall_entrance 1": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 1,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0
+                                },
+                                "position": {
+                                    "x": -11.3,
+                                    "y": -0.2722,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "elevator_hall_entrance 2": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 1,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0
+                                },
+                                "position": {
+                                    "x": -2.02,
+                                    "y": -0.1,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "elevator_hall_entrance 3": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 1,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0
+                                },
+                                "position": {
+                                    "x": 0.5,
+                                    "y": 0,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "elevator_hall_exit_1": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 1
+                                },
+                                "position": {
+                                    "x": 0.4195,
+                                    "y": 0.0183,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "elevator_hall_exit_2": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 1
+                                },
+                                "position": {
+                                    "x": -2.02,
+                                    "y": -0.1,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "elevator_hall_exit_3": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 1
+                                },
+                                "position": {
+                                    "x": -10.3,
+                                    "y": -0.3746,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "elevator_in": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 1,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0
+                                },
+                                "position": {
+                                    "x": -1.4,
+                                    "y": 2.1,
+                                    "z": 0
+                                }
+                            },
+                            "type": "elevator_in"
+                        },
+                        "elevator_in_press": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0.9978130514800705,
+                                    "x": 0.0020000261605132704,
+                                    "y": -0.0030000392407699052,
+                                    "z": -0.06600086329693793
+                                },
+                                "position": {
+                                    "x": -0.99,
+                                    "y": 1.9,
+                                    "z": 0
+                                }
+                            },
+                            "type": "elevator_call"
+                        },
+                        "elevator_out": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 1,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0
+                                },
+                                "position": {
+                                    "x": 0.8,
+                                    "y": 2.1,
+                                    "z": 0
+                                }
+                            },
+                            "type": "elevator_out"
+                        },
+                        "elevator_press": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 1
+                                },
+                                "position": {
+                                    "x": 0.61,
+                                    "y": 2.74,
+                                    "z": 0
+                                }
+                            },
+                            "type": "elevator_call"
+                        },
+                        "elevator_wait": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 1
+                                },
+                                "position": {
+                                    "x": 0.6,
+                                    "y": 2.1,
+                                    "z": 0
+                                }
+                            },
+                            "type": "elevator_wait"
+                        },
+                        "hall_entrance": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 1,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0
+                                },
+                                "position": {
+                                    "x": 45.5243,
+                                    "y": -0.6,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "hall_exit": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 1
+                                },
+                                "position": {
+                                    "x": 45,
+                                    "y": -0.6,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "middle_east": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 1
+                                },
+                                "position": {
+                                    "x": 26.049,
+                                    "y": 23.2724,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "middle_middle_from_hall": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0.7071067811865476,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": -0.7071067811865476
+                                },
+                                "position": {
+                                    "x": 20.5686,
+                                    "y": -29.4844,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "middle_middle_to_hall": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 1,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0
+                                },
+                                "position": {
+                                    "x": 20.4795,
+                                    "y": -27.9918,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "north_east": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 1
+                                },
+                                "position": {
+                                    "x": -10.1128,
+                                    "y": 21.497,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "north_middle": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 1,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0
+                                },
+                                "position": {
+                                    "x": -10.167,
+                                    "y": -25.5624,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "park out": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0.7071067811865476,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": -0.7071067811865476
+                                },
+                                "position": {
+                                    "x": 29.9045,
+                                    "y": -77.0374,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "south_east": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0.7071067811865476,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0.7071067811865476
+                                },
+                                "position": {
+                                    "x": 67.6393,
+                                    "y": 23.2024,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "south_middle": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0.7071067811865476,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0.7071067811865476
+                                },
+                                "position": {
+                                    "x": 69.84,
+                                    "y": -19.6192,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "south_west": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 1,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0
+                                },
+                                "position": {
+                                    "x": 65.8723,
+                                    "y": -79.9058,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "underground park": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0.7071067811865476,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0.7071067811865476
+                                },
+                                "position": {
+                                    "x": 60.9022,
+                                    "y": -69.9393,
+                                    "z": -3.9
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "unload_area_from_hall_1": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0.7071067811865476,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": -0.7071067811865476
+                                },
+                                "position": {
+                                    "x": 27.8,
+                                    "y": -0.6,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "unload_area_from_hall_2": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0.7071067811865476,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": -0.7071067811865476
+                                },
+                                "position": {
+                                    "x": 26.0596,
+                                    "y": -17.4319,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "unload_area_to_hall_1": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0.7071067811865476,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0.7071067811865476
+                                },
+                                "position": {
+                                    "x": 26.3683,
+                                    "y": -16.5758,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "unload_area_to_hall_2": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 1,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0
+                                },
+                                "position": {
+                                    "x": 27.8,
+                                    "y": -0.6,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "west_middle": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 1,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0
+                                },
+                                "position": {
+                                    "x": 23.2129,
+                                    "y": -75.6682,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        }
+                    },
+                    "submap_portals": [
+                        {
+                            "portal": "elevator_out",
+                            "submap": "2f"
+                        },
+                        {
+                            "portal": "elevator_out",
+                            "submap": "5f"
+                        },
+                        {
+                            "portal": "elevator_out",
+                            "submap": "6f"
+                        }
+                    ],
+                    "transform": {
+                        "rotation": {
+                            "w": 0.9999543181304403,
+                            "x": 0.007599652817791347,
+                            "y": 0.0014999314771956605,
+                            "z": -0.005599744181530466
+                        },
+                        "translation": {
+                            "x": -1.0688,
+                            "y": -1.484,
+                            "z": -3.9833
+                        }
+                    }
+                },
+                "2f": {
+                    "description": "",
+                    "map_file": "2f.pcd",
+                    "name": "2楼",
+                    "semantic_points": {
+                        "corridor": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 1,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0
+                                },
+                                "position": {
+                                    "x": 1.81,
+                                    "y": -2.6509,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "d_elevator_in": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 1,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0
+                                },
+                                "position": {
+                                    "x": 41.2,
+                                    "y": -4.6,
+                                    "z": 0
+                                }
+                            },
+                            "type": "elevator_in"
+                        },
+                        "d_elevator_out": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 1,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0
+                                },
+                                "position": {
+                                    "x": 43.3,
+                                    "y": -4.6,
+                                    "z": 0
+                                }
+                            },
+                            "type": "elevator_out"
+                        },
+                        "d_elevator_press": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 1
+                                },
+                                "position": {
+                                    "x": 43.3063,
+                                    "y": -3.8,
+                                    "z": 0
+                                }
+                            },
+                            "type": "elevator_call"
+                        },
+                        "d_elevator_wait": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 1
+                                },
+                                "position": {
+                                    "x": 43.3,
+                                    "y": -4.6,
+                                    "z": 0
+                                }
+                            },
+                            "type": "elevator_wait"
+                        },
+                        "elevator_hall": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0.7071067811865476,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0.7071067811865476
+                                },
+                                "position": {
+                                    "x": 0.2,
+                                    "y": -2.3,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "elevator_in": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 1,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0
+                                },
+                                "position": {
+                                    "x": -2.5,
+                                    "y": 0.5,
+                                    "z": 0
+                                }
+                            },
+                            "type": "elevator_in"
+                        },
+                        "elevator_in_press": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0.9978130514800705,
+                                    "x": 0.0020000261605132704,
+                                    "y": -0.0030000392407699052,
+                                    "z": -0.06600086329693793
+                                },
+                                "position": {
+                                    "x": -2,
+                                    "y": 0.3,
+                                    "z": 0
+                                }
+                            },
+                            "type": "elevator_call"
+                        },
+                        "elevator_out": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 1,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0
+                                },
+                                "position": {
+                                    "x": 0,
+                                    "y": 0.4,
+                                    "z": 0
+                                }
+                            },
+                            "type": "elevator_out"
+                        },
+                        "elevator_press": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 1
+                                },
+                                "position": {
+                                    "x": -0.386,
+                                    "y": 1,
+                                    "z": 0
+                                }
+                            },
+                            "type": "elevator_call"
+                        },
+                        "elevator_wait": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 1
+                                },
+                                "position": {
+                                    "x": -0.386,
+                                    "y": 0.55,
+                                    "z": 0
+                                }
+                            },
+                            "type": "elevator_wait"
+                        },
+                        "meetingroom_entrance_1": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0.026901326402598225,
+                                    "x": -0.0037001824419930648,
+                                    "y": -0.01280063115067871,
+                                    "z": 0.9995492839924509
+                                },
+                                "position": {
+                                    "x": 8.265,
+                                    "y": -12.352,
+                                    "z": 0
+                                }
+                            },
+                            "type": "door_open"
+                        },
+                        "meetingroom_entrance_2": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 1
+                                },
+                                "position": {
+                                    "x": 5.6593,
+                                    "y": -12.3531,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "meetingroom_exit_1": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 1,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0
+                                },
+                                "position": {
+                                    "x": 6.0875,
+                                    "y": -12.27,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "meetingroom_exit_2": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 1,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0
+                                },
+                                "position": {
+                                    "x": 7.3,
+                                    "y": -12.27,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "meetingroom_exit_3": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0.7071067811865476,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0.7071067811865476
+                                },
+                                "position": {
+                                    "x": 8.3,
+                                    "y": -12.27,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "meetingroom_patrol": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0.7071067811865476,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": -0.7071067811865476
+                                },
+                                "position": {
+                                    "x": 5.2952,
+                                    "y": -15.0077,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "office_entrance_1": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0.7071067811865476,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": -0.7071067811865476
+                                },
+                                "position": {
+                                    "x": 10.9,
+                                    "y": -2.6,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "office_entrance_2": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0.7071067811865476,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": -0.7071067811865476
+                                },
+                                "position": {
+                                    "x": 10.8314,
+                                    "y": -4.838,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "office_exit_1": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0.7071067811865476,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0.7071067811865476
+                                },
+                                "position": {
+                                    "x": 10.800000190734863,
+                                    "y": -4.599999904632568,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "office_exit_2": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 1
+                                },
+                                "position": {
+                                    "x": 10.8422,
+                                    "y": -2.3181,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "start": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0.7071067811865476,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0.7071067811865476
+                                },
+                                "position": {
+                                    "x": 0.3,
+                                    "y": -4,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        }
+                    },
+                    "submap_portals": [
+                        {
+                            "portal": "elevator_out",
+                            "submap": "6f"
+                        },
+                        {
+                            "portal": "d_elevator_out",
+                            "submap": "6f"
+                        },
+                        {
+                            "portal": "elevator_out",
+                            "submap": "1f"
+                        },
+                        {
+                            "portal": "elevator_out",
+                            "submap": "5f"
+                        },
+                        {
+                            "portal": "corridor",
+                            "submap": "2f231"
+                        }
+                    ],
+                    "transform": {
+                        "rotation": {
+                            "w": 1,
+                            "x": 0,
+                            "y": 0,
+                            "z": 0
+                        },
+                        "translation": {
+                            "x": 0,
+                            "y": 0,
+                            "z": 0
+                        }
+                    }
+                },
+                "2f231": {
+                    "description": "",
+                    "map_file": "2f-231.pcd",
+                    "name": "2楼231办公室",
+                    "parent_submap": "2f",
+                    "semantic_points": {
+                        "231_door_entrance": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 1,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0
+                                },
+                                "position": {
+                                    "x": 46.5,
+                                    "y": -5.2,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "231_door_exit": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 1
+                                },
+                                "position": {
+                                    "x": 49,
+                                    "y": -5.2,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "charging point": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0.7071067811865476,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0.7071067811865476
+                                },
+                                "position": {
+                                    "x": 52.5,
+                                    "y": -5.8,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "elevator_hall": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 1,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0
+                                },
+                                "position": {
+                                    "x": 1.7871,
+                                    "y": -2.7574,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        }
+                    },
+                    "submap_portals": [
+                        {
+                            "portal": "elevator_hall",
+                            "submap": "2f"
+                        }
+                    ],
+                    "transform": {
+                        "rotation": {
+                            "w": 1,
+                            "x": 0,
+                            "y": 0,
+                            "z": 0
+                        },
+                        "translation": {
+                            "x": 0,
+                            "y": 0,
+                            "z": 0
+                        }
+                    }
+                },
+                "5f": {
+                    "description": "",
+                    "map_file": "5f.pcd",
+                    "name": "5楼",
+                    "parent_submap": "2f",
+                    "semantic_points": {
+                        "charge point": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0.7071067811865476,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": -0.7071067811865476
+                                },
+                                "position": {
+                                    "x": 6.9996,
+                                    "y": 0.3376,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "corridor": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 1
+                                },
+                                "position": {
+                                    "x": 6.3345,
+                                    "y": 0.3459,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "elevator_in": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 1,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0
+                                },
+                                "position": {
+                                    "x": -2.25,
+                                    "y": 0.1,
+                                    "z": 0
+                                }
+                            },
+                            "type": "elevator_in"
+                        },
+                        "elevator_in_press": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0.9978130514800705,
+                                    "x": 0.0020000261605132704,
+                                    "y": -0.0030000392407699052,
+                                    "z": -0.06600086329693793
+                                },
+                                "position": {
+                                    "x": -1.8,
+                                    "y": -0.188,
+                                    "z": 0
+                                }
+                            },
+                            "type": "elevator_call"
+                        },
+                        "elevator_out": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 1,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0
+                                },
+                                "position": {
+                                    "x": 0.15,
+                                    "y": 0.076,
+                                    "z": 0
+                                }
+                            },
+                            "type": "elevator_out"
+                        },
+                        "elevator_press": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 1
+                                },
+                                "position": {
+                                    "x": -0.21,
+                                    "y": 0.53,
+                                    "z": 0
+                                }
+                            },
+                            "type": "elevator_call"
+                        },
+                        "elevator_wait": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 1
+                                },
+                                "position": {
+                                    "x": -0.148,
+                                    "y": 0.076,
+                                    "z": 0
+                                }
+                            },
+                            "type": "elevator_wait"
+                        }
+                    },
+                    "submap_portals": [
+                        {
+                            "portal": "elevator_out",
+                            "submap": "2f"
+                        },
+                        {
+                            "portal": "elevator_out",
+                            "submap": "1f"
+                        },
+                        {
+                            "portal": "elevator_out",
+                            "submap": "6f"
+                        }
+                    ],
+                    "transform": {
+                        "rotation": {
+                            "w": 0.9999903951383817,
+                            "x": 0.003399967343470498,
+                            "y": -0.0020999798297906018,
+                            "z": 0.001799982711249087
+                        },
+                        "translation": {
+                            "x": -0.0866,
+                            "y": 0.413,
+                            "z": 11.6663
+                        }
+                    }
+                },
+                "6f": {
+                    "description": "",
+                    "map_file": "6f.pcd",
+                    "name": "6楼",
+                    "parent_submap": "2f",
+                    "semantic_points": {
+                        "charge point": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0.7071067811865476,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0.7071067811865476
+                                },
+                                "position": {
+                                    "x": 25,
+                                    "y": -4.3,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "control point 1": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 1,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0
+                                },
+                                "position": {
+                                    "x": 5.5,
+                                    "y": 0.6,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "control point2": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 1
+                                },
+                                "position": {
+                                    "x": 6,
+                                    "y": 0,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "d_elevator_in": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 1,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0
+                                },
+                                "position": {
+                                    "x": 41.4,
+                                    "y": -6.2,
+                                    "z": 0
+                                }
+                            },
+                            "type": "elevator_in"
+                        },
+                        "d_elevator_out": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 1,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0
+                                },
+                                "position": {
+                                    "x": 43.3,
+                                    "y": -6.2,
+                                    "z": 0
+                                }
+                            },
+                            "type": "elevator_out"
+                        },
+                        "d_elevator_press": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 1
+                                },
+                                "position": {
+                                    "x": 43.3,
+                                    "y": -5.5,
+                                    "z": 0
+                                }
+                            },
+                            "type": "elevator_call"
+                        },
+                        "d_elevator_wait": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 1
+                                },
+                                "position": {
+                                    "x": 43.3,
+                                    "y": -6.2,
+                                    "z": 0
+                                }
+                            },
+                            "type": "elevator_wait"
+                        },
+                        "elevator_in": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 1,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0
+                                },
+                                "position": {
+                                    "x": -2.15,
+                                    "y": -0.3,
+                                    "z": 0
+                                }
+                            },
+                            "type": "elevator_in"
+                        },
+                        "elevator_in_press": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0.9978130514800705,
+                                    "x": 0.0020000261605132704,
+                                    "y": -0.0030000392407699052,
+                                    "z": -0.06600086329693793
+                                },
+                                "position": {
+                                    "x": -1.9229,
+                                    "y": -0.6,
+                                    "z": 0
+                                }
+                            },
+                            "type": "elevator_call"
+                        },
+                        "elevator_out": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 1,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0
+                                },
+                                "position": {
+                                    "x": -0.2,
+                                    "y": -0.3,
+                                    "z": 0
+                                }
+                            },
+                            "type": "elevator_out"
+                        },
+                        "elevator_press": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 1
+                                },
+                                "position": {
+                                    "x": -0.3,
+                                    "y": 0.4,
+                                    "z": 0
+                                }
+                            },
+                            "type": "elevator_call"
+                        },
+                        "elevator_wait": {
+                            "need_inspect": false,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 1
+                                },
+                                "position": {
+                                    "x": -0.2,
+                                    "y": -0.3,
+                                    "z": 0
+                                }
+                            },
+                            "type": "elevator_wait"
+                        },
+                        "start": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0.7071067811865476,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0.7071067811865476
+                                },
+                                "position": {
+                                    "x": 25,
+                                    "y": -4.3,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        }
+                    },
+                    "submap_portals": [
+                        {
+                            "portal": "elevator_out",
+                            "submap": "2f"
+                        },
+                        {
+                            "portal": "d_elevator_out",
+                            "submap": "2f"
+                        },
+                        {
+                            "portal": "elevator_out",
+                            "submap": "1f"
+                        },
+                        {
+                            "portal": "elevator_out",
+                            "submap": "5f"
+                        }
+                    ],
+                    "transform": {
+                        "rotation": {
+                            "w": 0.999924943438825,
+                            "x": 0.004500112256700382,
+                            "y": -0.0021000523864601784,
+                            "z": 0.011200279394454286
+                        },
+                        "translation": {
+                            "x": -0.2549,
+                            "y": 0.5439,
+                            "z": 15.5421
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
