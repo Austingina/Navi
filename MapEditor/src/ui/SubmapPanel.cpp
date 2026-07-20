@@ -115,11 +115,16 @@ void SubmapPanel::setupUI() {
 
     // 工具栏
     auto* toolbar = new QHBoxLayout();
+    btnNewMap_ = new QPushButton("+ 新增 SLAM 地图");
+    btnNewMap_->setToolTip("另起炉灶新建一张全新的空白 SLAM 地图（与现有地图无关），"
+                           "并清空当前面板与主视图");
     btnAdd_ = new QPushButton("+ 新增 Submap");
+    toolbar->addWidget(btnNewMap_);
     toolbar->addWidget(btnAdd_);
     toolbar->addStretch();
     layout->addLayout(toolbar);
 
+    connect(btnNewMap_, &QPushButton::clicked, this, &SubmapPanel::newSlamMapRequested);
     connect(btnAdd_, &QPushButton::clicked, this, &SubmapPanel::addSubmapRequested);
 
     // 树形列表 (支持拖拽)

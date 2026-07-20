@@ -47,6 +47,7 @@ private slots:
     // ── 场景：导入 / 选择 / 对齐 ─────────────────────────────────────
     void onImportOsm();
     void onImportSlamMap();
+    void onNewSlamMap();   ///< 另起炉灶新建空白 SLAM 地图
     void onOpenScene();
     void onSaveScene();
     void onSlamMapSelected(const QString& slamMapId);

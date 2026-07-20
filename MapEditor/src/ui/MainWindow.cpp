@@ -374,6 +374,8 @@ void MainWindow::connectSignals() {
             this, &MainWindow::onImportOsm);
     connect(submapPanel_, &SubmapPanel::addSlamMapRequested,
             this, &MainWindow::onImportSlamMap);
+    connect(submapPanel_, &SubmapPanel::newSlamMapRequested,
+            this, &MainWindow::onNewSlamMap);
     connect(submapPanel_, &SubmapPanel::removeSlamMapRequested,
             this, &MainWindow::onRemoveSlamMap);
     connect(submapPanel_, &SubmapPanel::alignSlamMapRequested,
@@ -766,6 +768,35 @@ void MainWindow::onImportSlamMap() {
     markDirty();
     statusLabel_->setText(QString("已导入 SLAM 地图: %1  (%2 个子地图)")
                               .arg(e.name).arg(proj->submapCount()));
+}
+
+void MainWindow::onNewSlamMap() {
+    // 另起炉灶：创建一张全新的空白 SLAM 地图（与现有地图无关），
+    // 并清空当前面板与主视图，便于从零开始搭建。
+    // 先把当前活跃地图的编辑写回场景，避免丢失。
+    syncActiveEntryFromProject();
+    clearViewerActiveMap();
+    selectedSemanticSmId_.clear();
+    selectedSemanticPtName_.clear();
+
+    SlamMapEntry e;
+    e.id   = scene_.uniqueMapId("slam_map");
+    e.name = e.id;
+    e.project = std::make_shared<MapProject>();   // 空工程
+    e.anchor.valid = true;
+    if (scene_.hasOrigin()) { e.anchor.lon = scene_.originLon(); e.anchor.lat = scene_.originLat(); }
+    scene_.addMap(e);   // 追加并设为活跃
+
+    loadProjectFromActiveEntry();   // project_ 变为空工程，currentProjectDir_ 置空
+    colorIndex_ = 0;
+
+    refreshScenePanels();           // 场景树 + 活跃地图（空）submap 树
+    refreshActiveMapView();         // 主视图（3D）清空
+    viewer_->resetCamera();
+    showLeftTab(kSlamTab);
+    updateWindowTitle();
+    markDirty();
+    statusLabel_->setText(QString("已新增空白 SLAM 地图: %1").arg(e.name));
 }
 
 // ═══════════════════════════════════════════════════════════════════════

@@ -68,6 +68,7 @@ signals:
     void osmSelected();                                ///< 选中 OSM 底图节点
     void importOsmRequested();                         ///< 请求导入 OSM/PBF 底图
     void addSlamMapRequested();                        ///< 请求导入 SLAM 地图
+    void newSlamMapRequested();                        ///< 请求另起炉灶新建空白 SLAM 地图
     void removeSlamMapRequested(const QString& slamMapId);
     void alignSlamMapRequested(const QString& slamMapId);  ///< 打开对齐(正交叠加)
 
@@ -132,6 +133,7 @@ private:
 
     DragDropTree* tree_ = nullptr;
     QPushButton* btnAdd_ = nullptr;
+    QPushButton* btnNewMap_ = nullptr;
     QCheckBox* orbitSemanticCenterCk_ = nullptr;
 
     // 记录 item 类型和数据
