@@ -654,6 +654,14 @@ void MainWindow::refreshScenePanels() {
     if (leftTabs_ && leftTabs_->currentIndex() == kSceneTab) rebuildSceneOverview();
 }
 
+void MainWindow::refreshScenePointsOnly() {
+    // 语义点位变化不影响 SLAM 足迹，故只刷新地图树与总览点位覆盖层，
+    // 保留当前缩放/平移（不调用 rebuildSceneOverview → fitView）。
+    scenePanel_->rebuild(&scene_);
+    sceneView_->setScenePoints(scene_.osmPoints());
+    sceneView_->setSelectedScenePoint(selectedScenePoint_);
+}
+
 void MainWindow::refreshActiveMapView() {
     colorIndex_ = 0;
     for (const auto& id : project_.submapIds()) {
@@ -928,7 +936,7 @@ void MainWindow::onScenePointPlacedOnMap(double lon, double lat) {
             propsPanel_->setScenePointLonLat(lon, lat);
         }
         scenePointPickForName_.clear();
-        refreshScenePanels();
+        refreshScenePointsOnly();
         return;
     }
 
@@ -943,8 +951,7 @@ void MainWindow::onScenePointPlacedOnMap(double lon, double lat) {
     scene_.osmPoints().append(p);
     selectedScenePoint_ = p.name;
     markDirty();
-    refreshScenePanels();
-    sceneView_->setSelectedScenePoint(p.name);
+    refreshScenePointsOnly();
     propsPanel_->showSceneSemanticPoint(p);
     statusLabel_->setText("已新增语义点位: " + p.name);
 }
@@ -982,8 +989,7 @@ void MainWindow::onSceneSemanticPointApply(const QString& oldName, const SceneSe
     p->name = nn;
     selectedScenePoint_ = nn;
     markDirty();
-    refreshScenePanels();
-    sceneView_->setSelectedScenePoint(nn);
+    refreshScenePointsOnly();
     statusLabel_->setText("已更新语义点位: " + nn);
 }
 
@@ -1001,7 +1007,7 @@ void MainWindow::onRemoveScenePoint(const QString& name) {
         propsPanel_->clear();
     }
     markDirty();
-    refreshScenePanels();
+    refreshScenePointsOnly();
     statusLabel_->setText("已删除语义点位: " + name);
 }
 
@@ -1020,7 +1026,7 @@ void MainWindow::onRenameScenePoint(const QString& oldName, const QString& newNa
     p->name = nn;
     if (selectedScenePoint_ == oldName) selectedScenePoint_ = nn;
     markDirty();
-    refreshScenePanels();
+    refreshScenePointsOnly();
     if (auto* sel = scene_.osmPointByName(nn))
         propsPanel_->showSceneSemanticPoint(*sel);
 }

@@ -177,6 +177,8 @@ private:
     void clearViewerActiveMap();
     /// 刷新左侧两个面板（地图树 + 路线）
     void refreshScenePanels();
+    /// 仅刷新场景语义点位（地图树 + 总览点位覆盖层），不重建足迹、不复位视图
+    void refreshScenePointsOnly();
     /// 刷新活跃地图在 3D 中的显示（点云/标记/路线/VPR）
     void refreshActiveMapView();
     /// 在主视图（场景总览）里重建 OSM + 各 SLAM 地图正交投影
