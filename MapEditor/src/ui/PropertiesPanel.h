@@ -49,8 +49,9 @@ public:
     void updateSlamGeoAnchor(const QString& mapId, const GeoAnchor& anchor);
 
     // ── 场景地图 Tab：OSM 底图上的场景语义点位（经纬度 + 航向角）──────
-    /// 显示/编辑一个场景语义点位（切到该页）。
-    void showSceneSemanticPoint(const SceneSemanticPoint& pt);
+    /// 显示/编辑一个场景语义点位（切到该页）。areas 用于填充「区域」下拉。
+    void showSceneSemanticPoint(const SceneSemanticPoint& pt,
+                                const QStringList& areas = {});
     /// 从底图点选回填经纬度（仅在场景语义点位页显示时生效）。
     void setScenePointLonLat(double lon, double lat);
 
@@ -161,6 +162,7 @@ private:
     QWidget*        scPage_ = nullptr;
     QLineEdit*      scName_ = nullptr;
     QComboBox*      scType_ = nullptr;
+    QComboBox*      scArea_ = nullptr;   ///< 所属区域（可编辑，输入新名即新建区域）
     QCheckBox*      scNeedInspect_ = nullptr;
     QDoubleSpinBox* scLon_ = nullptr;
     QDoubleSpinBox* scLat_ = nullptr;

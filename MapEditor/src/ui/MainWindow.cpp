@@ -22,6 +22,10 @@
 #include <QSplitter>
 #include <QApplication>
 #include <QDialog>
+#include <QDialogButtonBox>
+#include <QComboBox>
+#include <QLineEdit>
+#include <QFormLayout>
 #include <QPushButton>
 #include <QCloseEvent>
 #include <QDateTime>
@@ -390,12 +394,28 @@ void MainWindow::connectSignals() {
     // ── 场景语义点位（OSM 底图上，经纬度 + 航向角）───────────────────
     connect(scenePanel_, &ScenePanel::addScenePointRequested,
             this, &MainWindow::onAddScenePoint);
+    connect(scenePanel_, &ScenePanel::addScenePointInAreaRequested,
+            this, &MainWindow::onAddScenePointInArea);
     connect(scenePanel_, &ScenePanel::scenePointSelected,
             this, &MainWindow::onScenePointSelected);
     connect(scenePanel_, &ScenePanel::removeScenePointRequested,
             this, &MainWindow::onRemoveScenePoint);
     connect(scenePanel_, &ScenePanel::renameScenePointRequested,
             this, &MainWindow::onRenameScenePoint);
+    connect(scenePanel_, &ScenePanel::moveScenePointToAreaRequested,
+            this, &MainWindow::onMoveScenePointToArea);
+    connect(scenePanel_, &ScenePanel::addScenePointAreaRequested,
+            this, &MainWindow::onAddScenePointArea);
+    connect(scenePanel_, &ScenePanel::renameScenePointAreaRequested,
+            this, &MainWindow::onRenameScenePointArea);
+    connect(scenePanel_, &ScenePanel::removeScenePointAreaRequested,
+            this, &MainWindow::onRemoveScenePointArea);
+    connect(scenePanel_, &ScenePanel::addScenePortalRequested,
+            this, &MainWindow::onAddScenePortal);
+    connect(scenePanel_, &ScenePanel::editScenePortalRequested,
+            this, &MainWindow::onEditScenePortal);
+    connect(scenePanel_, &ScenePanel::removeScenePortalRequested,
+            this, &MainWindow::onRemoveScenePortal);
     connect(sceneView_, &SceneAlignView::scenePointPlaced,
             this, &MainWindow::onScenePointPlacedOnMap);
     connect(sceneView_, &SceneAlignView::scenePointSelected,
@@ -910,9 +930,23 @@ void MainWindow::onAddScenePoint() {
         return;
     }
     scenePointPickForName_.clear();     // 空 = 新建
+    pendingScenePointArea_.clear();
     showLeftTab(kSceneTab);
     sceneView_->setAddPointMode(true);
     statusLabel_->setText("请在底图上点选语义点位的位置");
+}
+
+void MainWindow::onAddScenePointInArea(const QString& area) {
+    if (!scene_.hasOrigin()) {
+        QMessageBox::information(this, "新增语义点位",
+            "请先导入 OSM/PBF 底图（用于确定经纬度基准）。");
+        return;
+    }
+    scenePointPickForName_.clear();
+    pendingScenePointArea_ = area;
+    showLeftTab(kSceneTab);
+    sceneView_->setAddPointMode(true);
+    statusLabel_->setText(QString("请在底图上点选位置（归入区域「%1」）").arg(area));
 }
 
 void MainWindow::onScenePointSelected(const QString& name) {
@@ -921,7 +955,7 @@ void MainWindow::onScenePointSelected(const QString& name) {
     selectedScenePoint_ = name;
     showLeftTab(kSceneTab);
     sceneView_->setSelectedScenePoint(name);
-    propsPanel_->showSceneSemanticPoint(*p);
+    propsPanel_->showSceneSemanticPoint(*p, scene_.osmPointAreas());
 }
 
 void MainWindow::onScenePointPlacedOnMap(double lon, double lat) {
@@ -948,11 +982,13 @@ void MainWindow::onScenePointPlacedOnMap(double lon, double lat) {
     p.lon         = lon;
     p.lat         = lat;
     p.headingDeg  = 0.0;
+    p.area        = pendingScenePointArea_;
+    pendingScenePointArea_.clear();
     scene_.osmPoints().append(p);
     selectedScenePoint_ = p.name;
     markDirty();
     refreshScenePointsOnly();
-    propsPanel_->showSceneSemanticPoint(p);
+    propsPanel_->showSceneSemanticPoint(p, scene_.osmPointAreas());
     statusLabel_->setText("已新增语义点位: " + p.name);
 }
 
@@ -987,6 +1023,9 @@ void MainWindow::onSceneSemanticPointApply(const QString& oldName, const SceneSe
 
     *p = pt;
     p->name = nn;
+    // 若填了新区域名，自动登记到区域列表
+    if (!p->area.isEmpty() && !scene_.osmPointAreas().contains(p->area))
+        scene_.osmPointAreas().append(p->area);
     selectedScenePoint_ = nn;
     markDirty();
     refreshScenePointsOnly();
@@ -1028,7 +1067,167 @@ void MainWindow::onRenameScenePoint(const QString& oldName, const QString& newNa
     markDirty();
     refreshScenePointsOnly();
     if (auto* sel = scene_.osmPointByName(nn))
-        propsPanel_->showSceneSemanticPoint(*sel);
+        propsPanel_->showSceneSemanticPoint(*sel, scene_.osmPointAreas());
+}
+
+// ── 语义点位区域 ─────────────────────────────────────────────────────
+void MainWindow::onMoveScenePointToArea(const QString& name, const QString& area) {
+    auto* p = scene_.osmPointByName(name);
+    if (!p) return;
+    p->area = area;
+    if (!area.isEmpty() && !scene_.osmPointAreas().contains(area))
+        scene_.osmPointAreas().append(area);
+    markDirty();
+    refreshScenePointsOnly();
+    statusLabel_->setText(area.isEmpty()
+        ? QString("已将「%1」移出区域").arg(name)
+        : QString("已将「%1」移动到区域「%2」").arg(name, area));
+}
+
+void MainWindow::onAddScenePointArea() {
+    bool ok;
+    QString suggested = scene_.uniqueAreaName("区域");
+    QString name = QInputDialog::getText(this, "新建区域",
+        "区域名称:", QLineEdit::Normal, suggested, &ok);
+    name = name.trimmed();
+    if (!ok || name.isEmpty()) return;
+    if (scene_.osmPointAreas().contains(name)) {
+        QMessageBox::warning(this, "新建区域", QString("区域「%1」已存在。").arg(name));
+        return;
+    }
+    scene_.osmPointAreas().append(name);
+    markDirty();
+    refreshScenePointsOnly();
+    statusLabel_->setText("已新建区域: " + name);
+}
+
+void MainWindow::onRenameScenePointArea(const QString& oldName, const QString& newName) {
+    const QString nn = newName.trimmed();
+    if (nn.isEmpty() || nn == oldName) return;
+    if (scene_.osmPointAreas().contains(nn)) {
+        QMessageBox::warning(this, "重命名区域", QString("区域「%1」已存在。").arg(nn));
+        return;
+    }
+    int idx = scene_.osmPointAreas().indexOf(oldName);
+    if (idx < 0) return;
+    scene_.osmPointAreas()[idx] = nn;
+    for (auto& p : scene_.osmPoints())
+        if (p.area == oldName) p.area = nn;
+    markDirty();
+    refreshScenePointsOnly();
+    statusLabel_->setText(QString("已重命名区域: %1 → %2").arg(oldName, nn));
+}
+
+void MainWindow::onRemoveScenePointArea(const QString& name) {
+    int idx = scene_.osmPointAreas().indexOf(name);
+    if (idx < 0) return;
+    scene_.osmPointAreas().removeAt(idx);
+    for (auto& p : scene_.osmPoints())
+        if (p.area == name) p.area.clear();   // 点位移出到未归属区域
+    markDirty();
+    refreshScenePointsOnly();
+    statusLabel_->setText("已删除区域: " + name);
+}
+
+// ── 场景级传送门（语义点位 → SLAM 地图入口）──────────────────────────
+namespace {
+/// 弹出传送门编辑对话框：选择场景语义点位 + 目标 SLAM 地图入口。返回是否确认。
+bool runScenePortalDialog(QWidget* parent, const Scene& scene, bool isNew, ScenePortal& io) {
+    QDialog dlg(parent);
+    dlg.setWindowTitle(isNew ? "添加传送门" : "编辑传送门");
+    auto* form = new QFormLayout(&dlg);
+
+    auto* nameEdit = new QLineEdit(io.name);
+    auto* pointCombo = new QComboBox();
+    for (const auto& p : scene.osmPoints()) pointCombo->addItem(p.name);
+    if (!io.semanticPoint.isEmpty() && pointCombo->findText(io.semanticPoint) < 0)
+        pointCombo->addItem(io.semanticPoint);
+    pointCombo->setCurrentText(io.semanticPoint);
+
+    auto* mapCombo = new QComboBox();
+    for (const auto& e : scene.maps()) {
+        const QString disp = e.name.isEmpty() ? e.id : QString("%1 (%2)").arg(e.name, e.id);
+        mapCombo->addItem(disp, e.id);
+    }
+    if (!io.targetSlamMap.isEmpty() && mapCombo->findData(io.targetSlamMap) < 0)
+        mapCombo->addItem(io.targetSlamMap, io.targetSlamMap);
+    int mi = mapCombo->findData(io.targetSlamMap);
+    if (mi >= 0) mapCombo->setCurrentIndex(mi);
+
+    form->addRow("传送门名称:", nameEdit);
+    form->addRow("语义点位:", pointCombo);
+    form->addRow("入口指向 SLAM 地图:", mapCombo);
+
+    auto* box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    form->addRow(box);
+    QObject::connect(box, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+    if (dlg.exec() != QDialog::Accepted) return false;
+    io.name          = nameEdit->text().trimmed();
+    io.semanticPoint = pointCombo->currentText().trimmed();
+    io.targetSlamMap = mapCombo->currentData().toString();
+    return true;
+}
+} // namespace
+
+void MainWindow::onAddScenePortal() {
+    if (scene_.osmPoints().isEmpty()) {
+        QMessageBox::information(this, "添加传送门",
+            "请先在底图上添加至少一个场景语义点位。");
+        return;
+    }
+    if (scene_.maps().isEmpty()) {
+        QMessageBox::information(this, "添加传送门",
+            "请先导入至少一张 SLAM 地图作为入口目标。");
+        return;
+    }
+    ScenePortal p;
+    p.name = scene_.uniquePortalName("portal");
+    if (!scene_.osmPoints().isEmpty()) p.semanticPoint = scene_.osmPoints().first().name;
+    if (!scene_.maps().isEmpty())      p.targetSlamMap = scene_.maps().first().id;
+    if (!runScenePortalDialog(this, scene_, true, p)) return;
+    if (p.name.isEmpty()) {
+        QMessageBox::warning(this, "添加传送门", "请填写传送门名称。");
+        return;
+    }
+    if (scene_.scenePortalByName(p.name)) {
+        QMessageBox::warning(this, "添加传送门", QString("传送门「%1」已存在。").arg(p.name));
+        return;
+    }
+    scene_.scenePortals().append(p);
+    markDirty();
+    refreshScenePointsOnly();
+    statusLabel_->setText("已添加传送门: " + p.name);
+}
+
+void MainWindow::onEditScenePortal(const QString& name) {
+    auto* pp = scene_.scenePortalByName(name);
+    if (!pp) return;
+    ScenePortal edited = *pp;
+    if (!runScenePortalDialog(this, scene_, false, edited)) return;
+    if (edited.name.isEmpty()) {
+        QMessageBox::warning(this, "编辑传送门", "请填写传送门名称。");
+        return;
+    }
+    if (edited.name != name && scene_.scenePortalByName(edited.name)) {
+        QMessageBox::warning(this, "编辑传送门", QString("传送门「%1」已存在。").arg(edited.name));
+        return;
+    }
+    *pp = edited;
+    markDirty();
+    refreshScenePointsOnly();
+    statusLabel_->setText("已更新传送门: " + edited.name);
+}
+
+void MainWindow::onRemoveScenePortal(const QString& name) {
+    auto& portals = scene_.scenePortals();
+    for (int i = 0; i < portals.size(); ++i) {
+        if (portals[i].name == name) { portals.remove(i); break; }
+    }
+    markDirty();
+    refreshScenePointsOnly();
+    statusLabel_->setText("已删除传送门: " + name);
 }
 
 // ═══════════════════════════════════════════════════════════════════════

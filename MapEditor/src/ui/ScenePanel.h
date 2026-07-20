@@ -40,10 +40,22 @@ signals:
     void globalRouteVisibilityChanged(const QString& name, bool visible);
 
     // ── 场景语义点位（OSM 底图上，经纬度 + 航向角）───────────────────
-    void addScenePointRequested();                            ///< 请求在底图上点选新增
+    void addScenePointRequested();                            ///< 请求在底图上点选新增（未归属区域）
+    void addScenePointInAreaRequested(const QString& area);   ///< 在指定区域新增点位
     void scenePointSelected(const QString& name);             ///< 单击选中某个点位
     void removeScenePointRequested(const QString& name);
     void renameScenePointRequested(const QString& oldName, const QString& newName);
+    void moveScenePointToAreaRequested(const QString& name, const QString& area);
+
+    // ── 语义点位区域（按区域聚合）────────────────────────────────────
+    void addScenePointAreaRequested();
+    void renameScenePointAreaRequested(const QString& oldName, const QString& newName);
+    void removeScenePointAreaRequested(const QString& name);
+
+    // ── 场景级传送门（语义点位 → SLAM 地图入口）──────────────────────
+    void addScenePortalRequested();
+    void editScenePortalRequested(const QString& name);
+    void removeScenePortalRequested(const QString& name);
 
 private slots:
     void onItemClicked(QTreeWidgetItem* item, int column);
@@ -57,8 +69,9 @@ private:
     QTreeWidget* tree_ = nullptr;
     Scene* scene_ = nullptr;
 
-    enum ItemRole { RoleType = Qt::UserRole, RoleId, RoleName, RoleIndex };
-    enum ItemType { TOsm, TSlam, TGlobalRoot, TGlobalRoute, TWaypoint, TScenePoint };
+    enum ItemRole { RoleType = Qt::UserRole, RoleId, RoleName, RoleIndex, RoleArea };
+    enum ItemType { TOsm, TSlam, TGlobalRoot, TGlobalRoute, TWaypoint, TScenePoint,
+                    TSpRoot, TSpArea, TPortalRoot, TScenePortal };
 };
 
 } // namespace me

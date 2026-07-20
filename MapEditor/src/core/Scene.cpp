@@ -22,6 +22,8 @@ void Scene::clear() {
     maps_.clear();
     globalRoutes_.clear();
     osmPoints_.clear();
+    osmPointAreas_.clear();
+    scenePortals_.clear();
     activeIndex_ = -1;
     sceneFilePath_.clear();
 }
@@ -37,6 +39,36 @@ QString Scene::uniqueOsmPointName(const QString& suggested) const {
     if (base.isEmpty()) base = "point";
     auto taken = [&](const QString& n) {
         for (const auto& p : osmPoints_) if (p.name == n) return true;
+        return false;
+    };
+    if (!taken(base)) return base;
+    for (int i = 1; ; ++i) {
+        QString cand = QString("%1_%2").arg(base).arg(i);
+        if (!taken(cand)) return cand;
+    }
+}
+
+QString Scene::uniqueAreaName(const QString& suggested) const {
+    QString base = suggested.trimmed();
+    if (base.isEmpty()) base = "区域";
+    if (!osmPointAreas_.contains(base)) return base;
+    for (int i = 1; ; ++i) {
+        QString cand = QString("%1_%2").arg(base).arg(i);
+        if (!osmPointAreas_.contains(cand)) return cand;
+    }
+}
+
+ScenePortal* Scene::scenePortalByName(const QString& name) {
+    for (auto& p : scenePortals_)
+        if (p.name == name) return &p;
+    return nullptr;
+}
+
+QString Scene::uniquePortalName(const QString& suggested) const {
+    QString base = suggested.trimmed();
+    if (base.isEmpty()) base = "portal";
+    auto taken = [&](const QString& n) {
+        for (const auto& p : scenePortals_) if (p.name == n) return true;
         return false;
     };
     if (!taken(base)) return base;
@@ -198,7 +230,32 @@ bool Scene::loadFile(const QString& jsonPath) {
             p.lat         = o.value("lat").toDouble();
             p.alt         = o.value("alt").toDouble();
             p.headingDeg  = o.value("heading_deg").toDouble();
+            // 兼容旧字段名 group
+            p.area        = o.value("area").toString(o.value("group").toString());
             osmPoints_.append(p);
+        }
+        // 区域列表（含空区域）；再并入点位里出现过的区域名，保证不丢
+        // 兼容旧键名 semantic_point_groups
+        QJsonArray areaArr = scene.value("semantic_point_areas").toArray();
+        if (areaArr.isEmpty()) areaArr = scene.value("semantic_point_groups").toArray();
+        for (const auto& g : areaArr)
+            if (!g.toString().isEmpty() && !osmPointAreas_.contains(g.toString()))
+                osmPointAreas_.append(g.toString());
+        for (const auto& p : osmPoints_)
+            if (!p.area.isEmpty() && !osmPointAreas_.contains(p.area))
+                osmPointAreas_.append(p.area);
+    }
+
+    // ── scene.portals（场景级传送门：语义点位 → SLAM 地图入口）──────────
+    {
+        auto ptObj = scene.value("portals").toObject();
+        for (auto it = ptObj.begin(); it != ptObj.end(); ++it) {
+            auto o = it.value().toObject();
+            ScenePortal p;
+            p.name          = it.key();
+            p.semanticPoint = o.value("semantic_point").toString();
+            p.targetSlamMap = o.value("target_slam_map").toString();
+            scenePortals_.append(p);
         }
     }
 
@@ -285,9 +342,25 @@ bool Scene::saveFile(const QString& jsonPath) {
             o["lat"]          = p.lat;
             o["alt"]          = p.alt;
             o["heading_deg"]  = p.headingDeg;
+            if (!p.area.isEmpty()) o["area"] = p.area;
             spObj[p.name] = o;
         }
         scene["semantic_points"] = spObj;
+    }
+    if (!osmPointAreas_.isEmpty()) {
+        QJsonArray garr;
+        for (const auto& g : osmPointAreas_) garr.append(g);
+        scene["semantic_point_areas"] = garr;
+    }
+    if (!scenePortals_.isEmpty()) {
+        QJsonObject ptObj;
+        for (const auto& p : scenePortals_) {
+            QJsonObject o;
+            o["semantic_point"]  = p.semanticPoint;
+            o["target_slam_map"] = p.targetSlamMap;
+            ptObj[p.name] = o;
+        }
+        scene["portals"] = ptObj;
     }
     root["scene"] = scene;
 

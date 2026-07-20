@@ -9,6 +9,7 @@
 #include <QInputDialog>
 #include <QLineEdit>
 #include <QFileInfo>
+#include <QMap>
 
 namespace me {
 
@@ -100,17 +101,58 @@ void ScenePanel::rebuild(Scene* scene) {
             osmRoot->addChild(item);
         }
 
-        // 场景语义点位（OSM 底图上）
-        for (const auto& p : scene_->osmPoints()) {
+        // ── 语义点位（可按区域聚合）──────────────────────────────────
+        auto* spRoot = new QTreeWidgetItem({"📍 语义点位"});
+        spRoot->setData(0, RoleType, TSpRoot);
+        spRoot->setFlags(spRoot->flags() & ~Qt::ItemIsSelectable);
+        osmRoot->addChild(spRoot);
+        spRoot->setExpanded(true);
+
+        auto makePointItem = [](const SceneSemanticPoint& p) {
             QString label = QString("📍 %1 (%2)").arg(p.name, p.type);
             auto* pItem = new QTreeWidgetItem({label});
             pItem->setData(0, RoleType, TScenePoint);
             pItem->setData(0, RoleName, p.name);
+            pItem->setData(0, RoleArea, p.area);
             pItem->setToolTip(0, QString("lon %1, lat %2, 航向 %3°%4")
                                      .arg(p.lon, 0, 'f', 7).arg(p.lat, 0, 'f', 7)
                                      .arg(p.headingDeg, 0, 'f', 1)
                                      .arg(p.needInspect ? "  [需巡检]" : ""));
-            osmRoot->addChild(pItem);
+            return pItem;
+        };
+
+        QMap<QString, QTreeWidgetItem*> areaItems;
+        for (const auto& a : scene_->osmPointAreas()) {
+            auto* aItem = new QTreeWidgetItem({QString("🗂️ %1").arg(a)});
+            aItem->setData(0, RoleType, TSpArea);
+            aItem->setData(0, RoleName, a);
+            spRoot->addChild(aItem);
+            aItem->setExpanded(true);
+            areaItems.insert(a, aItem);
+        }
+        for (const auto& p : scene_->osmPoints()) {
+            auto* pItem = makePointItem(p);
+            if (!p.area.isEmpty() && areaItems.contains(p.area))
+                areaItems[p.area]->addChild(pItem);
+            else
+                spRoot->addChild(pItem);
+        }
+
+        // ── 传送门（语义点位 → SLAM 地图入口）────────────────────────
+        auto* portalRoot = new QTreeWidgetItem({"🚪 传送门"});
+        portalRoot->setData(0, RoleType, TPortalRoot);
+        portalRoot->setFlags(portalRoot->flags() & ~Qt::ItemIsSelectable);
+        osmRoot->addChild(portalRoot);
+        portalRoot->setExpanded(true);
+        for (const auto& pt : scene_->scenePortals()) {
+            QString label = QString("🚪 %1  →  %2").arg(
+                pt.name, pt.targetSlamMap.isEmpty() ? "(未指定入口)" : pt.targetSlamMap);
+            auto* it = new QTreeWidgetItem({label});
+            it->setData(0, RoleType, TScenePortal);
+            it->setData(0, RoleName, pt.name);
+            it->setToolTip(0, QString("语义点位: %1\n入口指向 SLAM 地图: %2")
+                                  .arg(pt.semanticPoint, pt.targetSlamMap));
+            portalRoot->addChild(it);
         }
     }
 
@@ -156,8 +198,11 @@ void ScenePanel::onItemClicked(QTreeWidgetItem* item, int) {
 
 void ScenePanel::onItemDoubleClicked(QTreeWidgetItem* item, int) {
     if (!item) return;
-    if (item->data(0, RoleType).toInt() == TSlam)
+    int type = item->data(0, RoleType).toInt();
+    if (type == TSlam)
         emit slamMapActivated(item->data(0, RoleId).toString());
+    else if (type == TScenePortal)
+        emit editScenePortalRequested(item->data(0, RoleName).toString());
 }
 
 void ScenePanel::onItemChanged(QTreeWidgetItem* item, int column) {
@@ -181,9 +226,48 @@ void ScenePanel::onContextMenu(const QPoint& pos) {
         menu.addSeparator();
         menu.addAction("📍 在底图上新增语义点位", [this]() { emit addScenePointRequested(); });
         break;
+    case TSpRoot:
+        menu.addAction("📍 在底图上新增语义点位", [this]() { emit addScenePointRequested(); });
+        menu.addAction("🗂️ 新建区域(area)", [this]() { emit addScenePointAreaRequested(); });
+        break;
+    case TSpArea: {
+        QString a = item->data(0, RoleName).toString();
+        menu.addAction("📍 在此区域新增点位", [this, a]() { emit addScenePointInAreaRequested(a); });
+        menu.addSeparator();
+        menu.addAction("✏️ 重命名区域", [this, a]() {
+            bool ok; QString nn = QInputDialog::getText(this, "重命名区域",
+                QString("将区域「%1」重命名为:").arg(a), QLineEdit::Normal, a, &ok);
+            nn = nn.trimmed();
+            if (ok && !nn.isEmpty() && nn != a) emit renameScenePointAreaRequested(a, nn);
+        });
+        menu.addAction("🗑️ 删除区域（点位移出到未归属）",
+                       [this, a]() { emit removeScenePointAreaRequested(a); });
+        break;
+    }
     case TScenePoint: {
         QString name = item->data(0, RoleName).toString();
+        QString curArea = item->data(0, RoleArea).toString();
         menu.addAction("📍 在底图上新增语义点位", [this]() { emit addScenePointRequested(); });
+        menu.addSeparator();
+        // 移动到区域
+        QMenu* moveMenu = menu.addMenu("🗂️ 移动到区域");
+        if (scene_) {
+            for (const auto& a : scene_->osmPointAreas()) {
+                QAction* act = moveMenu->addAction(a, [this, name, a]() {
+                    emit moveScenePointToAreaRequested(name, a);
+                });
+                act->setCheckable(true);
+                act->setChecked(a == curArea);
+            }
+            if (!scene_->osmPointAreas().isEmpty()) moveMenu->addSeparator();
+        }
+        QAction* noArea = moveMenu->addAction("（未归属区域）", [this, name]() {
+            emit moveScenePointToAreaRequested(name, QString());
+        });
+        noArea->setCheckable(true);
+        noArea->setChecked(curArea.isEmpty());
+        moveMenu->addSeparator();
+        moveMenu->addAction("＋ 新建区域...", [this]() { emit addScenePointAreaRequested(); });
         menu.addSeparator();
         menu.addAction("✏️ 重命名此点位", [this, name]() {
             bool ok; QString nn = QInputDialog::getText(this, "重命名语义点位",
@@ -192,6 +276,17 @@ void ScenePanel::onContextMenu(const QPoint& pos) {
             if (ok && !nn.isEmpty() && nn != name) emit renameScenePointRequested(name, nn);
         });
         menu.addAction("🗑️ 删除此点位", [this, name]() { emit removeScenePointRequested(name); });
+        break;
+    }
+    case TPortalRoot:
+        menu.addAction("🚪 添加传送门...", [this]() { emit addScenePortalRequested(); });
+        break;
+    case TScenePortal: {
+        QString name = item->data(0, RoleName).toString();
+        menu.addAction("🚪 添加传送门...", [this]() { emit addScenePortalRequested(); });
+        menu.addSeparator();
+        menu.addAction("✏️ 编辑此传送门...", [this, name]() { emit editScenePortalRequested(name); });
+        menu.addAction("🗑️ 删除此传送门", [this, name]() { emit removeScenePortalRequested(name); });
         break;
     }
     case TSlam: {

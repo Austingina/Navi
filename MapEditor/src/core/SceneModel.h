@@ -37,6 +37,14 @@ struct SceneSemanticPoint {
     double  lat = 0.0;              ///< 纬度
     double  alt = 0.0;              ///< 海拔 (m，可选)
     double  headingDeg = 0.0;       ///< 航向角：与正北的夹角，顺时针为正（0=正北，90=正东）
+    QString area;                  ///< 所属区域名（空=未归属），用于按区域聚合管理
+};
+
+/// 场景级传送门：将一个场景语义点位定义为某张 SLAM 地图的入口。
+struct ScenePortal {
+    QString name;           ///< 传送门名称
+    QString semanticPoint;  ///< 关联的场景语义点位名称
+    QString targetSlamMap;  ///< 作为入口指向的 SLAM 地图 id
 };
 
 /// 一张 SLAM 地图在场景中的引用条目。

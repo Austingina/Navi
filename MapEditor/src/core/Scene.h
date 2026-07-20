@@ -16,6 +16,7 @@
 #include "core/MapProject.h"
 
 #include <QString>
+#include <QStringList>
 #include <QVector>
 #include <memory>
 
@@ -97,6 +98,17 @@ public:
     /// 生成一个不冲突的点位名（基于建议名）。
     QString uniqueOsmPointName(const QString& suggested) const;
 
+    // ── 语义点位区域（按区域聚合管理）────────────────────────────────
+    QStringList&       osmPointAreas()       { return osmPointAreas_; }
+    const QStringList& osmPointAreas() const  { return osmPointAreas_; }
+    QString uniqueAreaName(const QString& suggested) const;
+
+    // ── 场景级传送门（语义点位 → SLAM 地图入口）──────────────────────
+    QVector<ScenePortal>&       scenePortals()       { return scenePortals_; }
+    const QVector<ScenePortal>& scenePortals() const  { return scenePortals_; }
+    ScenePortal* scenePortalByName(const QString& name);
+    QString uniquePortalName(const QString& suggested) const;
+
     // ── 持久化 ───────────────────────────────────────────────────────
     /// 以「场景目录」为操作对象：目录内含 scene.json + 复制进来的 OSM/PBF + 各地图 PCD；
     /// scene.json 内的资源引用一律用相对路径，方便整目录迁移。
@@ -122,6 +134,8 @@ private:
     QVector<SlamMapEntry> maps_;
     QVector<GlobalRoute>  globalRoutes_;
     QVector<SceneSemanticPoint> osmPoints_;
+    QStringList           osmPointAreas_;
+    QVector<ScenePortal>  scenePortals_;
     int activeIndex_ = -1;
     QString sceneFilePath_;
 };

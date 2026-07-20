@@ -751,11 +751,17 @@ void PropertiesPanel::setupSceneSemanticPointPage() {
     scHeading_->setSuffix(" °");
     scHeading_->setToolTip("航向角：与正北的夹角，顺时针为正（0=正北，90=正东）。");
 
+    scArea_ = new QComboBox();
+    scArea_->setEditable(true);
+    scArea_->setInsertPolicy(QComboBox::NoInsert);
+    scArea_->setToolTip("所属区域（按区域聚合）。留空为未归属；输入新名称可新建区域。");
+
     scNeedInspect_ = new QCheckBox("需要巡检");
     scNeedInspect_->setToolTip("勾选后该点位会被纳入巡检流程。默认 false。");
 
     form->addRow("名称:", scName_);
     form->addRow("类型:", scType_);
+    form->addRow("区域:", scArea_);
     form->addRow("need_inspect:", scNeedInspect_);
     form->addRow("经度 lon:", scLon_);
     form->addRow("纬度 lat:", scLat_);
@@ -781,6 +787,7 @@ void PropertiesPanel::setupSceneSemanticPointPage() {
         pt.lat         = scLat_->value();
         pt.alt         = scAlt_->value();
         pt.headingDeg  = scHeading_->value();
+        pt.area        = scArea_->currentText().trimmed();
         if (pt.name.isEmpty()) {
             QMessageBox::warning(this, "场景语义点位", "请填写点位名称。");
             return;
@@ -792,11 +799,21 @@ void PropertiesPanel::setupSceneSemanticPointPage() {
     stack_->addWidget(scPage_);  // index 6
 }
 
-void PropertiesPanel::showSceneSemanticPoint(const SceneSemanticPoint& pt) {
+void PropertiesPanel::showSceneSemanticPoint(const SceneSemanticPoint& pt,
+                                             const QStringList& areas) {
     scCurrentName_ = pt.name;
     scName_->setText(pt.name);
     if (scType_->findText(pt.type) < 0) scType_->addItem(pt.type);
     scType_->setCurrentText(pt.type);
+    {
+        QSignalBlocker b(scArea_);
+        scArea_->clear();
+        scArea_->addItem("");            // 未归属区域
+        scArea_->addItems(areas);
+        if (!pt.area.isEmpty() && scArea_->findText(pt.area) < 0)
+            scArea_->addItem(pt.area);
+        scArea_->setCurrentText(pt.area);
+    }
     {
         QSignalBlocker b(scNeedInspect_);
         scNeedInspect_->setChecked(pt.needInspect);
