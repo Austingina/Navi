@@ -387,6 +387,30 @@ void MainWindow::connectSignals() {
     connect(scenePanel_, &ScenePanel::removeGlobalWaypointRequested,
             this, &MainWindow::onRemoveGlobalWaypoint);
 
+    // ── 场景语义点位（OSM 底图上，经纬度 + 航向角）───────────────────
+    connect(scenePanel_, &ScenePanel::addScenePointRequested,
+            this, &MainWindow::onAddScenePoint);
+    connect(scenePanel_, &ScenePanel::scenePointSelected,
+            this, &MainWindow::onScenePointSelected);
+    connect(scenePanel_, &ScenePanel::removeScenePointRequested,
+            this, &MainWindow::onRemoveScenePoint);
+    connect(scenePanel_, &ScenePanel::renameScenePointRequested,
+            this, &MainWindow::onRenameScenePoint);
+    connect(sceneView_, &SceneAlignView::scenePointPlaced,
+            this, &MainWindow::onScenePointPlacedOnMap);
+    connect(sceneView_, &SceneAlignView::scenePointSelected,
+            this, &MainWindow::onScenePointSelected);
+    connect(sceneView_, &SceneAlignView::scenePointMoved,
+            this, &MainWindow::onScenePointMovedOnMap);
+    connect(propsPanel_, &PropertiesPanel::sceneSemanticPointChanged,
+            this, &MainWindow::onSceneSemanticPointApply);
+    connect(propsPanel_, &PropertiesPanel::pickScenePositionRequested, this, [this]() {
+        scenePointPickForName_ = selectedScenePoint_;   // 回填当前选中点位
+        showLeftTab(kSceneTab);
+        sceneView_->setAddPointMode(true);
+        statusLabel_->setText("请在底图上点选新的位置");
+    });
+
     // ── 内部路线：删除（走活跃地图）──────────────────────────────────
     connect(submapPanel_, &SubmapPanel::removeRouteRequested, this,
             [this](const QString& name) { onRemoveInternalRoute(activeMapId(), name); });
@@ -624,6 +648,8 @@ void MainWindow::refreshScenePanels() {
     syncActiveEntryFromProject();
     scenePanel_->rebuild(&scene_);
     submapPanel_->rebuildActiveMap(scene_.activeMap() ? &project_ : nullptr);
+    sceneView_->setScenePoints(scene_.osmPoints());
+    sceneView_->setSelectedScenePoint(selectedScenePoint_);
     sceneOverviewDirty_ = true;
     if (leftTabs_ && leftTabs_->currentIndex() == kSceneTab) rebuildSceneOverview();
 }
@@ -868,6 +894,137 @@ void MainWindow::onSlamGeoAnchorEdited(const QString& slamMapId, const GeoAnchor
     markDirty();
 }
 
+// ── 场景语义点位（OSM 底图上，经纬度 + 航向角）───────────────────────
+void MainWindow::onAddScenePoint() {
+    if (!scene_.hasOrigin()) {
+        QMessageBox::information(this, "新增语义点位",
+            "请先导入 OSM/PBF 底图（用于确定经纬度基准）。");
+        return;
+    }
+    scenePointPickForName_.clear();     // 空 = 新建
+    showLeftTab(kSceneTab);
+    sceneView_->setAddPointMode(true);
+    statusLabel_->setText("请在底图上点选语义点位的位置");
+}
+
+void MainWindow::onScenePointSelected(const QString& name) {
+    auto* p = scene_.osmPointByName(name);
+    if (!p) return;
+    selectedScenePoint_ = name;
+    showLeftTab(kSceneTab);
+    sceneView_->setSelectedScenePoint(name);
+    propsPanel_->showSceneSemanticPoint(*p);
+}
+
+void MainWindow::onScenePointPlacedOnMap(double lon, double lat) {
+    sceneView_->setAddPointMode(false);
+
+    // 回填已选中点位的位置
+    if (!scenePointPickForName_.isEmpty()) {
+        if (auto* p = scene_.osmPointByName(scenePointPickForName_)) {
+            p->lon = lon;
+            p->lat = lat;
+            markDirty();
+            propsPanel_->setScenePointLonLat(lon, lat);
+        }
+        scenePointPickForName_.clear();
+        refreshScenePanels();
+        return;
+    }
+
+    // 新建点位
+    SceneSemanticPoint p;
+    p.name        = scene_.uniqueOsmPointName("point");
+    p.type        = "single_pose";
+    p.needInspect = false;
+    p.lon         = lon;
+    p.lat         = lat;
+    p.headingDeg  = 0.0;
+    scene_.osmPoints().append(p);
+    selectedScenePoint_ = p.name;
+    markDirty();
+    refreshScenePanels();
+    sceneView_->setSelectedScenePoint(p.name);
+    propsPanel_->showSceneSemanticPoint(p);
+    statusLabel_->setText("已新增语义点位: " + p.name);
+}
+
+void MainWindow::onScenePointMovedOnMap(const QString& name, double lon, double lat) {
+    auto* p = scene_.osmPointByName(name);
+    if (!p) return;
+    p->lon = lon;
+    p->lat = lat;
+    selectedScenePoint_ = name;
+    markDirty();
+    propsPanel_->setScenePointLonLat(lon, lat);
+    // 树上的坐标提示同步更新（不影响 sceneView，其内部已实时更新）
+    scenePanel_->rebuild(&scene_);
+}
+
+void MainWindow::onSceneSemanticPointApply(const QString& oldName, const SceneSemanticPoint& pt) {
+    const QString nn = pt.name.trimmed();
+    if (nn.isEmpty()) return;
+
+    // 重名校验（排除自身）
+    for (const auto& q : scene_.osmPoints()) {
+        if (q.name == nn && nn != oldName) {
+            QMessageBox::warning(this, "场景语义点位",
+                QString("名称 \"%1\" 已存在。").arg(nn));
+            return;
+        }
+    }
+
+    SceneSemanticPoint* p = scene_.osmPointByName(oldName);
+    if (!p) p = scene_.osmPointByName(nn);
+    if (!p) return;
+
+    *p = pt;
+    p->name = nn;
+    selectedScenePoint_ = nn;
+    markDirty();
+    refreshScenePanels();
+    sceneView_->setSelectedScenePoint(nn);
+    statusLabel_->setText("已更新语义点位: " + nn);
+}
+
+void MainWindow::onRemoveScenePoint(const QString& name) {
+    auto& pts = scene_.osmPoints();
+    for (int i = 0; i < pts.size(); ++i) {
+        if (pts[i].name == name) {
+            pts.remove(i);
+            break;
+        }
+    }
+    if (selectedScenePoint_ == name) {
+        selectedScenePoint_.clear();
+        sceneView_->setSelectedScenePoint(QString());
+        propsPanel_->clear();
+    }
+    markDirty();
+    refreshScenePanels();
+    statusLabel_->setText("已删除语义点位: " + name);
+}
+
+void MainWindow::onRenameScenePoint(const QString& oldName, const QString& newName) {
+    const QString nn = newName.trimmed();
+    if (nn.isEmpty() || nn == oldName) return;
+    for (const auto& q : scene_.osmPoints()) {
+        if (q.name == nn) {
+            QMessageBox::warning(this, "场景语义点位",
+                QString("名称 \"%1\" 已存在。").arg(nn));
+            return;
+        }
+    }
+    auto* p = scene_.osmPointByName(oldName);
+    if (!p) return;
+    p->name = nn;
+    if (selectedScenePoint_ == oldName) selectedScenePoint_ = nn;
+    markDirty();
+    refreshScenePanels();
+    if (auto* sel = scene_.osmPointByName(nn))
+        propsPanel_->showSceneSemanticPoint(*sel);
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 //  正交叠加对齐窗口：各 SLAM 地图俯视投影叠加到 OSM 底图
 // ═══════════════════════════════════════════════════════════════════════
@@ -909,6 +1066,8 @@ void MainWindow::rebuildSceneOverview() {
         sceneView_->setItemVisible(e.id, e.orthoVisible);
         sceneViewRowToId_.append(e.id);
     }
+    sceneView_->setScenePoints(scene_.osmPoints());
+    sceneView_->setSelectedScenePoint(selectedScenePoint_);
     sceneView_->setSelected(-1);
     sceneView_->fitView();
     sceneOverviewDirty_ = false;

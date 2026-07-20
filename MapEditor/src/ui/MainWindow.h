@@ -65,6 +65,15 @@ private slots:
     /// 右侧属性栏编辑 geo_anchor → 写回场景并刷新总览
     void onSlamGeoAnchorEdited(const QString& slamMapId, const GeoAnchor& anchor);
 
+    // ── 场景语义点位（OSM 底图上，经纬度 + 航向角）───────────────────
+    void onAddScenePoint();                                   ///< 进入点选新增模式
+    void onScenePointSelected(const QString& name);           ///< 选中并在右侧编辑
+    void onScenePointPlacedOnMap(double lon, double lat);     ///< 底图点选回填/新建
+    void onScenePointMovedOnMap(const QString& name, double lon, double lat);
+    void onSceneSemanticPointApply(const QString& oldName, const SceneSemanticPoint& pt);
+    void onRemoveScenePoint(const QString& name);
+    void onRenameScenePoint(const QString& oldName, const QString& newName);
+
     // ── 全局路线 ─────────────────────────────────────────────────────
     void onAddGlobalRoute();
     void onRemoveGlobalRoute(const QString& name);
@@ -193,6 +202,10 @@ private:
 
     bool sceneOverviewDirty_ = true;   ///< 场景组成变化后需重建总览足迹
     QVector<QString> sceneViewRowToId_;  ///< 总览足迹行 → SLAM 地图 id
+
+    // 场景语义点位交互状态
+    QString selectedScenePoint_;      ///< 当前选中的场景语义点位名称
+    QString scenePointPickForName_;   ///< 非空：底图点选用于回填该点位；空：新建
     static constexpr int kSceneTab = 0, kSlamTab = 1;
 
     MapProject project_;

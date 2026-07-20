@@ -39,6 +39,12 @@ signals:
     void globalRouteSelected(const QString& name);
     void globalRouteVisibilityChanged(const QString& name, bool visible);
 
+    // ── 场景语义点位（OSM 底图上，经纬度 + 航向角）───────────────────
+    void addScenePointRequested();                            ///< 请求在底图上点选新增
+    void scenePointSelected(const QString& name);             ///< 单击选中某个点位
+    void removeScenePointRequested(const QString& name);
+    void renameScenePointRequested(const QString& oldName, const QString& newName);
+
 private slots:
     void onItemClicked(QTreeWidgetItem* item, int column);
     void onItemDoubleClicked(QTreeWidgetItem* item, int column);
@@ -52,7 +58,7 @@ private:
     Scene* scene_ = nullptr;
 
     enum ItemRole { RoleType = Qt::UserRole, RoleId, RoleName, RoleIndex };
-    enum ItemType { TOsm, TSlam, TGlobalRoot, TGlobalRoute, TWaypoint };
+    enum ItemType { TOsm, TSlam, TGlobalRoot, TGlobalRoute, TWaypoint, TScenePoint };
 };
 
 } // namespace me

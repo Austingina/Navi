@@ -28,6 +28,17 @@ struct GeoAnchor {
     double scale = 1.0;        ///< 可视对齐微调缩放(默认 1.0；SLAM 为米制，一般无需改)
 };
 
+/// 场景（OSM / WGS84）级语义点位：位置用经纬度表示，航向角以「与正北的夹角」定义。
+struct SceneSemanticPoint {
+    QString name;
+    QString type = "single_pose";   ///< 与 SLAM 语义点位类型保持一致
+    bool    needInspect = false;    ///< 是否需要巡检（默认 false）
+    double  lon = 0.0;              ///< 经度
+    double  lat = 0.0;              ///< 纬度
+    double  alt = 0.0;              ///< 海拔 (m，可选)
+    double  headingDeg = 0.0;       ///< 航向角：与正北的夹角，顺时针为正（0=正北，90=正东）
+};
+
 /// 一张 SLAM 地图在场景中的引用条目。
 struct SlamMapRef {
     QString   id;              ///< 唯一标识 (slam_maps.<id>)

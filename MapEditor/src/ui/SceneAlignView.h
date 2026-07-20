@@ -55,6 +55,15 @@ public:
     void setItemVisible(const QString& id, bool visible);
     int  indexOfItem(const QString& id) const;
 
+    // ── 场景语义点位（OSM 底图上，经纬度 + 航向角）───────────────────
+    /// 设置画布上要绘制的场景语义点位集合（拷贝，用于绘制/命中测试）。
+    void setScenePoints(const QVector<SceneSemanticPoint>& pts);
+    /// 设置当前高亮的场景语义点位（按名称，空串表示无）。
+    void setSelectedScenePoint(const QString& name);
+    /// 进入/退出「点选新增点位」模式：开启后下一次左键点击将上报经纬度。
+    void setAddPointMode(bool on);
+    bool addPointMode() const { return addPointMode_; }
+
     // ── 选择 / 视图 ─────────────────────────────────────────────────
     void setSelected(int index);
     int  selected() const { return selected_; }
@@ -67,6 +76,12 @@ signals:
     void selectionChanged(int index);
     /// 鼠标在画布上移动时的经纬度（valid=false 表示无底图/移出画布）。
     void mouseGeoMoved(double lon, double lat, bool valid);
+    /// 「新增点位」模式下点选了某处（经纬度）。
+    void scenePointPlaced(double lon, double lat);
+    /// 点选选中了某个场景语义点位。
+    void scenePointSelected(const QString& name);
+    /// 拖拽移动了某个场景语义点位（经纬度）。
+    void scenePointMoved(const QString& name, double lon, double lat);
 
 protected:
     void paintEvent(QPaintEvent*) override;
@@ -99,8 +114,10 @@ private:
     QPolygonF  itemScreenPolygon(const SlamItem& it) const;
     void    itemOriginEnu(const SlamItem& it, double& e, double& n) const;
     int     hitTest(const QPointF& screenPos) const;
+    int     hitTestPoint(const QPointF& screenPos) const;
 
     void drawOsm(QPainter& p) const;
+    void drawScenePoints(QPainter& p) const;
     void drawScaleBar(QPainter& p) const;
 
     // 数据
@@ -109,13 +126,19 @@ private:
     QVector<SlamItem> items_;
     int selected_ = -1;
 
+    // 场景语义点位
+    QVector<SceneSemanticPoint> scenePoints_;
+    QString selectedPoint_;
+    bool    addPointMode_ = false;
+    int     movePointIdx_ = -1;
+
     // 视图参数
     double viewScale_ = 4.0;      // 每米像素数
     double viewCenterE_ = 0.0;    // 屏幕中心对应的 ENU 东坐标
     double viewCenterN_ = 0.0;
 
     // 交互状态
-    enum class Mode { None, PanView, Translate, Rotate, Scale };
+    enum class Mode { None, PanView, Translate, Rotate, Scale, MovePoint };
     Mode    mode_ = Mode::None;
     QPointF lastPos_;
     double  dragPrevAngle_ = 0.0;

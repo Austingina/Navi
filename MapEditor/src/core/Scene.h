@@ -90,6 +90,13 @@ public:
     QVector<GlobalRoute>&       globalRoutes()       { return globalRoutes_; }
     const QVector<GlobalRoute>& globalRoutes() const  { return globalRoutes_; }
 
+    // ── OSM 底图上的场景语义点位（经纬度 + 航向角）───────────────────
+    QVector<SceneSemanticPoint>&       osmPoints()       { return osmPoints_; }
+    const QVector<SceneSemanticPoint>& osmPoints() const  { return osmPoints_; }
+    SceneSemanticPoint* osmPointByName(const QString& name);
+    /// 生成一个不冲突的点位名（基于建议名）。
+    QString uniqueOsmPointName(const QString& suggested) const;
+
     // ── 持久化 ───────────────────────────────────────────────────────
     /// 以「场景目录」为操作对象：目录内含 scene.json + 复制进来的 OSM/PBF + 各地图 PCD；
     /// scene.json 内的资源引用一律用相对路径，方便整目录迁移。
@@ -114,6 +121,7 @@ private:
 
     QVector<SlamMapEntry> maps_;
     QVector<GlobalRoute>  globalRoutes_;
+    QVector<SceneSemanticPoint> osmPoints_;
     int activeIndex_ = -1;
     QString sceneFilePath_;
 };

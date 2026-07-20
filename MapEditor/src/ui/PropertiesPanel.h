@@ -48,6 +48,12 @@ public:
     /// 外部（在总览里拖拽足迹）改动了 anchor 时，同步刷新 geo_anchor 编辑框
     void updateSlamGeoAnchor(const QString& mapId, const GeoAnchor& anchor);
 
+    // ── 场景地图 Tab：OSM 底图上的场景语义点位（经纬度 + 航向角）──────
+    /// 显示/编辑一个场景语义点位（切到该页）。
+    void showSceneSemanticPoint(const SceneSemanticPoint& pt);
+    /// 从底图点选回填经纬度（仅在场景语义点位页显示时生效）。
+    void setScenePointLonLat(double lon, double lat);
+
     /// 清空面板
     void clear();
 
@@ -61,6 +67,10 @@ signals:
     void pickSemanticPositionRequested(const QString& submapId);
     /// SLAM geo_anchor 编辑框被用户修改（经纬度/朝向/缩放）
     void slamGeoAnchorChanged(const QString& mapId, const GeoAnchor& anchor);
+    /// 场景语义点位「应用修改」：oldName 为原名（新建时为空），pt 为编辑后的值。
+    void sceneSemanticPointChanged(const QString& oldName, const SceneSemanticPoint& pt);
+    /// 请求在底图上点选以回填该点位的经纬度。
+    void pickScenePositionRequested();
 
 private:
     void setupUI();
@@ -69,6 +79,7 @@ private:
     void setupPortalPage();
     void setupOsmPage();
     void setupSlamGeoPage();
+    void setupSceneSemanticPointPage();
 
     QStackedWidget* stack_ = nullptr;
 
@@ -145,6 +156,17 @@ private:
     QString         geoMapId_;
     bool            geoSyncGuard_ = false;
     void onGeoSpinChanged();
+
+    // ── 场景语义点位页面 ─────────────────────────────────────────────
+    QWidget*        scPage_ = nullptr;
+    QLineEdit*      scName_ = nullptr;
+    QComboBox*      scType_ = nullptr;
+    QCheckBox*      scNeedInspect_ = nullptr;
+    QDoubleSpinBox* scLon_ = nullptr;
+    QDoubleSpinBox* scLat_ = nullptr;
+    QDoubleSpinBox* scAlt_ = nullptr;
+    QDoubleSpinBox* scHeading_ = nullptr;
+    QString         scCurrentName_;   ///< 原名（新建为空）
 
     // helpers
     QDoubleSpinBox* makeSpinBox(double min = -9999, double max = 9999, int decimals = 4);

@@ -147,6 +147,39 @@ void SceneAlignView::setSelected(int index) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+//  场景语义点位
+// ═══════════════════════════════════════════════════════════════════════
+void SceneAlignView::setScenePoints(const QVector<SceneSemanticPoint>& pts) {
+    scenePoints_ = pts;
+    update();
+}
+
+void SceneAlignView::setSelectedScenePoint(const QString& name) {
+    selectedPoint_ = name;
+    update();
+}
+
+void SceneAlignView::setAddPointMode(bool on) {
+    addPointMode_ = on;
+    setCursor(on ? Qt::CrossCursor : Qt::ArrowCursor);
+    update();
+}
+
+int SceneAlignView::hitTestPoint(const QPointF& screenPos) const {
+    if (!conv_.hasOrigin()) return -1;
+    const double kHitPx = 10.0;
+    int best = -1;
+    double bestD = kHitPx;
+    for (int i = 0; i < scenePoints_.size(); ++i) {
+        double e, n; conv_.toEnu(scenePoints_[i].lon, scenePoints_[i].lat, e, n);
+        QPointF s = enuToScreen(e, n);
+        double d = std::hypot(s.x() - screenPos.x(), s.y() - screenPos.y());
+        if (d <= bestD) { bestD = d; best = i; }
+    }
+    return best;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 //  坐标换算
 // ═══════════════════════════════════════════════════════════════════════
 QPointF SceneAlignView::enuToScreen(double e, double n) const {
@@ -309,12 +342,45 @@ void SceneAlignView::paintEvent(QPaintEvent*) {
         p.drawText(poly.boundingRect().topLeft() + QPointF(4, -4), it.name);
     }
 
+    drawScenePoints(p);
     drawScaleBar(p);
 
     // 提示
     p.setPen(QColor(170, 175, 185));
-    p.drawText(rect().adjusted(8, 6, -8, 0), Qt::AlignLeft | Qt::AlignTop,
-               "左键拖拽:平移  右键/Alt+左键:旋转  Shift+左键:缩放  中键/空白拖拽:移视图  滚轮:视图缩放");
+    if (addPointMode_)
+        p.drawText(rect().adjusted(8, 6, -8, 0), Qt::AlignLeft | Qt::AlignTop,
+                   "点选模式：在底图上点击以确定语义点位位置");
+    else
+        p.drawText(rect().adjusted(8, 6, -8, 0), Qt::AlignLeft | Qt::AlignTop,
+                   "左键拖拽:平移  右键/Alt+左键:旋转  Shift+左键:缩放  中键/空白拖拽:移视图  滚轮:视图缩放");
+}
+
+void SceneAlignView::drawScenePoints(QPainter& p) const {
+    if (!conv_.hasOrigin() || scenePoints_.isEmpty()) return;
+    for (const auto& pt : scenePoints_) {
+        double e, n; conv_.toEnu(pt.lon, pt.lat, e, n);
+        QPointF o = enuToScreen(e, n);
+        const bool sel = (!selectedPoint_.isEmpty() && pt.name == selectedPoint_);
+        const QColor col = sel ? QColor(255, 210, 70) : QColor(90, 220, 180);
+
+        // 航向指示：与正北的夹角，顺时针为正（北=屏幕上方）
+        const double b = qDegreesToRadians(pt.headingDeg);
+        QPointF dir(o.x() + std::sin(b) * 24.0, o.y() - std::cos(b) * 24.0);
+        p.setPen(QPen(col, sel ? 2.4 : 1.6));
+        p.drawLine(o, dir);
+        // 箭头
+        const double ah = qDegreesToRadians(pt.headingDeg + 155.0);
+        const double ah2 = qDegreesToRadians(pt.headingDeg - 155.0);
+        p.drawLine(dir, QPointF(dir.x() + std::sin(ah) * 7.0, dir.y() - std::cos(ah) * 7.0));
+        p.drawLine(dir, QPointF(dir.x() + std::sin(ah2) * 7.0, dir.y() - std::cos(ah2) * 7.0));
+
+        p.setBrush(col);
+        p.setPen(QPen(Qt::black, 1));
+        p.drawEllipse(o, sel ? 6 : 5, sel ? 6 : 5);
+
+        p.setPen(sel ? QColor(255, 235, 150) : QColor(210, 235, 225));
+        p.drawText(o + QPointF(8, -6), pt.name);
+    }
 }
 
 void SceneAlignView::drawOsm(QPainter& p) const {
@@ -432,8 +498,27 @@ void SceneAlignView::mousePressEvent(QMouseEvent* e) {
     }
 
     if (e->button() == Qt::LeftButton) {
+        // 「点选新增点位」模式：上报经纬度后退出该模式
+        if (addPointMode_) {
+            double ce, cn; screenToEnu(e->pos(), ce, cn);
+            double lon, lat; conv_.toLonLat(ce, cn, lon, lat);
+            setAddPointMode(false);
+            emit scenePointPlaced(lon, lat);
+            return;
+        }
+        // 优先命中场景语义点位（可选中并拖拽移动）
+        int pi = hitTestPoint(e->pos());
+        if (pi >= 0) {
+            selectedPoint_ = scenePoints_[pi].name;
+            movePointIdx_  = pi;
+            mode_ = Mode::MovePoint;
+            emit scenePointSelected(selectedPoint_);
+            update();
+            return;
+        }
         int hit = hitTest(e->pos());
         if (hit >= 0) {
+            selectedPoint_.clear();
             if (hit != selected_) { selected_ = hit; emit selectionChanged(selected_); }
             double oe, on; itemOriginEnu(items_[selected_], oe, on);
             double ce, cn; screenToEnu(e->pos(), ce, cn);
@@ -448,6 +533,7 @@ void SceneAlignView::mousePressEvent(QMouseEvent* e) {
                 mode_ = Mode::Translate;
             }
         } else {
+            selectedPoint_.clear();
             mode_ = Mode::PanView;
         }
         update();
@@ -516,6 +602,17 @@ void SceneAlignView::mouseMoveEvent(QMouseEvent* e) {
             }
             break;
         }
+        case Mode::MovePoint: {
+            if (movePointIdx_ >= 0 && movePointIdx_ < scenePoints_.size()) {
+                double ce, cn; screenToEnu(cur, ce, cn);
+                double lon, lat; conv_.toLonLat(ce, cn, lon, lat);
+                scenePoints_[movePointIdx_].lon = lon;
+                scenePoints_[movePointIdx_].lat = lat;
+                update();
+                emit scenePointMoved(scenePoints_[movePointIdx_].name, lon, lat);
+            }
+            break;
+        }
         default: break;
     }
     lastPos_ = cur;
@@ -527,6 +624,12 @@ void SceneAlignView::mouseReleaseEvent(QMouseEvent* e) {
         && selected_ >= 0) {
         emit anchorEdited(selected_, items_[selected_].anchor);
     }
+    if (mode_ == Mode::MovePoint && movePointIdx_ >= 0 && movePointIdx_ < scenePoints_.size()) {
+        emit scenePointMoved(scenePoints_[movePointIdx_].name,
+                             scenePoints_[movePointIdx_].lon,
+                             scenePoints_[movePointIdx_].lat);
+    }
+    movePointIdx_ = -1;
     mode_ = Mode::None;
 }
 

@@ -70,6 +70,7 @@ void PropertiesPanel::setupUI() {
     setupPortalPage();       // index 3
     setupOsmPage();          // index 4
     setupSlamGeoPage();      // index 5
+    setupSceneSemanticPointPage(); // index 6
 
     auto* scroll = new QScrollArea();
     scroll->setWidget(stack_);
@@ -717,6 +718,103 @@ void PropertiesPanel::onGeoSpinChanged() {
     emit slamGeoAnchorChanged(geoMapId_, a);
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+//  场景语义点位属性页（OSM 底图上，经纬度 + 航向角）
+// ═══════════════════════════════════════════════════════════════════════
+
+void PropertiesPanel::setupSceneSemanticPointPage() {
+    scPage_ = new QWidget();
+    auto* layout = new QVBoxLayout(scPage_);
+
+    auto* group = new QGroupBox("场景语义点位 (OSM 底图)");
+    auto* form = new QFormLayout(group);
+    form->setContentsMargins(10, 20, 10, 10);
+
+    scName_ = new QLineEdit();
+    scType_ = new QComboBox();
+    scType_->addItems({"single_pose", "multi_pose", "LowPrecision_pose", "elevator_call",
+                       "elevator_wait", "elevator_in", "elevator_out", "door_open"});
+
+    auto mkSpin = [](double lo, double hi, int dec, double step) {
+        auto* s = new QDoubleSpinBox();
+        s->setRange(lo, hi);
+        s->setDecimals(dec);
+        s->setSingleStep(step);
+        s->setKeyboardTracking(false);
+        return s;
+    };
+    scLon_     = mkSpin(-180.0, 180.0, 8, 0.00001);
+    scLat_     = mkSpin(-90.0, 90.0, 8, 0.00001);
+    scAlt_     = mkSpin(-1000.0, 10000.0, 3, 0.1);
+    scHeading_ = mkSpin(0.0, 360.0, 2, 1.0);
+    scHeading_->setWrapping(true);
+    scHeading_->setSuffix(" °");
+    scHeading_->setToolTip("航向角：与正北的夹角，顺时针为正（0=正北，90=正东）。");
+
+    scNeedInspect_ = new QCheckBox("需要巡检");
+    scNeedInspect_->setToolTip("勾选后该点位会被纳入巡检流程。默认 false。");
+
+    form->addRow("名称:", scName_);
+    form->addRow("类型:", scType_);
+    form->addRow("need_inspect:", scNeedInspect_);
+    form->addRow("经度 lon:", scLon_);
+    form->addRow("纬度 lat:", scLat_);
+    form->addRow("海拔 alt:", scAlt_);
+    form->addRow("航向 heading(°N):", scHeading_);
+    layout->addWidget(group);
+
+    auto* pickBtn = new QPushButton("从底图选点（回填经纬度）");
+    layout->addWidget(pickBtn);
+    connect(pickBtn, &QPushButton::clicked, this,
+            [this]() { emit pickScenePositionRequested(); });
+
+    layout->addStretch();
+
+    auto* applyBtn = new QPushButton("应用修改");
+    layout->addWidget(applyBtn);
+    connect(applyBtn, &QPushButton::clicked, this, [this]() {
+        SceneSemanticPoint pt;
+        pt.name        = scName_->text().trimmed();
+        pt.type        = scType_->currentText();
+        pt.needInspect = scNeedInspect_->isChecked();
+        pt.lon         = scLon_->value();
+        pt.lat         = scLat_->value();
+        pt.alt         = scAlt_->value();
+        pt.headingDeg  = scHeading_->value();
+        if (pt.name.isEmpty()) {
+            QMessageBox::warning(this, "场景语义点位", "请填写点位名称。");
+            return;
+        }
+        emit sceneSemanticPointChanged(scCurrentName_, pt);
+        scCurrentName_ = pt.name;
+    });
+
+    stack_->addWidget(scPage_);  // index 6
+}
+
+void PropertiesPanel::showSceneSemanticPoint(const SceneSemanticPoint& pt) {
+    scCurrentName_ = pt.name;
+    scName_->setText(pt.name);
+    if (scType_->findText(pt.type) < 0) scType_->addItem(pt.type);
+    scType_->setCurrentText(pt.type);
+    {
+        QSignalBlocker b(scNeedInspect_);
+        scNeedInspect_->setChecked(pt.needInspect);
+    }
+    scLon_->setValue(pt.lon);
+    scLat_->setValue(pt.lat);
+    scAlt_->setValue(pt.alt);
+    scHeading_->setValue(pt.headingDeg);
+    stack_->setCurrentIndex(6);
+}
+
+void PropertiesPanel::setScenePointLonLat(double lon, double lat) {
+    if (!scLon_ || !scLat_) return;
+    if (stack_->currentIndex() != 6) return;
+    scLon_->setValue(lon);
+    scLat_->setValue(lat);
+}
+
 void PropertiesPanel::clear() {
     stack_->setCurrentIndex(0);
     currentSm_ = nullptr;
@@ -725,6 +823,7 @@ void PropertiesPanel::clear() {
     ptSm_ = nullptr;
     ptIdx_ = -1;
     geoMapId_.clear();
+    scCurrentName_.clear();
 }
 
 } // namespace me

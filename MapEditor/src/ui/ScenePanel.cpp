@@ -38,14 +38,17 @@ void ScenePanel::setupUI() {
     auto* btnOsm = new QPushButton("导入底图");
     auto* btnSlam = new QPushButton("导入SLAM地图");
     auto* btnRoute = new QPushButton("+ 全局路线");
+    auto* btnPoint = new QPushButton("+ 语义点位");
     toolbar->addWidget(btnOsm);
     toolbar->addWidget(btnSlam);
     toolbar->addWidget(btnRoute);
+    toolbar->addWidget(btnPoint);
     toolbar->addStretch();
     layout->addLayout(toolbar);
     connect(btnOsm,  &QPushButton::clicked, this, &ScenePanel::importOsmRequested);
     connect(btnSlam, &QPushButton::clicked, this, &ScenePanel::addSlamMapRequested);
     connect(btnRoute, &QPushButton::clicked, this, &ScenePanel::addGlobalRouteRequested);
+    connect(btnPoint, &QPushButton::clicked, this, &ScenePanel::addScenePointRequested);
 
     tree_ = new QTreeWidget();
     tree_->setHeaderLabels({"名称", "显示"});
@@ -96,6 +99,19 @@ void ScenePanel::rebuild(Scene* scene) {
             item->setCheckState(1, e.orthoVisible ? Qt::Checked : Qt::Unchecked);
             osmRoot->addChild(item);
         }
+
+        // 场景语义点位（OSM 底图上）
+        for (const auto& p : scene_->osmPoints()) {
+            QString label = QString("📍 %1 (%2)").arg(p.name, p.type);
+            auto* pItem = new QTreeWidgetItem({label});
+            pItem->setData(0, RoleType, TScenePoint);
+            pItem->setData(0, RoleName, p.name);
+            pItem->setToolTip(0, QString("lon %1, lat %2, 航向 %3°%4")
+                                     .arg(p.lon, 0, 'f', 7).arg(p.lat, 0, 'f', 7)
+                                     .arg(p.headingDeg, 0, 'f', 1)
+                                     .arg(p.needInspect ? "  [需巡检]" : ""));
+            osmRoot->addChild(pItem);
+        }
     }
 
     // ── 全局路线（跨地图，展示在场景地图下面）──────────────────────────
@@ -134,6 +150,8 @@ void ScenePanel::onItemClicked(QTreeWidgetItem* item, int) {
         emit osmSelected();
     else if (type == TGlobalRoute)
         emit globalRouteSelected(item->data(0, RoleName).toString());
+    else if (type == TScenePoint)
+        emit scenePointSelected(item->data(0, RoleName).toString());
 }
 
 void ScenePanel::onItemDoubleClicked(QTreeWidgetItem* item, int) {
@@ -157,6 +175,25 @@ void ScenePanel::onContextMenu(const QPoint& pos) {
     QMenu menu;
     int type = item ? item->data(0, RoleType).toInt() : -1;
     switch (type) {
+    case TOsm:
+        menu.addAction("🗺️ 导入 OSM/PBF 底图...", [this]() { emit importOsmRequested(); });
+        menu.addAction("🏢 导入 SLAM 地图...", [this]() { emit addSlamMapRequested(); });
+        menu.addSeparator();
+        menu.addAction("📍 在底图上新增语义点位", [this]() { emit addScenePointRequested(); });
+        break;
+    case TScenePoint: {
+        QString name = item->data(0, RoleName).toString();
+        menu.addAction("📍 在底图上新增语义点位", [this]() { emit addScenePointRequested(); });
+        menu.addSeparator();
+        menu.addAction("✏️ 重命名此点位", [this, name]() {
+            bool ok; QString nn = QInputDialog::getText(this, "重命名语义点位",
+                QString("将「%1」重命名为:").arg(name), QLineEdit::Normal, name, &ok);
+            nn = nn.trimmed();
+            if (ok && !nn.isEmpty() && nn != name) emit renameScenePointRequested(name, nn);
+        });
+        menu.addAction("🗑️ 删除此点位", [this, name]() { emit removeScenePointRequested(name); });
+        break;
+    }
     case TSlam: {
         QString id = item->data(0, RoleId).toString();
         menu.addAction("✅ 激活并编辑此地图", [this, id]() { emit slamMapActivated(id); });
@@ -204,6 +241,7 @@ void ScenePanel::onContextMenu(const QPoint& pos) {
         menu.addAction("🗺️ 导入 OSM/PBF 底图...", [this]() { emit importOsmRequested(); });
         menu.addAction("🏢 导入 SLAM 地图...", [this]() { emit addSlamMapRequested(); });
         menu.addAction("🌐 添加全局路线", [this]() { emit addGlobalRouteRequested(); });
+        menu.addAction("📍 在底图上新增语义点位", [this]() { emit addScenePointRequested(); });
         break;
     }
     menu.exec(tree_->viewport()->mapToGlobal(pos));

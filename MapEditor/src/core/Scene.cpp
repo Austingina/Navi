@@ -21,8 +21,29 @@ void Scene::clear() {
     originLon_ = originLat_ = 0.0;
     maps_.clear();
     globalRoutes_.clear();
+    osmPoints_.clear();
     activeIndex_ = -1;
     sceneFilePath_.clear();
+}
+
+SceneSemanticPoint* Scene::osmPointByName(const QString& name) {
+    for (auto& p : osmPoints_)
+        if (p.name == name) return &p;
+    return nullptr;
+}
+
+QString Scene::uniqueOsmPointName(const QString& suggested) const {
+    QString base = suggested.trimmed();
+    if (base.isEmpty()) base = "point";
+    auto taken = [&](const QString& n) {
+        for (const auto& p : osmPoints_) if (p.name == n) return true;
+        return false;
+    };
+    if (!taken(base)) return base;
+    for (int i = 1; ; ++i) {
+        QString cand = QString("%1_%2").arg(base).arg(i);
+        if (!taken(cand)) return cand;
+    }
 }
 
 void Scene::setOsm(std::shared_ptr<OsmData> osm, const QString& source) {
@@ -164,6 +185,23 @@ bool Scene::loadFile(const QString& jsonPath) {
         }
     }
 
+    // ── scene.semantic_points（OSM 底图上的场景语义点位）────────────────
+    {
+        auto spObj = scene.value("semantic_points").toObject();
+        for (auto it = spObj.begin(); it != spObj.end(); ++it) {
+            auto o = it.value().toObject();
+            SceneSemanticPoint p;
+            p.name        = it.key();
+            p.type        = o.value("type").toString("single_pose");
+            p.needInspect = o.value("need_inspect").toBool(false);
+            p.lon         = o.value("lon").toDouble();
+            p.lat         = o.value("lat").toDouble();
+            p.alt         = o.value("alt").toDouble();
+            p.headingDeg  = o.value("heading_deg").toDouble();
+            osmPoints_.append(p);
+        }
+    }
+
     // ── slam_maps ──────────────────────────────────────────────────────
     auto slamMaps = root.value("slam_maps").toObject();
     for (auto it = slamMaps.begin(); it != slamMaps.end(); ++it) {
@@ -237,6 +275,20 @@ bool Scene::saveFile(const QString& jsonPath) {
             {"max", QJsonObject{{"lon", maxLon_}, {"lat", maxLat_}}}};
     }
     scene["osm"] = osmObj;
+    if (!osmPoints_.isEmpty()) {
+        QJsonObject spObj;
+        for (const auto& p : osmPoints_) {
+            QJsonObject o;
+            o["type"]         = p.type;
+            o["need_inspect"] = p.needInspect;
+            o["lon"]          = p.lon;
+            o["lat"]          = p.lat;
+            o["alt"]          = p.alt;
+            o["heading_deg"]  = p.headingDeg;
+            spObj[p.name] = o;
+        }
+        scene["semantic_points"] = spObj;
+    }
     root["scene"] = scene;
 
     QJsonObject slamMaps;
