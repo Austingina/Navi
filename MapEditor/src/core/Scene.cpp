@@ -119,7 +119,10 @@ void Scene::removeMapAt(int i) {
 // ═══════════════════════════════════════════════════════════════════════
 static GlobalWaypoint parseGlobalWaypoint(const QJsonObject& o) {
     GlobalWaypoint wp;
-    if (o.contains("instruction")) {
+    if (o.contains("scene_point")) {
+        wp.kind = GlobalWaypoint::ScenePoint;
+        wp.scenePoint = o.value("scene_point").toString();
+    } else if (o.contains("instruction")) {
         wp.kind = GlobalWaypoint::Instruction;
         wp.instruction = o.value("instruction").toString();
     } else if (o.contains("lon") && o.contains("lat")) {
@@ -138,6 +141,8 @@ static GlobalWaypoint parseGlobalWaypoint(const QJsonObject& o) {
 static QJsonObject globalWaypointToJson(const GlobalWaypoint& wp) {
     QJsonObject o;
     switch (wp.kind) {
+        case GlobalWaypoint::ScenePoint:
+            o["scene_point"] = wp.scenePoint; break;
         case GlobalWaypoint::Instruction:
             o["instruction"] = wp.instruction; break;
         case GlobalWaypoint::Gps:

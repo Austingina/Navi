@@ -75,6 +75,8 @@ private slots:
     void onRemoveScenePoint(const QString& name);
     void onRenameScenePoint(const QString& oldName, const QString& newName);
     void onMoveScenePointToArea(const QString& name, const QString& area);
+    void onAddScenePointToRoute(const QString& pointName, const QString& routeName,
+                                int insertIndex);
 
     // ── 语义点位区域 ─────────────────────────────────────────────────
     void onAddScenePointArea();

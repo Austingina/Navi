@@ -32,9 +32,9 @@ struct SlamMapEntry {
     bool      orthoVisible = true;         ///< 场景总览里是否显示该地图的正交投影
 };
 
-/// 全局路线途经点（异构：map / gps / instruction）。
+/// 全局路线途经点（异构：map / gps / instruction / scene_point）。
 struct GlobalWaypoint {
-    enum Kind { Map, Gps, Instruction };
+    enum Kind { Map, Gps, Instruction, ScenePoint };
     Kind    kind = Map;
     // map
     QString slamMap, submap, semanticPoint;
@@ -42,6 +42,8 @@ struct GlobalWaypoint {
     double  lon = 0.0, lat = 0.0;
     // instruction
     QString instruction;
+    // scene_point：引用 OSM 底图上的场景语义点位（按名称）
+    QString scenePoint;
 };
 
 struct GlobalRoute {

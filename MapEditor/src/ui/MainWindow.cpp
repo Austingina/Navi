@@ -404,6 +404,8 @@ void MainWindow::connectSignals() {
             this, &MainWindow::onRenameScenePoint);
     connect(scenePanel_, &ScenePanel::moveScenePointToAreaRequested,
             this, &MainWindow::onMoveScenePointToArea);
+    connect(scenePanel_, &ScenePanel::addScenePointToRouteRequested,
+            this, &MainWindow::onAddScenePointToRoute);
     connect(scenePanel_, &ScenePanel::addScenePointAreaRequested,
             this, &MainWindow::onAddScenePointArea);
     connect(scenePanel_, &ScenePanel::renameScenePointAreaRequested,
@@ -1082,6 +1084,25 @@ void MainWindow::onMoveScenePointToArea(const QString& name, const QString& area
     statusLabel_->setText(area.isEmpty()
         ? QString("已将「%1」移出区域").arg(name)
         : QString("已将「%1」移动到区域「%2」").arg(name, area));
+}
+
+void MainWindow::onAddScenePointToRoute(const QString& pointName, const QString& routeName,
+                                        int insertIndex) {
+    if (!scene_.osmPointByName(pointName)) return;
+    GlobalRoute* route = nullptr;
+    for (auto& r : scene_.globalRoutes())
+        if (r.name == routeName) { route = &r; break; }
+    if (!route) return;
+    GlobalWaypoint wp;
+    wp.kind = GlobalWaypoint::ScenePoint;
+    wp.scenePoint = pointName;
+    if (insertIndex < 0 || insertIndex > route->waypoints.size())
+        route->waypoints.append(wp);                 // 落在容器上/越界 → 末尾
+    else
+        route->waypoints.insert(insertIndex, wp);    // 按落点位置插入
+    markDirty();
+    refreshScenePointsOnly();
+    statusLabel_->setText(QString("已将语义点位「%1」加入路线「%2」").arg(pointName, routeName));
 }
 
 void MainWindow::onAddScenePointArea() {

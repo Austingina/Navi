@@ -10,8 +10,80 @@
 #include <QLineEdit>
 #include <QFileInfo>
 #include <QMap>
+#include <QSet>
+#include <QMimeData>
+#include <QDataStream>
+#include <functional>
 
 namespace me {
+
+// ── SceneTreeWidget：把语义点位拖到区域/路线上（与 SLAM 路线拖拽一致）────
+static const char* kScenePointMime = "application/x-mapeditor-scenepoint";
+
+QStringList SceneTreeWidget::mimeTypes() const {
+    return {kScenePointMime};
+}
+
+#if QT_VERSION >= QT_VERSION_CHECK(6,0,0)
+QMimeData* SceneTreeWidget::mimeData(const QList<QTreeWidgetItem*>& items) const {
+#else
+QMimeData* SceneTreeWidget::mimeData(const QList<QTreeWidgetItem*> items) const {
+#endif
+    if (items.isEmpty()) return nullptr;
+    auto* item = items.first();
+    if (item->data(0, ScenePanel::RoleType).toInt() != ScenePanel::TScenePoint)
+        return nullptr;   // 仅语义点位可拖拽
+    auto* md = new QMimeData();
+    QByteArray buf;
+    QDataStream ds(&buf, QIODevice::WriteOnly);
+    ds << item->data(0, ScenePanel::RoleName).toString();
+    md->setData(kScenePointMime, buf);
+    return md;
+}
+
+Qt::DropActions SceneTreeWidget::supportedDropActions() const {
+    return Qt::CopyAction;
+}
+
+bool SceneTreeWidget::dropMimeData(QTreeWidgetItem* parent, int index,
+                                   const QMimeData* data, Qt::DropAction /*action*/) {
+    if (!data || !parent || !data->hasFormat(kScenePointMime)) return false;
+    QByteArray buf = data->data(kScenePointMime);
+    QDataStream ds(&buf, QIODevice::ReadOnly);
+    QString point;
+    ds >> point;
+    if (point.isEmpty()) return false;
+
+    const int pt = parent->data(0, ScenePanel::RoleType).toInt();
+    switch (pt) {
+        case ScenePanel::TGlobalRoute:
+            // 落在路线容器上：index 即子节点间的插入位置（-1 表示末尾）
+            emit scenePointDroppedToRoute(
+                point, parent->data(0, ScenePanel::RoleName).toString(), index);
+            return true;
+        case ScenePanel::TWaypoint: {
+            // 落在某途经点上：插到它前面
+            auto* routeItem = parent->parent();
+            if (!routeItem) return false;
+            emit scenePointDroppedToRoute(
+                point, routeItem->data(0, ScenePanel::RoleName).toString(),
+                routeItem->indexOfChild(parent));
+            return true;
+        }
+        case ScenePanel::TSpArea:
+            emit scenePointDroppedToArea(point, parent->data(0, ScenePanel::RoleName).toString());
+            return true;
+        case ScenePanel::TSpRoot:
+            emit scenePointDroppedToArea(point, QString());
+            return true;
+        case ScenePanel::TScenePoint:
+            // 落在另一点位上：归入其所属区域
+            emit scenePointDroppedToArea(point, parent->data(0, ScenePanel::RoleArea).toString());
+            return true;
+        default:
+            return false;
+    }
+}
 
 static QString sceneGlobalWpLabel(int i, const GlobalWaypoint& wp) {
     switch (wp.kind) {
@@ -20,6 +92,8 @@ static QString sceneGlobalWpLabel(int i, const GlobalWaypoint& wp) {
                 .arg(wp.lon, 0, 'f', 6).arg(wp.lat, 0, 'f', 6);
         case GlobalWaypoint::Instruction:
             return QString("%1. 💬 %2").arg(i + 1).arg(wp.instruction);
+        case GlobalWaypoint::ScenePoint:
+            return QString("%1. 📍 %2 (场景点)").arg(i + 1).arg(wp.scenePoint);
         case GlobalWaypoint::Map:
         default:
             return QString("%1. 📍 %2/%3/%4").arg(i + 1)
@@ -51,7 +125,7 @@ void ScenePanel::setupUI() {
     connect(btnRoute, &QPushButton::clicked, this, &ScenePanel::addGlobalRouteRequested);
     connect(btnPoint, &QPushButton::clicked, this, &ScenePanel::addScenePointRequested);
 
-    tree_ = new QTreeWidget();
+    tree_ = new SceneTreeWidget();
     tree_->setHeaderLabels({"名称", "显示"});
     tree_->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     tree_->header()->setStretchLastSection(false);
@@ -61,9 +135,22 @@ void ScenePanel::setupUI() {
     connect(tree_, &QTreeWidget::itemClicked, this, &ScenePanel::onItemClicked);
     connect(tree_, &QTreeWidget::itemDoubleClicked, this, &ScenePanel::onItemDoubleClicked);
     connect(tree_, &QTreeWidget::itemChanged, this, &ScenePanel::onItemChanged);
+
+    // 拖放：把「语义点位」拖到「区域 / 全局路线」节点上（与 SLAM 路线一致）
+    tree_->setSelectionMode(QAbstractItemView::SingleSelection);
+    tree_->setDragEnabled(true);
+    tree_->setAcceptDrops(true);
+    tree_->setDropIndicatorShown(true);
+    tree_->setDragDropMode(QAbstractItemView::DragDrop);
+    tree_->setDefaultDropAction(Qt::CopyAction);
+    connect(tree_, &SceneTreeWidget::scenePointDroppedToRoute, this,
+            &ScenePanel::addScenePointToRouteRequested);
+    connect(tree_, &SceneTreeWidget::scenePointDroppedToArea, this,
+            &ScenePanel::moveScenePointToAreaRequested);
     layout->addWidget(tree_);
 
     auto* hint = new QLabel("双击 SLAM 地图进入其内部 submap 编辑；勾选控制其正交投影叠加显示。"
+                            "可将「语义点位」拖到「区域」上改归属，或拖到「全局路线」上加入途经点。"
                             "全局路线（跨地图）在此管理；内部路线在「SLAM地图」Tab 中随激活地图显示。");
     hint->setWordWrap(true);
     hint->setStyleSheet("color:#8a8f99;");
@@ -72,6 +159,20 @@ void ScenePanel::setupUI() {
 
 void ScenePanel::rebuild(Scene* scene) {
     scene_ = scene;
+
+    // 记录当前「被收起」的可展开节点（区域 / 全局路线），重建后据此恢复，
+    // 从而拖拽完成刷新时不会把已展开的路线/区域收起来。新节点默认展开。
+    QSet<QString> collapsedAreas, collapsedRoutes;
+    std::function<void(QTreeWidgetItem*)> scan = [&](QTreeWidgetItem* it) {
+        int t = it->data(0, RoleType).toInt();
+        if (t == TSpArea && !it->isExpanded())
+            collapsedAreas.insert(it->data(0, RoleName).toString());
+        else if (t == TGlobalRoute && !it->isExpanded())
+            collapsedRoutes.insert(it->data(0, RoleName).toString());
+        for (int i = 0; i < it->childCount(); ++i) scan(it->child(i));
+    };
+    for (int i = 0; i < tree_->topLevelItemCount(); ++i) scan(tree_->topLevelItem(i));
+
     tree_->blockSignals(true);
     tree_->clear();
 
@@ -127,7 +228,7 @@ void ScenePanel::rebuild(Scene* scene) {
             aItem->setData(0, RoleType, TSpArea);
             aItem->setData(0, RoleName, a);
             spRoot->addChild(aItem);
-            aItem->setExpanded(true);
+            aItem->setExpanded(!collapsedAreas.contains(a));
             areaItems.insert(a, aItem);
         }
         for (const auto& p : scene_->osmPoints()) {
@@ -171,11 +272,14 @@ void ScenePanel::rebuild(Scene* scene) {
             rItem->setToolTip(0, r.description);
             rItem->setCheckState(1, Qt::Unchecked);
             gRoot->addChild(rItem);
+            rItem->setExpanded(!collapsedRoutes.contains(r.name));
             for (int i = 0; i < r.waypoints.size(); ++i) {
                 auto* wp = new QTreeWidgetItem({sceneGlobalWpLabel(i, r.waypoints[i])});
                 wp->setData(0, RoleType, TWaypoint);
                 wp->setData(0, RoleName, r.name);
                 wp->setData(0, RoleIndex, i);
+                // 途经点本身不作为放置目标：让落点解析到所属路线并给出插入索引
+                wp->setFlags(wp->flags() & ~Qt::ItemIsDropEnabled);
                 rItem->addChild(wp);
             }
         }

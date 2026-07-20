@@ -12,6 +12,33 @@
 
 namespace me {
 
+/// 支持把「语义点位」拖到「区域 / 全局路线」节点上的场景树。
+/// 采用与「SLAM地图」路线一致的 mimeData/dropMimeData 模型：原生插入指示线、
+/// 按落点位置计算插入索引，拖拽为 Copy 语义（不搬移原节点）。
+class SceneTreeWidget : public QTreeWidget {
+    Q_OBJECT
+public:
+    using QTreeWidget::QTreeWidget;
+
+signals:
+    /// 语义点位拖入全局路线（按落点位置给出插入索引）。
+    void scenePointDroppedToRoute(const QString& pointName, const QString& routeName,
+                                  int insertIndex);
+    /// 语义点位拖到区域（area 为空表示未归属）。
+    void scenePointDroppedToArea(const QString& pointName, const QString& area);
+
+protected:
+    QStringList mimeTypes() const override;
+#if QT_VERSION >= QT_VERSION_CHECK(6,0,0)
+    QMimeData* mimeData(const QList<QTreeWidgetItem*>& items) const override;
+#else
+    QMimeData* mimeData(const QList<QTreeWidgetItem*> items) const override;
+#endif
+    bool dropMimeData(QTreeWidgetItem* parent, int index,
+                      const QMimeData* data, Qt::DropAction action) override;
+    Qt::DropActions supportedDropActions() const override;
+};
+
 class ScenePanel : public QWidget {
     Q_OBJECT
 public:
@@ -46,6 +73,9 @@ signals:
     void removeScenePointRequested(const QString& name);
     void renameScenePointRequested(const QString& oldName, const QString& newName);
     void moveScenePointToAreaRequested(const QString& name, const QString& area);
+    /// 将语义点位拖入某条全局路线（按落点位置插入途经点）。
+    void addScenePointToRouteRequested(const QString& pointName, const QString& routeName,
+                                       int insertIndex);
 
     // ── 语义点位区域（按区域聚合）────────────────────────────────────
     void addScenePointAreaRequested();
@@ -64,9 +94,10 @@ private slots:
     void onContextMenu(const QPoint& pos);
 
 private:
+    friend class SceneTreeWidget;
     void setupUI();
 
-    QTreeWidget* tree_ = nullptr;
+    SceneTreeWidget* tree_ = nullptr;
     Scene* scene_ = nullptr;
 
     enum ItemRole { RoleType = Qt::UserRole, RoleId, RoleName, RoleIndex, RoleArea };
