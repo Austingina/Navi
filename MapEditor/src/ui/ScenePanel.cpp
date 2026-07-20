@@ -161,6 +161,17 @@ void ScenePanel::onContextMenu(const QPoint& pos) {
         QString id = item->data(0, RoleId).toString();
         menu.addAction("✅ 激活并编辑此地图", [this, id]() { emit slamMapActivated(id); });
         menu.addSeparator();
+        menu.addAction("✏️ 重命名此地图", [this, id]() {
+            QString cur = id;
+            if (scene_) if (auto* e = scene_->mapById(id))
+                cur = e->name.isEmpty() ? e->id : e->name;
+            bool ok; QString nn = QInputDialog::getText(this, "重命名 SLAM 地图",
+                QString("将「%1」重命名为:").arg(cur), QLineEdit::Normal, cur, &ok);
+            nn = nn.trimmed();
+            if (ok && !nn.isEmpty() && nn != cur) emit renameSlamMapRequested(id, nn);
+        });
+        menu.addAction("📤 单独导出此地图...", [this, id]() { emit exportSlamMapRequested(id); });
+        menu.addSeparator();
         menu.addAction("🏢 导入 SLAM 地图...", [this]() { emit addSlamMapRequested(); });
         menu.addAction("🗑️ 移除此地图", [this, id]() { emit removeSlamMapRequested(id); });
         break;

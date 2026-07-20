@@ -322,6 +322,10 @@ void MainWindow::connectSignals() {
             this, &MainWindow::onImportSlamMap);
     connect(scenePanel_, &ScenePanel::removeSlamMapRequested,
             this, &MainWindow::onRemoveSlamMap);
+    connect(scenePanel_, &ScenePanel::renameSlamMapRequested,
+            this, &MainWindow::onRenameSlamMap);
+    connect(scenePanel_, &ScenePanel::exportSlamMapRequested,
+            this, &MainWindow::onExportSlamMap);
     connect(scenePanel_, &ScenePanel::slamMapActivated,
             this, &MainWindow::onSlamMapActivated);
     connect(scenePanel_, &ScenePanel::slamMapSelected,
@@ -752,6 +756,62 @@ void MainWindow::onRemoveSlamMap(const QString& slamMapId) {
     }
     refreshScenePanels();
     statusLabel_->setText("已移除地图");
+}
+
+void MainWindow::onRenameSlamMap(const QString& slamMapId, const QString& newName) {
+    auto* e = scene_.mapById(slamMapId);
+    if (!e) return;
+    const QString nn = newName.trimmed();
+    if (nn.isEmpty() || nn == e->name) return;
+    e->name = nn;
+    markDirty();
+    refreshScenePanels();               // 刷新场景树 + 总览足迹标签
+    statusLabel_->setText("已重命名地图为: " + nn);
+}
+
+void MainWindow::onExportSlamMap(const QString& slamMapId) {
+    // 活跃地图取工作副本 project_（含未保存编辑），其余取条目内 project
+    MapProject* proj = projectForMap(slamMapId);
+    if (!proj || proj->submapIds().isEmpty()) {
+        QMessageBox::warning(this, "导出失败", "该 SLAM 地图为空或不可用");
+        return;
+    }
+    auto* e = scene_.mapById(slamMapId);
+    const QString suggest = e ? (e->name.isEmpty() ? e->id : e->name) : slamMapId;
+
+    QString parentDir = QFileDialog::getExistingDirectory(
+        this, QString("选择导出「%1」的目标目录（将写入 <目录名>.json 与 PCD）").arg(suggest),
+        currentProjectDir_,
+        QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
+    if (parentDir.isEmpty()) return;
+
+    // 若选中的是一个非空的通用目录，则在其下新建一个以地图名命名的子目录，
+    // 避免把 PCD 直接铺进用户的现有目录；若目录名就等于地图名则直接用它。
+    QDir chosen(parentDir);
+    QString targetDir = parentDir;
+    if (chosen.dirName() != suggest) {
+        targetDir = chosen.absoluteFilePath(suggest);
+        if (QDir(targetDir).exists() && !QDir(targetDir).isEmpty()) {
+            if (QMessageBox::question(this, "目录已存在",
+                    QString("目录已存在且非空：\n%1\n是否覆盖其中同名文件？").arg(targetDir))
+                != QMessageBox::Yes)
+                return;
+        }
+    }
+
+    statusLabel_->setText("导出中...");
+    QApplication::processEvents();
+
+    // 用副本导出，避免修改内存中该地图的 build_no
+    MapProject copy = *proj;
+    if (!copy.save(targetDir)) {
+        QMessageBox::critical(this, "导出失败", "无法写入目录: " + targetDir);
+        statusLabel_->setText("导出失败");
+        return;
+    }
+    QMessageBox::information(this, "导出完成",
+        QString("已将 SLAM 地图「%1」导出为独立工程:\n%2").arg(suggest, targetDir));
+    statusLabel_->setText("已导出地图: " + suggest);
 }
 
 void MainWindow::onAlignSlamMap(const QString& slamMapId) {

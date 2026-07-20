@@ -52,6 +52,8 @@ private slots:
     void onSlamMapSelected(const QString& slamMapId);
     void onSlamMapActivated(const QString& slamMapId);
     void onRemoveSlamMap(const QString& slamMapId);
+    void onRenameSlamMap(const QString& slamMapId, const QString& newName);
+    void onExportSlamMap(const QString& slamMapId);
     void onAlignSlamMap(const QString& slamMapId);
     void onOrthoVisibilityChanged(const QString& slamMapId, bool visible);
     void onLeftTabChanged(int index);
