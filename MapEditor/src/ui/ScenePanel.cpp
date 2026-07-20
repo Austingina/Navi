@@ -146,10 +146,11 @@ void ScenePanel::rebuild(Scene* scene) {
         portalRoot->setExpanded(true);
         for (const auto& pt : scene_->scenePortals()) {
             QString label = QString("🚪 %1  →  %2").arg(
-                pt.name, pt.targetSlamMap.isEmpty() ? "(未指定入口)" : pt.targetSlamMap);
+                pt.semanticPoint,
+                pt.targetSlamMap.isEmpty() ? "(未指定入口)" : pt.targetSlamMap);
             auto* it = new QTreeWidgetItem({label});
             it->setData(0, RoleType, TScenePortal);
-            it->setData(0, RoleName, pt.name);
+            it->setData(0, RoleName, pt.semanticPoint);
             it->setToolTip(0, QString("语义点位: %1\n入口指向 SLAM 地图: %2")
                                   .arg(pt.semanticPoint, pt.targetSlamMap));
             portalRoot->addChild(it);

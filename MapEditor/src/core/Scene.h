@@ -106,8 +106,8 @@ public:
     // ── 场景级传送门（语义点位 → SLAM 地图入口）──────────────────────
     QVector<ScenePortal>&       scenePortals()       { return scenePortals_; }
     const QVector<ScenePortal>& scenePortals() const  { return scenePortals_; }
-    ScenePortal* scenePortalByName(const QString& name);
-    QString uniquePortalName(const QString& suggested) const;
+    /// 按关联的语义点位查找传送门（语义点位即传送门标识）。
+    ScenePortal* scenePortalForPoint(const QString& semanticPoint);
 
     // ── 持久化 ───────────────────────────────────────────────────────
     /// 以「场景目录」为操作对象：目录内含 scene.json + 复制进来的 OSM/PBF + 各地图 PCD；

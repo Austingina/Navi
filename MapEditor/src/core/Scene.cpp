@@ -58,24 +58,10 @@ QString Scene::uniqueAreaName(const QString& suggested) const {
     }
 }
 
-ScenePortal* Scene::scenePortalByName(const QString& name) {
+ScenePortal* Scene::scenePortalForPoint(const QString& semanticPoint) {
     for (auto& p : scenePortals_)
-        if (p.name == name) return &p;
+        if (p.semanticPoint == semanticPoint) return &p;
     return nullptr;
-}
-
-QString Scene::uniquePortalName(const QString& suggested) const {
-    QString base = suggested.trimmed();
-    if (base.isEmpty()) base = "portal";
-    auto taken = [&](const QString& n) {
-        for (const auto& p : scenePortals_) if (p.name == n) return true;
-        return false;
-    };
-    if (!taken(base)) return base;
-    for (int i = 1; ; ++i) {
-        QString cand = QString("%1_%2").arg(base).arg(i);
-        if (!taken(cand)) return cand;
-    }
 }
 
 void Scene::setOsm(std::shared_ptr<OsmData> osm, const QString& source) {
@@ -252,8 +238,8 @@ bool Scene::loadFile(const QString& jsonPath) {
         for (auto it = ptObj.begin(); it != ptObj.end(); ++it) {
             auto o = it.value().toObject();
             ScenePortal p;
-            p.name          = it.key();
-            p.semanticPoint = o.value("semantic_point").toString();
+            // 新格式：以语义点位为键；旧格式：以传送门名为键、内含 semantic_point
+            p.semanticPoint = o.value("semantic_point").toString(it.key());
             p.targetSlamMap = o.value("target_slam_map").toString();
             scenePortals_.append(p);
         }
@@ -356,9 +342,8 @@ bool Scene::saveFile(const QString& jsonPath) {
         QJsonObject ptObj;
         for (const auto& p : scenePortals_) {
             QJsonObject o;
-            o["semantic_point"]  = p.semanticPoint;
             o["target_slam_map"] = p.targetSlamMap;
-            ptObj[p.name] = o;
+            ptObj[p.semanticPoint] = o;   // 以语义点位为键
         }
         scene["portals"] = ptObj;
     }

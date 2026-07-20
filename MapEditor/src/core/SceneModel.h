@@ -41,9 +41,9 @@ struct SceneSemanticPoint {
 };
 
 /// 场景级传送门：将一个场景语义点位定义为某张 SLAM 地图的入口。
+/// 与 SLAM 地图内的传送门一致：以「语义点位」为标识，无需单独命名。
 struct ScenePortal {
-    QString name;           ///< 传送门名称
-    QString semanticPoint;  ///< 关联的场景语义点位名称
+    QString semanticPoint;  ///< 关联的场景语义点位名称（作为传送门标识）
     QString targetSlamMap;  ///< 作为入口指向的 SLAM 地图 id
 };
 

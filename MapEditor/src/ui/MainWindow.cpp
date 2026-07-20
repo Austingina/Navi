@@ -1131,13 +1131,13 @@ void MainWindow::onRemoveScenePointArea(const QString& name) {
 
 // ── 场景级传送门（语义点位 → SLAM 地图入口）──────────────────────────
 namespace {
-/// 弹出传送门编辑对话框：选择场景语义点位 + 目标 SLAM 地图入口。返回是否确认。
+/// 弹出传送门编辑对话框：选择场景语义点位（即传送门标识）+ 目标 SLAM 地图入口。
+/// 返回是否确认。与 SLAM 地图内的传送门一致，无需单独命名。
 bool runScenePortalDialog(QWidget* parent, const Scene& scene, bool isNew, ScenePortal& io) {
     QDialog dlg(parent);
     dlg.setWindowTitle(isNew ? "添加传送门" : "编辑传送门");
     auto* form = new QFormLayout(&dlg);
 
-    auto* nameEdit = new QLineEdit(io.name);
     auto* pointCombo = new QComboBox();
     for (const auto& p : scene.osmPoints()) pointCombo->addItem(p.name);
     if (!io.semanticPoint.isEmpty() && pointCombo->findText(io.semanticPoint) < 0)
@@ -1154,7 +1154,6 @@ bool runScenePortalDialog(QWidget* parent, const Scene& scene, bool isNew, Scene
     int mi = mapCombo->findData(io.targetSlamMap);
     if (mi >= 0) mapCombo->setCurrentIndex(mi);
 
-    form->addRow("传送门名称:", nameEdit);
     form->addRow("语义点位:", pointCombo);
     form->addRow("入口指向 SLAM 地图:", mapCombo);
 
@@ -1164,7 +1163,6 @@ bool runScenePortalDialog(QWidget* parent, const Scene& scene, bool isNew, Scene
     QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
 
     if (dlg.exec() != QDialog::Accepted) return false;
-    io.name          = nameEdit->text().trimmed();
     io.semanticPoint = pointCombo->currentText().trimmed();
     io.targetSlamMap = mapCombo->currentData().toString();
     return true;
@@ -1183,51 +1181,53 @@ void MainWindow::onAddScenePortal() {
         return;
     }
     ScenePortal p;
-    p.name = scene_.uniquePortalName("portal");
-    if (!scene_.osmPoints().isEmpty()) p.semanticPoint = scene_.osmPoints().first().name;
-    if (!scene_.maps().isEmpty())      p.targetSlamMap = scene_.maps().first().id;
+    p.semanticPoint = scene_.osmPoints().first().name;
+    p.targetSlamMap = scene_.maps().first().id;
     if (!runScenePortalDialog(this, scene_, true, p)) return;
-    if (p.name.isEmpty()) {
-        QMessageBox::warning(this, "添加传送门", "请填写传送门名称。");
+    if (p.semanticPoint.isEmpty()) {
+        QMessageBox::warning(this, "添加传送门", "请选择语义点位。");
         return;
     }
-    if (scene_.scenePortalByName(p.name)) {
-        QMessageBox::warning(this, "添加传送门", QString("传送门「%1」已存在。").arg(p.name));
+    if (scene_.scenePortalForPoint(p.semanticPoint)) {
+        QMessageBox::warning(this, "添加传送门",
+            QString("语义点位「%1」已存在传送门。").arg(p.semanticPoint));
         return;
     }
     scene_.scenePortals().append(p);
     markDirty();
     refreshScenePointsOnly();
-    statusLabel_->setText("已添加传送门: " + p.name);
+    statusLabel_->setText("已添加传送门: " + p.semanticPoint);
 }
 
-void MainWindow::onEditScenePortal(const QString& name) {
-    auto* pp = scene_.scenePortalByName(name);
+void MainWindow::onEditScenePortal(const QString& semanticPoint) {
+    auto* pp = scene_.scenePortalForPoint(semanticPoint);
     if (!pp) return;
     ScenePortal edited = *pp;
     if (!runScenePortalDialog(this, scene_, false, edited)) return;
-    if (edited.name.isEmpty()) {
-        QMessageBox::warning(this, "编辑传送门", "请填写传送门名称。");
+    if (edited.semanticPoint.isEmpty()) {
+        QMessageBox::warning(this, "编辑传送门", "请选择语义点位。");
         return;
     }
-    if (edited.name != name && scene_.scenePortalByName(edited.name)) {
-        QMessageBox::warning(this, "编辑传送门", QString("传送门「%1」已存在。").arg(edited.name));
+    if (edited.semanticPoint != semanticPoint
+        && scene_.scenePortalForPoint(edited.semanticPoint)) {
+        QMessageBox::warning(this, "编辑传送门",
+            QString("语义点位「%1」已存在传送门。").arg(edited.semanticPoint));
         return;
     }
     *pp = edited;
     markDirty();
     refreshScenePointsOnly();
-    statusLabel_->setText("已更新传送门: " + edited.name);
+    statusLabel_->setText("已更新传送门: " + edited.semanticPoint);
 }
 
-void MainWindow::onRemoveScenePortal(const QString& name) {
+void MainWindow::onRemoveScenePortal(const QString& semanticPoint) {
     auto& portals = scene_.scenePortals();
     for (int i = 0; i < portals.size(); ++i) {
-        if (portals[i].name == name) { portals.remove(i); break; }
+        if (portals[i].semanticPoint == semanticPoint) { portals.remove(i); break; }
     }
     markDirty();
     refreshScenePointsOnly();
-    statusLabel_->setText("已删除传送门: " + name);
+    statusLabel_->setText("已删除传送门: " + semanticPoint);
 }
 
 // ═══════════════════════════════════════════════════════════════════════
