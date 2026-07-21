@@ -43,8 +43,9 @@ public:
     /// 更新「当前鼠标位置」经纬度（仅在 OSM 页显示时生效）
     void setMouseGeo(double lon, double lat, bool valid);
     /// 显示某张 SLAM 地图的 geo_anchor（原点经纬度 + X 轴朝向，可编辑微调）
+    /// locked 为该地图是否锁定（锁定后编辑框只读，画布拖拽 = 平移视图）。
     void showSlamGeoProperties(const QString& mapId, const QString& mapName,
-                               const GeoAnchor& anchor);
+                               const GeoAnchor& anchor, bool locked = false);
     /// 外部（在总览里拖拽足迹）改动了 anchor 时，同步刷新 geo_anchor 编辑框
     void updateSlamGeoAnchor(const QString& mapId, const GeoAnchor& anchor);
 
@@ -68,6 +69,8 @@ signals:
     void pickSemanticPositionRequested(const QString& submapId);
     /// SLAM geo_anchor 编辑框被用户修改（经纬度/朝向/缩放）
     void slamGeoAnchorChanged(const QString& mapId, const GeoAnchor& anchor);
+    /// SLAM 地图锁定状态被切换（锁定后画布拖拽 = 平移视图）
+    void slamLockChanged(const QString& mapId, bool locked);
     /// 场景语义点位「应用修改」：oldName 为原名（新建时为空），pt 为编辑后的值。
     void sceneSemanticPointChanged(const QString& oldName, const SceneSemanticPoint& pt);
     /// 请求在底图上点选以回填该点位的经纬度。
@@ -154,9 +157,11 @@ private:
     QDoubleSpinBox* geoAlt_     = nullptr;
     QDoubleSpinBox* geoHeading_ = nullptr;
     QDoubleSpinBox* geoScale_   = nullptr;
+    QPushButton*    geoLockBtn_ = nullptr;
     QString         geoMapId_;
     bool            geoSyncGuard_ = false;
     void onGeoSpinChanged();
+    void applyGeoLockedState(bool locked);
 
     // ── 场景语义点位页面 ─────────────────────────────────────────────
     QWidget*        scPage_ = nullptr;

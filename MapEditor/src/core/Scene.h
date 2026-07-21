@@ -30,6 +30,7 @@ struct SlamMapEntry {
     QString   pcdBaseDir;   ///< 解析各 submap map_file 的基准目录
     std::shared_ptr<MapProject> project;   ///< submaps + 内部路线（可编辑）
     bool      orthoVisible = true;         ///< 场景总览里是否显示该地图的正交投影
+    bool      locked = false;              ///< 锁定后在场景总览中拖拽 = 平移视图，不改动 geo_anchor
 };
 
 /// 全局路线途经点（异构：map / gps / instruction / scene_point）。
@@ -80,6 +81,9 @@ public:
     int  indexOfMap(const QString& id) const;
     SlamMapEntry* mapById(const QString& id);
     QString uniqueMapId(const QString& suggested) const;
+    /// 修改某张 SLAM 地图的 id（code），并同步更新全局路线途经点、场景传送门中的引用。
+    /// newId 为空、与其他地图冲突或 oldId 不存在时返回 false（不做任何修改）。
+    bool renameMapId(const QString& oldId, const QString& newId);
 
     int  activeIndex() const { return activeIndex_; }
     void setActiveIndex(int i) { activeIndex_ = i; }

@@ -211,7 +211,7 @@ void MainWindow::setupMenuBar() {
     viewMenu->addAction("重置视角", this, &MainWindow::onResetView, QKeySequence("R"));
 
     auto* editMenu = menuBar()->addMenu("编辑(&E)");
-    editMenu->addAction("撤销拖拽", this, &MainWindow::undoMarkerDrag, QKeySequence::Undo);
+    editMenu->addAction("撤销拖拽", this, &MainWindow::onUndo, QKeySequence::Undo);
     editMenu->addSeparator();
     editMenu->addAction("新增 Submap...", this, &MainWindow::onAddSubmap, QKeySequence("Ctrl+N"));
 
@@ -366,6 +366,9 @@ void MainWindow::connectSignals() {
     // 右侧属性栏编辑 geo_anchor → 写回场景 + 刷新总览足迹
     connect(propsPanel_, &PropertiesPanel::slamGeoAnchorChanged,
             this, &MainWindow::onSlamGeoAnchorEdited);
+    // 属性栏锁定/解锁 SLAM 地图
+    connect(propsPanel_, &PropertiesPanel::slamLockChanged,
+            this, &MainWindow::onSlamLockChanged);
 
     // 兼容：SLAM地图 Tab 内若仍触发这些信号
     connect(submapPanel_, &SubmapPanel::slamMapSelected,
@@ -845,15 +848,35 @@ void MainWindow::onRemoveSlamMap(const QString& slamMapId) {
     statusLabel_->setText("已移除地图");
 }
 
-void MainWindow::onRenameSlamMap(const QString& slamMapId, const QString& newName) {
+void MainWindow::onRenameSlamMap(const QString& slamMapId, const QString& newName,
+                                 const QString& newCode) {
     auto* e = scene_.mapById(slamMapId);
     if (!e) return;
+
+    // 先改 code（id）：涉及全局路线/传送门引用同步，需校验唯一性
+    QString code = newCode.trimmed();
+    code.replace(' ', '_').replace('\t', '_');
+    if (!code.isEmpty() && code != slamMapId) {
+        if (scene_.indexOfMap(code) >= 0) {
+            QMessageBox::warning(this, "重命名 SLAM 地图",
+                QString("code「%1」已被其他地图占用，请换一个。").arg(code));
+            return;
+        }
+        if (!scene_.renameMapId(slamMapId, code)) {
+            QMessageBox::warning(this, "重命名 SLAM 地图", "code 修改失败。");
+            return;
+        }
+        e = scene_.mapById(code);   // 条目指针不变，但按新 id 重新获取更稳妥
+    }
+
+    // 再改全名
     const QString nn = newName.trimmed();
-    if (nn.isEmpty() || nn == e->name) return;
-    e->name = nn;
+    if (e && !nn.isEmpty()) e->name = nn;
+
     markDirty();
     refreshScenePanels();               // 刷新场景树 + 总览足迹标签
-    statusLabel_->setText("已重命名地图为: " + nn);
+    statusLabel_->setText(QString("已重命名地图: %1 (%2)")
+                              .arg(e ? e->name : nn, e ? e->id : code));
 }
 
 void MainWindow::onExportSlamMap(const QString& slamMapId) {
@@ -942,7 +965,19 @@ void MainWindow::showSlamGeoInPanel(const QString& slamMapId) {
         a.lon = scene_.originLon();
         a.lat = scene_.originLat();
     }
-    propsPanel_->showSlamGeoProperties(slamMapId, e->name.isEmpty() ? e->id : e->name, a);
+    propsPanel_->showSlamGeoProperties(slamMapId, e->name.isEmpty() ? e->id : e->name, a, e->locked);
+}
+
+void MainWindow::onSlamLockChanged(const QString& slamMapId, bool locked) {
+    auto* e = scene_.mapById(slamMapId);
+    if (!e) return;
+    e->locked = locked;
+    sceneView_->setItemLocked(slamMapId, locked);
+    markDirty();
+    statusBar()->showMessage(
+        locked ? QString("已锁定 SLAM 地图「%1」，拖拽将平移整个视图").arg(e->name.isEmpty() ? e->id : e->name)
+               : QString("已解锁 SLAM 地图「%1」，可单独拖拽对齐").arg(e->name.isEmpty() ? e->id : e->name),
+        4000);
 }
 
 void MainWindow::onSlamGeoAnchorEdited(const QString& slamMapId, const GeoAnchor& anchor) {
@@ -1321,6 +1356,7 @@ void MainWindow::rebuildSceneOverview() {
         if (!a.valid && scene_.hasOrigin()) { a.lon = oLon; a.lat = oLat; a.valid = true; }
         sceneView_->addSlamItem(e.id, e.name, cloud, palette[i % palette.size()], a);
         sceneView_->setItemVisible(e.id, e.orthoVisible);
+        sceneView_->setItemLocked(e.id, e.locked);
         sceneViewRowToId_.append(e.id);
     }
     sceneView_->setScenePoints(scene_.osmPoints());
@@ -2586,6 +2622,19 @@ void MainWindow::onMarkerDragFinished(const QString& submapId, const QString& na
     if (submapId == selectedSemanticSmId_ && name == selectedSemanticPtName_)
         propsPanel_->showSemanticPointProperties(sm, name);
     statusBar()->showMessage(QString("已移动语义点 %1 到新位置 (Ctrl+Z 撤销)").arg(name), 5000);
+}
+
+void MainWindow::onUndo() {
+    // 场景总览激活时，Ctrl+Z 撤销上一步 SLAM 地图拖拽对齐；
+    // 否则回退到 3D 视图里的语义点拖拽撤销。
+    if (centralStack_ && centralStack_->currentWidget() == sceneView_) {
+        if (sceneView_->undoAnchorEdit())
+            statusBar()->showMessage("已回退到上一步 SLAM 地图对齐结果", 3000);
+        else
+            statusBar()->showMessage("没有可撤销的地图拖拽", 3000);
+        return;
+    }
+    undoMarkerDrag();
 }
 
 void MainWindow::undoMarkerDrag() {

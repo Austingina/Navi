@@ -53,7 +53,8 @@ private slots:
     void onSlamMapSelected(const QString& slamMapId);
     void onSlamMapActivated(const QString& slamMapId);
     void onRemoveSlamMap(const QString& slamMapId);
-    void onRenameSlamMap(const QString& slamMapId, const QString& newName);
+    void onRenameSlamMap(const QString& slamMapId, const QString& newName,
+                         const QString& newCode);
     void onExportSlamMap(const QString& slamMapId);
     void onAlignSlamMap(const QString& slamMapId);
     void onOrthoVisibilityChanged(const QString& slamMapId, bool visible);
@@ -65,6 +66,7 @@ private slots:
     void showSlamGeoInPanel(const QString& slamMapId);
     /// 右侧属性栏编辑 geo_anchor → 写回场景并刷新总览
     void onSlamGeoAnchorEdited(const QString& slamMapId, const GeoAnchor& anchor);
+    void onSlamLockChanged(const QString& slamMapId, bool locked);
 
     // ── 场景语义点位（OSM 底图上，经纬度 + 航向角）───────────────────
     void onAddScenePoint();                                   ///< 进入点选新增模式（未归属区域）
@@ -253,7 +255,8 @@ private:
     /// 计算某 submap 用于 VPR 点的世界变换（与点云一致）
     Eigen::Matrix4d vprWorldTransform(const QString& smId) const;
 
-    // 拖拽撤销（最多一次）
+    // 拖拽撤销：Ctrl+Z 分发（场景总览 → SLAM 地图对齐撤销；否则 → 语义点撤销）
+    void onUndo();
     void undoMarkerDrag();
     struct MarkerDragUndo {
         bool valid = false;

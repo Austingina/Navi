@@ -140,6 +140,45 @@ void SceneAlignView::setItemVisible(const QString& id, bool visible) {
     update();
 }
 
+void SceneAlignView::setItemLocked(const QString& id, bool locked) {
+    int i = indexOfItem(id);
+    if (i < 0) return;
+    items_[i].locked = locked;
+}
+
+bool SceneAlignView::isItemLocked(const QString& id) const {
+    int i = indexOfItem(id);
+    return (i >= 0) && items_[i].locked;
+}
+
+void SceneAlignView::armAnchorUndo(int index) {
+    if (index < 0 || index >= items_.size()) { undoArmed_ = false; return; }
+    pendingUndo_ = {items_[index].id, items_[index].anchor};
+    undoArmed_  = true;
+    undoPushed_ = false;
+}
+
+void SceneAlignView::commitAnchorUndo() {
+    if (!undoArmed_ || undoPushed_) return;
+    anchorUndo_.append(pendingUndo_);
+    undoPushed_ = true;
+    // 限制栈深度，避免无限增长
+    const int kMaxUndo = 128;
+    if (anchorUndo_.size() > kMaxUndo)
+        anchorUndo_.remove(0, anchorUndo_.size() - kMaxUndo);
+}
+
+bool SceneAlignView::undoAnchorEdit() {
+    if (anchorUndo_.isEmpty()) return false;
+    AnchorUndo u = anchorUndo_.takeLast();
+    int i = indexOfItem(u.id);
+    if (i < 0) return false;   // 对应地图已被移除，跳过
+    items_[i].anchor = u.anchor;
+    update();
+    emit anchorEdited(i, u.anchor);
+    return true;
+}
+
 void SceneAlignView::setSelected(int index) {
     if (index < -1 || index >= items_.size()) return;
     selected_ = index;
@@ -488,11 +527,15 @@ void SceneAlignView::mousePressEvent(QMouseEvent* e) {
     }
 
     if (e->button() == Qt::RightButton) {
-        if (selected_ >= 0 && items_[selected_].valid) {
+        if (selected_ >= 0 && items_[selected_].valid && !items_[selected_].locked) {
+            armAnchorUndo(selected_);
             mode_ = Mode::Rotate;
             double oe, on; itemOriginEnu(items_[selected_], oe, on);
             double ce, cn; screenToEnu(e->pos(), ce, cn);
             dragPrevAngle_ = std::atan2(cn - on, ce - oe);
+        } else {
+            // 锁定或未选中：右键拖拽 = 平移整个视图
+            mode_ = Mode::PanView;
         }
         return;
     }
@@ -520,8 +563,15 @@ void SceneAlignView::mousePressEvent(QMouseEvent* e) {
         if (hit >= 0) {
             selectedPoint_.clear();
             if (hit != selected_) { selected_ = hit; emit selectionChanged(selected_); }
+            // 锁定的地图：拖拽 = 平移整个视图（不改动 anchor）
+            if (items_[selected_].locked) {
+                mode_ = Mode::PanView;
+                update();
+                return;
+            }
             double oe, on; itemOriginEnu(items_[selected_], oe, on);
             double ce, cn; screenToEnu(e->pos(), ce, cn);
+            armAnchorUndo(selected_);
             if (e->modifiers() & Qt::ShiftModifier) {
                 mode_ = Mode::Scale;
                 dragPrevDist_ = std::max(1e-3, std::hypot(ce - oe, cn - on));
@@ -560,6 +610,7 @@ void SceneAlignView::mouseMoveEvent(QMouseEvent* e) {
         }
         case Mode::Translate: {
             if (selected_ >= 0) {
+                commitAnchorUndo();
                 auto& a = items_[selected_].anchor;
                 double e0, n0; conv_.toEnu(a.lon, a.lat, e0, n0);
                 e0 += d.x() / viewScale_;
@@ -573,6 +624,7 @@ void SceneAlignView::mouseMoveEvent(QMouseEvent* e) {
         }
         case Mode::Rotate: {
             if (selected_ >= 0) {
+                commitAnchorUndo();
                 auto& a = items_[selected_].anchor;
                 double oe, on; conv_.toEnu(a.lon, a.lat, oe, on);
                 double ce, cn; screenToEnu(cur, ce, cn);
@@ -591,6 +643,7 @@ void SceneAlignView::mouseMoveEvent(QMouseEvent* e) {
         }
         case Mode::Scale: {
             if (selected_ >= 0) {
+                commitAnchorUndo();
                 auto& a = items_[selected_].anchor;
                 double oe, on; conv_.toEnu(a.lon, a.lat, oe, on);
                 double ce, cn; screenToEnu(cur, ce, cn);
@@ -631,6 +684,8 @@ void SceneAlignView::mouseReleaseEvent(QMouseEvent* e) {
     }
     movePointIdx_ = -1;
     mode_ = Mode::None;
+    undoArmed_  = false;
+    undoPushed_ = false;
 }
 
 void SceneAlignView::leaveEvent(QEvent* e) {

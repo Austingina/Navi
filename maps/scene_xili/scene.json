@@ -42,8 +42,11 @@
             "source": "osm/xili_5km_merged.osm.pbf"
         },
         "portals": {
+            "A2北广场": {
+                "target_slam_map": "zhichengA2A3"
+            },
             "彩虹南门": {
-                "target_slam_map": "408"
+                "target_slam_map": "caihong"
             }
         },
         "semantic_point_areas": [
@@ -51,6 +54,15 @@
             "彩虹"
         ],
         "semantic_points": {
+            "A2北广场": {
+                "alt": 0,
+                "area": "智城",
+                "heading_deg": 0,
+                "lat": 22.57433615,
+                "lon": 113.93475818,
+                "need_inspect": false,
+                "type": "single_pose"
+            },
             "彩虹南门": {
                 "alt": 0,
                 "area": "彩虹",
@@ -117,7 +129,7 @@
         }
     },
     "slam_maps": {
-        "408": {
+        "caihong": {
             "_comment": "多楼层地图配置文件 / Multi-floor map configuration",
             "geo_anchor": {
                 "heading_deg": -90,
@@ -134,9 +146,10 @@
                 "default_submap": "2f",
                 "version": "1.0.1"
             },
+            "locked": true,
             "name": "彩虹科技大厦",
             "ortho_visible": true,
-            "pcd_base": "408",
+            "pcd_base": "caihong",
             "routes": {
                 "1f_cp_ua": {
                     "description": "",
@@ -2165,14 +2178,14 @@
                 }
             }
         },
-        "slam_map": {
+        "zhichengA2A3": {
             "_comment": "多楼层地图配置文件 / Multi-floor map configuration",
             "geo_anchor": {
                 "heading_deg": 0.46589395731814065,
                 "origin": {
                     "alt": 0,
-                    "lat": 22.574330289914144,
-                    "lon": 113.93503914088625
+                    "lat": 22.574373374900794,
+                    "lon": 113.9350388074081
                 },
                 "scale": 1
             },
@@ -2182,9 +2195,10 @@
                 "default_submap": "",
                 "version": "1.0"
             },
+            "locked": true,
             "name": "智城A2A3",
             "ortho_visible": true,
-            "pcd_base": "slam_map",
+            "pcd_base": "zhichengA2A3",
             "routes": {
             },
             "submaps": {
@@ -2193,6 +2207,142 @@
                     "map_file": "zhichengA.pcd",
                     "name": "1楼",
                     "semantic_points": {
+                        "A2北门-entrance1": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0.7071067811865476,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": -0.7071067811865476
+                                },
+                                "position": {
+                                    "x": -33.6494,
+                                    "y": -11.276,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "A2北门-entrance2": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0.7071067811865476,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": -0.7071067811865476
+                                },
+                                "position": {
+                                    "x": -33.3663,
+                                    "y": -18.009,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "A2北门-exit1": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0.7071067811865476,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0.7071067811865476
+                                },
+                                "position": {
+                                    "x": -33.3062,
+                                    "y": -17.3255,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "A2北门-exit2": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0.7071067811865476,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0.7071067811865476
+                                },
+                                "position": {
+                                    "x": -33.4821,
+                                    "y": -12.3658,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "A2西门-exit1": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 1
+                                },
+                                "position": {
+                                    "x": -58.2527,
+                                    "y": -48.299,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "A2西门-exit2": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 1
+                                },
+                                "position": {
+                                    "x": -61.9961,
+                                    "y": -48.2736,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "前台-reception": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 1
+                                },
+                                "position": {
+                                    "x": -48.6043,
+                                    "y": -21.5085,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "道通咖啡-autel coffee": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0.7071067811865476,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0.7071067811865476
+                                },
+                                "position": {
+                                    "x": -22.4762,
+                                    "y": -21.33,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        }
                     },
                     "submap_portals": [
                     ],

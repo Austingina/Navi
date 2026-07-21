@@ -86,6 +86,26 @@ SlamMapEntry* Scene::mapById(const QString& id) {
     return (i >= 0) ? &maps_[i] : nullptr;
 }
 
+bool Scene::renameMapId(const QString& oldId, const QString& newId) {
+    QString nid = newId.trimmed();
+    nid.replace(' ', '_').replace('\t', '_');
+    if (nid.isEmpty() || nid == oldId) return false;
+    if (indexOfMap(oldId) < 0) return false;
+    if (indexOfMap(nid) >= 0) return false;   // 与其他地图冲突
+
+    maps_[indexOfMap(oldId)].id = nid;
+    // 同步全局路线途经点中对该地图的引用
+    for (auto& r : globalRoutes_)
+        for (auto& wp : r.waypoints)
+            if (wp.kind == GlobalWaypoint::Map && wp.slamMap == oldId)
+                wp.slamMap = nid;
+    // 同步场景传送门中对该地图的引用
+    for (auto& p : scenePortals_)
+        if (p.targetSlamMap == oldId)
+            p.targetSlamMap = nid;
+    return true;
+}
+
 QString Scene::uniqueMapId(const QString& suggested) const {
     QString base = suggested.trimmed();
     if (base.isEmpty()) base = "slam_map";
@@ -268,6 +288,7 @@ bool Scene::loadFile(const QString& jsonPath) {
             e.anchor.valid = true;
         }
         e.orthoVisible = o.value("ortho_visible").toBool(true);
+        e.locked = o.value("locked").toBool(false);
         QString pcdBase = o.value("pcd_base").toString();
         e.pcdBaseDir = pcdBase.isEmpty()
                            ? sceneDir.absolutePath()
@@ -360,6 +381,7 @@ bool Scene::saveFile(const QString& jsonPath) {
         o["name"] = e.name;
         o["pcd_base"] = relOrAbs(e.pcdBaseDir);
         o["ortho_visible"] = e.orthoVisible;
+        o["locked"] = e.locked;
         QJsonObject ga;
         ga["origin"] = QJsonObject{
             {"lon", e.anchor.lon}, {"lat", e.anchor.lat}, {"alt", e.anchor.alt}};
