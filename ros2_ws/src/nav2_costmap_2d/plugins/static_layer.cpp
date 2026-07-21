@@ -213,10 +213,10 @@ StaticLayer::processMap(const nav_msgs::msg::OccupancyGrid & new_map)
     origin_y_ != new_map.info.origin.position.y)
   {
     // only update the size of the costmap stored locally in this layer
-    RCLCPP_INFO(
-      logger_,
-      "StaticLayer: Resizing static layer to %d X %d at %f m/pix", size_x, size_y,
-      new_map.info.resolution);
+    // RCLCPP_INFO(
+    //   logger_,
+    //   "StaticLayer: Resizing static layer to %d X %d at %f m/pix", size_x, size_y,
+    //   new_map.info.resolution);
     resizeMap(
       size_x, size_y, new_map.info.resolution,
       new_map.info.origin.position.x, new_map.info.origin.position.y);

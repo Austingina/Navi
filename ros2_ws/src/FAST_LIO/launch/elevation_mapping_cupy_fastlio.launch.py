@@ -41,8 +41,8 @@ def generate_launch_description():
 
     terrain_scan_node = Node(
         package='cloud_to_laserscan',
-        executable='cloud_to_2d_laserscan',
-        name='cloud_to_2d_laserscan',
+        executable='terrain_scan',
+        name='terrain_scan_node',
         output='screen',
         parameters=[{
             'use_sim_time': use_sim_time,
@@ -50,27 +50,35 @@ def generate_launch_description():
             'elevation_topic': '/grid_map_from_raw_pointcloud',
             'elevation_layer': 'elevation',
             'output_topic': '/livox_scan2',
-            'ground_tolerance': 0.2,
-            'max_height': 1.6,
-            'fallback_on_unknown_elevation': False,
+            'grid_output_topic': '/terrain_grid_map',
+            'slope_cost_topic': '/slope_costmap',
+            'base_frame': 'base_link',
+            # 局部地面层 = 邻域低分位(0=最小值,0.5=中位数)。低分位跟随坡面但不跟随
+            # 戳出来的障碍顶,静态障碍才不会被自己建的高程图吃掉,斜坡也不会整段误报。
+            'ground_percentile': 0.2,
+            'ground_radius': 3,             # (2r+1)^2 窗
+            'ground_min_cells': 4,
+            # 障碍高度带(相对局部地面)：地面上方 3cm~1.6m 视为障碍。
+            'obstacle_min_height': 0.08,
+            'obstacle_max_height': 1.6,
+            # 地面未知的格子回退到脚底高度带(用 TF odom->base_link 的 z)。
+            'fallback_on_unknown_elevation': True,
+            'fallback_min_height': 0.2,
+            'fallback_max_height': 1.6,
+            # 坡度：地面层梯度 -> 分级代价 OccupancyGrid(/slope_costmap)。
+            # <=free_deg 记 0；free~lethal 线性升到 99（缓坡代价递增，同等条件优先平地）；
+            # >=lethal_deg 记 100(lethal，基本过不去)。不再往 scan 里塞假障碍点。
+            'slope_enable': True,
+            'slope_window': 1,
+            'slope_free_deg': 3.0,
+            'slope_lethal_deg': 12.0,
+            # <1 使中等坡度代价更高(更强软避让),不改 lethal 阈值。0.5=明显加重。
+            'slope_gamma': 0.5,
             # 多帧累积：把最近若干帧的存活障碍点在 odom 系累起来再投 2D，
             # 单帧稀疏被时间窗补满，障碍不再闪烁/缺角。
-            'accumulate_enable': True,     # 重校验必须配合累积才有意义
-            'accumulate_time': 0.3,        # 滑动窗时长 [s]
+            'accumulate_enable': True,
+            'accumulate_time': 0.8,        # 滑动窗时长 [s]
             'accumulate_max_frames': 10,   # 帧数硬上限
-            # 邻域中位数地面参照：对 elevation 图里的凹陷格免疫,避免地面误判成障碍。
-            'robust_ground_enable': True,
-            'robust_ground_radius': 3,      # 7x7 窗(0.7m),凹陷格聚成小块时可加大
-            'robust_ground_min_cells': 4,
-            # 重校验：每周期用最新 elevation 把窗口里的老点重判,踢掉现在不再是障碍的。
-            # 治瞬时误报(图错一帧后自愈);治不了持续凹陷格(图一直错)。
-            'revalidate_enable': False,
-            # 每帧自标定:减掉 live 云与 elevation 图之间的全局垂直偏移。
-            # 专治"整体高度拔高导致周围全变障碍"(z 跳变)。
-            'self_calibrate_enable': True,
-            'self_calibrate_band': 0.5,
-            'self_calibrate_min_points': 100,
-            'self_calibrate_max_offset': 1.0,
             'angle_min': -1.57,
             'angle_max': 3.14159,
             'angle_increment': 0.0087,
