@@ -39,8 +39,23 @@ ament_target_dependencies(cloud_to_2d_laserscan
 
 target_link_libraries(cloud_to_2d_laserscan ${PCL_LIBRARIES})
 
+add_executable(terrain_scan src/terrain_scan_node.cpp)
+
+ament_target_dependencies(terrain_scan
+  rclcpp
+  sensor_msgs
+  nav_msgs
+  grid_map_msgs
+  grid_map_ros
+  tf2_ros
+  pcl_conversions
+)
+
+target_link_libraries(terrain_scan ${PCL_LIBRARIES})
+
 install(TARGETS
   cloud_to_2d_laserscan
+  terrain_scan
   DESTINATION lib/${PROJECT_NAME}
 )
 
