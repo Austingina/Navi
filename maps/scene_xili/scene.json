@@ -7,6 +7,10 @@
                     "scene_point": "智城西北角"
                 },
                 {
+                    "route": "A2大堂",
+                    "slam_map": "zhichengA2A3"
+                },
+                {
                     "scene_point": "智城兴科一街北出口"
                 },
                 {
@@ -22,7 +26,7 @@
         }
     },
     "scene": {
-        "build_no": 20260721202422,
+        "build_no": 20260721204312,
         "crs": "WGS84",
         "name": "未命名场景",
         "origin": {
