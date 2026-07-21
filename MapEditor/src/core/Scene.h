@@ -18,6 +18,8 @@
 #include <QString>
 #include <QStringList>
 #include <QVector>
+#include <QByteArray>
+#include <QJsonObject>
 #include <memory>
 
 namespace me {
@@ -73,6 +75,10 @@ public:
 
     QString name() const { return name_; }
     void setName(const QString& n) { name_ = n; }
+
+    /// 场景构建号 = 最近一次「场景内容有更新」的保存时刻 (YYYYMMDDHHMMSS)。
+    /// 与各 SLAM 地图 global.build_no 同格式；首次未保存时为 0。
+    qint64 buildNo() const { return buildNo_; }
 
     // ── SLAM 地图 ────────────────────────────────────────────────────
     QVector<SlamMapEntry>&       maps()       { return maps_; }
@@ -144,6 +150,13 @@ private:
     QVector<ScenePortal>  scenePortals_;
     int activeIndex_ = -1;
     QString sceneFilePath_;
+
+    qint64     buildNo_ = 0;      ///< 场景级构建号（内容有更新才在保存时刷新）
+    QByteArray contentHash_;      ///< 最近一次加载/保存时的场景内容指纹（剔除所有 build_no）
+
+    /// 组装完整 scene.json root 对象（资源路径以 baseDir 解析为相对/绝对）。
+    /// 不写 scene.build_no（由保存流程按需注入）。
+    QJsonObject buildRootObject(const QString& baseDir) const;
 };
 
 } // namespace me

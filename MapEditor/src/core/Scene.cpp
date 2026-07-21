@@ -7,9 +7,13 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QDateTime>
+#include <QCryptographicHash>
 #include <QDebug>
 
 namespace me {
+
+static QByteArray jsonContentSignature(const QJsonObject& root);
 
 void Scene::clear() {
     name_ = "未命名场景";
@@ -26,6 +30,8 @@ void Scene::clear() {
     scenePortals_.clear();
     activeIndex_ = -1;
     sceneFilePath_.clear();
+    buildNo_ = 0;
+    contentHash_.clear();
 }
 
 SceneSemanticPoint* Scene::osmPointByName(const QString& name) {
@@ -201,6 +207,7 @@ bool Scene::loadFile(const QString& jsonPath) {
     // ── scene ─────────────────────────────────────────────────────────
     auto scene = root.value("scene").toObject();
     name_ = scene.value("name").toString("未命名场景");
+    buildNo_ = scene.value("build_no").toVariant().toLongLong();
     if (scene.contains("origin")) {
         auto o = scene.value("origin").toObject();
         setOrigin(o.value("lon").toDouble(), o.value("lat").toDouble());
@@ -313,16 +320,47 @@ bool Scene::loadFile(const QString& jsonPath) {
         globalRoutes_.append(r);
     }
 
+    // 记录加载时的内容指纹：后续保存若内容未变则保持 scene.build_no 不变
+    contentHash_ = jsonContentSignature(buildRootObject(sceneDir.absolutePath()));
+
     qDebug() << "场景加载完成:" << jsonPath
-             << " maps=" << maps_.size() << " globalRoutes=" << globalRoutes_.size();
+             << " maps=" << maps_.size() << " globalRoutes=" << globalRoutes_.size()
+             << " build_no=" << buildNo_;
     return true;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-//  保存（单文件）
+//  内容指纹：递归剔除所有 build_no 后哈希（保证时间戳本身不参与比较）
 // ═══════════════════════════════════════════════════════════════════════
-bool Scene::saveFile(const QString& jsonPath) {
-    const QDir sceneDir = QFileInfo(jsonPath).absoluteDir();
+static QJsonValue stripBuildNoRecursive(const QJsonValue& v) {
+    if (v.isObject()) {
+        QJsonObject o = v.toObject();
+        o.remove("build_no");
+        for (auto it = o.begin(); it != o.end(); ++it)
+            *it = stripBuildNoRecursive(it.value());
+        return o;
+    }
+    if (v.isArray()) {
+        QJsonArray a = v.toArray();
+        for (int i = 0; i < a.size(); ++i)
+            a[i] = stripBuildNoRecursive(a[i]);
+        return a;
+    }
+    return v;
+}
+
+static QByteArray jsonContentSignature(const QJsonObject& root) {
+    const QJsonValue cleaned = stripBuildNoRecursive(root);
+    const QByteArray bytes = QJsonDocument(cleaned.toObject())
+                                 .toJson(QJsonDocument::Compact);
+    return QCryptographicHash::hash(bytes, QCryptographicHash::Sha1);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  组装 root 对象（不含 scene.build_no；slam_maps 各自携带自身 build_no）
+// ═══════════════════════════════════════════════════════════════════════
+QJsonObject Scene::buildRootObject(const QString& baseDir) const {
+    const QDir sceneDir(baseDir);
     auto relOrAbs = [&](const QString& abs) -> QString {
         if (abs.isEmpty()) return abs;
         QString rel = sceneDir.relativeFilePath(abs);
@@ -404,6 +442,34 @@ bool Scene::saveFile(const QString& jsonPath) {
     }
     root["routes"] = routes;
 
+    return root;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  保存（单文件）
+// ═══════════════════════════════════════════════════════════════════════
+bool Scene::saveFile(const QString& jsonPath) {
+    const QString baseDir = QFileInfo(jsonPath).absolutePath();
+
+    // 1. 各 SLAM 地图：内部信息有更新才刷新自身 global.build_no
+    for (const auto& e : maps_)
+        if (e.project) e.project->refreshBuildNoIfChanged();
+
+    // 2. 组装 root（此时 slam_maps 已带最新 build_no，scene 尚无 build_no）
+    QJsonObject root = buildRootObject(baseDir);
+
+    // 3. 场景级 build_no：整个场景内容（剔除所有 build_no）有变化才刷新时间戳
+    const QByteArray sig = jsonContentSignature(root);
+    if (buildNo_ == 0 || sig != contentHash_) {
+        buildNo_ = QDateTime::currentDateTime()
+                       .toString(QStringLiteral("yyyyMMddhhmmss"))
+                       .toLongLong();
+        contentHash_ = sig;
+    }
+    QJsonObject scene = root.value("scene").toObject();
+    scene["build_no"] = QJsonValue(static_cast<qint64>(buildNo_));
+    root["scene"] = scene;
+
     QFile file(jsonPath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         qWarning() << "无法写入场景文件:" << jsonPath;
@@ -412,7 +478,8 @@ bool Scene::saveFile(const QString& jsonPath) {
     file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
     file.close();
     sceneFilePath_ = jsonPath;
-    qDebug() << "场景已保存:" << jsonPath << " maps=" << maps_.size();
+    qDebug() << "场景已保存:" << jsonPath << " maps=" << maps_.size()
+             << " build_no=" << buildNo_;
     return true;
 }
 
