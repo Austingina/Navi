@@ -22,6 +22,7 @@
         }
     },
     "scene": {
+        "build_no": 20260721202422,
         "crs": "WGS84",
         "name": "未命名场景",
         "origin": {
@@ -2190,8 +2191,8 @@
                 "scale": 1
             },
             "global": {
-                "build_no": 0,
-                "default_route": "",
+                "build_no": 20260721202422,
+                "default_route": "A2大堂",
                 "default_submap": "",
                 "version": "1.0"
             },
@@ -2200,6 +2201,35 @@
             "ortho_visible": true,
             "pcd_base": "zhichengA2A3",
             "routes": {
+                "A2大堂": {
+                    "description": "",
+                    "waypoints": [
+                        {
+                            "semantic_point": "A2北门-entrance1",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "A2北门-entrance2",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "道通咖啡-autel coffee",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "前台-reception",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "A2西门-exit1",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "A2西门-exit2",
+                            "submap": "1f"
+                        }
+                    ]
+                }
             },
             "submaps": {
                 "1f": {
