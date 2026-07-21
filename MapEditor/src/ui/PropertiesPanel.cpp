@@ -667,7 +667,17 @@ void PropertiesPanel::setupSlamGeoPage() {
     form->addRow("缩放 scale:", geoScale_);
     layout->addWidget(anchorGroup);
 
-    auto* hint = new QLabel("提示：也可在总览中直接拖拽足迹对齐（左键平移 / 右键或 Alt+左键旋转 / Shift+左键缩放）。");
+    geoLockBtn_ = new QPushButton("🔓 锁定对齐结果");
+    geoLockBtn_->setCheckable(true);
+    geoLockBtn_->setToolTip("锁定后该地图不可单独拖拽；在总览中拖拽相当于平移整个视图。解锁后可继续对齐。");
+    layout->addWidget(geoLockBtn_);
+    connect(geoLockBtn_, &QPushButton::toggled, this, [this](bool locked) {
+        applyGeoLockedState(locked);
+        if (!geoMapId_.isEmpty())
+            emit slamLockChanged(geoMapId_, locked);
+    });
+
+    auto* hint = new QLabel("提示：也可在总览中直接拖拽足迹对齐（左键平移 / 右键或 Alt+左键旋转 / Shift+左键缩放）。可用 Ctrl+Z 撤销上一步拖拽。");
     hint->setWordWrap(true);
     hint->setStyleSheet("color:#8a8f99;");
     layout->addWidget(hint);
@@ -681,8 +691,14 @@ void PropertiesPanel::setupSlamGeoPage() {
     stack_->addWidget(geoPage_);  // index 5
 }
 
+void PropertiesPanel::applyGeoLockedState(bool locked) {
+    geoLockBtn_->setText(locked ? "🔒 已锁定（点击解锁）" : "🔓 锁定对齐结果");
+    for (auto* s : {geoLon_, geoLat_, geoAlt_, geoHeading_, geoScale_})
+        s->setReadOnly(locked);
+}
+
 void PropertiesPanel::showSlamGeoProperties(const QString& mapId, const QString& mapName,
-                                            const GeoAnchor& anchor) {
+                                            const GeoAnchor& anchor, bool locked) {
     geoMapId_ = mapId;
     geoNameLbl_->setText(mapName.isEmpty() ? mapId : mapName);
     geoSyncGuard_ = true;
@@ -691,6 +707,11 @@ void PropertiesPanel::showSlamGeoProperties(const QString& mapId, const QString&
     geoAlt_->setValue(anchor.alt);
     geoHeading_->setValue(anchor.headingDeg);
     geoScale_->setValue(anchor.scale != 0.0 ? anchor.scale : 1.0);
+    {
+        QSignalBlocker b(geoLockBtn_);
+        geoLockBtn_->setChecked(locked);
+    }
+    applyGeoLockedState(locked);
     geoSyncGuard_ = false;
     stack_->setCurrentIndex(5);
 }
@@ -708,6 +729,7 @@ void PropertiesPanel::updateSlamGeoAnchor(const QString& mapId, const GeoAnchor&
 
 void PropertiesPanel::onGeoSpinChanged() {
     if (geoSyncGuard_ || geoMapId_.isEmpty()) return;
+    if (geoLockBtn_ && geoLockBtn_->isChecked()) return;  // 锁定时不响应
     GeoAnchor a;
     a.valid      = true;
     a.lon        = geoLon_->value();

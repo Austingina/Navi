@@ -268,6 +268,7 @@ bool Scene::loadFile(const QString& jsonPath) {
             e.anchor.valid = true;
         }
         e.orthoVisible = o.value("ortho_visible").toBool(true);
+        e.locked = o.value("locked").toBool(false);
         QString pcdBase = o.value("pcd_base").toString();
         e.pcdBaseDir = pcdBase.isEmpty()
                            ? sceneDir.absolutePath()
@@ -360,6 +361,7 @@ bool Scene::saveFile(const QString& jsonPath) {
         o["name"] = e.name;
         o["pcd_base"] = relOrAbs(e.pcdBaseDir);
         o["ortho_visible"] = e.orthoVisible;
+        o["locked"] = e.locked;
         QJsonObject ga;
         ga["origin"] = QJsonObject{
             {"lon", e.anchor.lon}, {"lat", e.anchor.lat}, {"alt", e.anchor.alt}};
