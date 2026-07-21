@@ -1,14 +1,21 @@
-// 地形感知的 2D 障碍 LaserScan + 坡度层生成节点。
+// 地形感知节点：把两条链彻底解耦。
 //
-// 设计要点（与旧 cloud_to_2d_laserscan 的关键区别）：
-//   1. 障碍参照用「局部地面层」= 高程图邻域低分位（跟随坡面，但不跟随戳出来的
-//      障碍），而不是 raw elevation（会把障碍顶写进去，导致静态障碍被自己吃掉）。
-//   2. 障碍点仍来自实时点云（响应快）；地面参照来自 grid map（慢变量，5Hz 足够）。
-//   3. 坡度层 = 地面层的空间梯度，独立发布；过陡的格子额外投影进同一条 LaserScan。
-//   4. 地面未知的格子回退到「脚底高度带」（base_link 在 odom 下的 z）。
+//   A. 障碍链（点云速率，~10Hz）：实时点云相对「局部地面层」做高度带过滤，
+//      拍扁成 2D LaserScan (/livox_scan2)。参照用的 ground 取自最近一次 grid
+//      快照（慢变量），因此障碍输出频率跟点云走，不再被 5Hz 的高程图拖住。
+//
+//   B. 坡度链（高程图速率，~5Hz）：在 grid 回调里算 ground/slope，并把坡度映射成
+//      「分级代价」发布为 OccupancyGrid (/slope_costmap)：平地 0、缓坡代价递增、
+//      到 slope_lethal_deg 即 100(lethal)。给 nav2 的 StaticLayer 当代价层用，
+//      而不是往 scan 里塞假障碍点。
+//
+// 关键区别（相对旧 cloud_to_2d_laserscan）：障碍参照用邻域低分位地面层（跟随坡面、
+// 不跟随戳出来的障碍），所以静态障碍不会被自己建的高程图吃掉；坡度独立成代价图。
+// 执行器用 MultiThreadedExecutor + 独立回调组，重的 grid 处理不会阻塞点云链。
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <sensor_msgs/msg/laser_scan.hpp>
+#include <nav_msgs/msg/occupancy_grid.hpp>
 #include <grid_map_msgs/msg/grid_map.hpp>
 #include <grid_map_core/GridMap.hpp>
 #include <grid_map_ros/GridMapRosConverter.hpp>
@@ -48,11 +55,11 @@ public:
     output_topic_ = declare_parameter<std::string>("output_topic", "/livox_scan2");
     grid_output_topic_ =
       declare_parameter<std::string>("grid_output_topic", "/terrain_grid_map");
+    slope_cost_topic_ =
+      declare_parameter<std::string>("slope_cost_topic", "/slope_costmap");
     base_frame_ = declare_parameter<std::string>("base_frame", "base_link");
 
     // ---- 地面层（邻域低分位）------------------------------------------------
-    // percentile=0 -> 最小值(最激进的地面), 0.5 -> 中位数. 默认取低分位, 这样
-    // 障碍/植被戳出来的高点不会抬高地面参照, 静态障碍才能被检出.
     ground_percentile_ = declare_parameter<double>("ground_percentile", 0.15);
     ground_radius_ = declare_parameter<int>("ground_radius", 3);     // cells -> (2r+1)^2 窗
     ground_min_cells_ = declare_parameter<int>("ground_min_cells", 4);
@@ -66,11 +73,17 @@ public:
     fallback_min_height_ = declare_parameter<double>("fallback_min_height", 0.05);
     fallback_max_height_ = declare_parameter<double>("fallback_max_height", 1.6);
 
-    // ---- 坡度 ---------------------------------------------------------------
+    // ---- 坡度 -> 分级代价 ---------------------------------------------------
+    // slope <= free_deg           -> 代价 0（视为平地）
+    // free_deg < slope < lethal   -> 线性升到 99（缓坡代价递增，同等条件下避开）
+    // slope >= lethal_deg         -> 100（lethal，基本过不去）
     slope_enable_ = declare_parameter<bool>("slope_enable", true);
     slope_window_ = declare_parameter<int>("slope_window", 2);        // 中心差分步长(格)
-    slope_obstacle_deg_ = declare_parameter<double>("slope_obstacle_deg", 25.0);
-    slope_as_obstacle_ = declare_parameter<bool>("slope_as_obstacle_enable", true);
+    slope_free_deg_ = declare_parameter<double>("slope_free_deg", 5.0);
+    slope_lethal_deg_ = declare_parameter<double>("slope_lethal_deg", 25.0);
+    // 代价曲线弯曲度：cost = 1 + pow(t, gamma)*98, t=(slope-free)/(lethal-free)。
+    // gamma=1 线性；gamma<1 使中等坡度代价更高（更强软避让，但不改 lethal 阈值）。
+    slope_gamma_ = declare_parameter<double>("slope_gamma", 1.0);
 
     // ---- LaserScan 几何 -----------------------------------------------------
     angle_min_ = declare_parameter<double>("angle_min", -3.141592653589793);
@@ -89,26 +102,36 @@ public:
     tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
+    // 独立回调组：5Hz 的重 grid 处理与 10Hz 点云链互不阻塞。
+    grid_cbg_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+    cloud_cbg_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+
+    rclcpp::SubscriptionOptions grid_opts;
+    grid_opts.callback_group = grid_cbg_;
+    rclcpp::SubscriptionOptions cloud_opts;
+    cloud_opts.callback_group = cloud_cbg_;
+
     grid_sub_ = create_subscription<grid_map_msgs::msg::GridMap>(
-      elevation_topic_, 10, std::bind(&TerrainScanNode::gridCallback, this, _1));
+      elevation_topic_, 10, std::bind(&TerrainScanNode::gridCallback, this, _1),
+      grid_opts);
     cloud_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
       cloud_topic_, rclcpp::SensorDataQoS(),
-      std::bind(&TerrainScanNode::cloudCallback, this, _1));
+      std::bind(&TerrainScanNode::cloudCallback, this, _1), cloud_opts);
 
     scan_pub_ = create_publisher<sensor_msgs::msg::LaserScan>(output_topic_, 10);
     grid_pub_ = create_publisher<grid_map_msgs::msg::GridMap>(grid_output_topic_, 1);
+    slope_cost_pub_ = create_publisher<nav_msgs::msg::OccupancyGrid>(slope_cost_topic_, 1);
     if (publish_filtered_pcd_) {
       pcd_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>("/livox_pcd", 10);
     }
 
     RCLCPP_INFO(
       get_logger(),
-      "terrain_scan started. cloud=%s grid=%s -> scan=%s grid_out=%s | ground(p=%.2f, r=%d) "
-      "obstacle_band=[%.2f, %.2f] slope(%s, >%.1fdeg as obstacle=%s)",
+      "terrain_scan started. cloud=%s grid=%s -> scan=%s(~cloud rate) slope_cost=%s(~grid rate) "
+      "| ground(p=%.2f, r=%d) obstacle_band=[%.2f, %.2f] slope_cost(free=%.1f, lethal=%.1f)",
       cloud_topic_.c_str(), elevation_topic_.c_str(), output_topic_.c_str(),
-      grid_output_topic_.c_str(), ground_percentile_, ground_radius_,
-      obstacle_min_height_, obstacle_max_height_, slope_enable_ ? "on" : "off",
-      slope_obstacle_deg_, slope_as_obstacle_ ? "yes" : "no");
+      slope_cost_topic_.c_str(), ground_percentile_, ground_radius_,
+      obstacle_min_height_, obstacle_max_height_, slope_free_deg_, slope_lethal_deg_);
   }
 
 private:
@@ -118,29 +141,40 @@ private:
     pcl::PointCloud<pcl::PointXYZ>::Ptr points;  // grid(odom) 系
   };
 
-  // 收到高程图: 提取地面层 + 坡度层, 存快照并转发增强后的 GridMap.
+  // ===== 坡度链（grid 速率）================================================
+
+  // 收到高程图: 提取地面层 + 坡度层 + 分级代价层, 存快照, 转发增强 GridMap 与坡度代价图.
   void gridCallback(const grid_map_msgs::msg::GridMap::SharedPtr msg)
   {
-    grid_map::GridMap grid;
-    grid_map::GridMapRosConverter::fromMessage(*msg, grid);
-    if (!grid.exists(elevation_layer_)) {
+    auto grid = std::make_shared<grid_map::GridMap>();
+    grid_map::GridMapRosConverter::fromMessage(*msg, *grid);
+    if (!grid->exists(elevation_layer_)) {
       RCLCPP_WARN_THROTTLE(
         get_logger(), *get_clock(), 2000, "incoming grid has no '%s' layer",
         elevation_layer_.c_str());
       return;
     }
 
-    addGroundLayer(grid);
-    if (slope_enable_) addSlopeLayer(grid);
+    addGroundLayer(*grid);
+    if (slope_enable_) {
+      addSlopeLayer(*grid);
+      addSlopeCostLayer(*grid);
+    }
 
     {
       std::lock_guard<std::mutex> lock(grid_mutex_);
-      grid_ = grid;
-      have_grid_ = true;
+      grid_snapshot_ = grid;  // shared_ptr 原子交换, cloud 链只需拷指针
     }
 
-    auto out = grid_map::GridMapRosConverter::toMessage(grid);
+    auto out = grid_map::GridMapRosConverter::toMessage(*grid);
     if (out) grid_pub_->publish(*out);
+
+    if (slope_enable_ && grid->exists("slope_cost")) {
+      nav_msgs::msg::OccupancyGrid occ;
+      // slope_cost 层已是 0..100（NaN=未知）; 直接线性映射到 OccupancyGrid.
+      grid_map::GridMapRosConverter::toOccupancyGrid(*grid, "slope_cost", 0.0f, 100.0f, occ);
+      slope_cost_pub_->publish(occ);
+    }
   }
 
   // 地面层 = 邻域低分位. 低分位对"戳出来的障碍/植被"免疫, 又能跟随坡面.
@@ -179,7 +213,7 @@ private:
     grid.add("ground", ground);
   }
 
-  // 坡度层 = 地面层的空间梯度(中心差分), 单位: 度. 成本为栅格数量级, 与点数无关.
+  // 坡度层 = 地面层的空间梯度(中心差分), 单位: 度.
   void addSlopeLayer(grid_map::GridMap & grid) const
   {
     if (!grid.exists("ground")) return;
@@ -209,6 +243,40 @@ private:
     }
     grid.add("slope", slope);
   }
+
+  // 分级代价层: slope(度) -> 0..100. 平地 0, 缓坡线性升到 99, >=lethal 为 100.
+  // NaN(坡度未知) 保持 NaN -> OccupancyGrid 里成 -1(未知), 不覆盖代价地图其它层.
+  void addSlopeCostLayer(grid_map::GridMap & grid) const
+  {
+    if (!grid.exists("slope")) return;
+    const grid_map::Matrix & s = grid["slope"];
+    const int rows = s.rows(), cols = s.cols();
+    const double free = slope_free_deg_;
+    const double lethal = std::max(slope_free_deg_ + 1e-3, slope_lethal_deg_);
+
+    grid_map::Matrix cost(rows, cols);
+    cost.setConstant(std::numeric_limits<float>::quiet_NaN());
+    for (int i = 0; i < rows; ++i) {
+      for (int j = 0; j < cols; ++j) {
+        const float sv = s(i, j);
+        if (!std::isfinite(sv)) continue;  // 保持 NaN -> 未知
+        double c;
+        if (sv <= free) {
+          c = 0.0;
+        } else if (sv >= lethal) {
+          c = 100.0;
+        } else {
+          const double t = (sv - free) / (lethal - free);   // 0..1
+          const double tg = (slope_gamma_ == 1.0) ? t : std::pow(t, slope_gamma_);
+          c = 1.0 + tg * 98.0;  // 1..99；gamma<1 抬高中段代价
+        }
+        cost(i, j) = static_cast<float>(c);
+      }
+    }
+    grid.add("slope_cost", cost);
+  }
+
+  // ===== 障碍链（点云速率）================================================
 
   static Eigen::Matrix4f toMatrix(const geometry_msgs::msg::TransformStamped & ts)
   {
@@ -245,20 +313,18 @@ private:
 
   void cloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr cloud_msg)
   {
-    if (!have_grid_) return;
-
-    std::string grid_frame;
-    grid_map::GridMap grid_snapshot;
+    // 拿最近一次的 grid 快照（只拷 shared_ptr，几乎零开销；内容只读，跨线程安全）。
+    std::shared_ptr<const grid_map::GridMap> grid;
     {
       std::lock_guard<std::mutex> lock(grid_mutex_);
-      grid_frame = grid_.getFrameId();
-      grid_snapshot = grid_;
+      grid = grid_snapshot_;
     }
-    if (!grid_snapshot.exists("ground")) {
+    if (!grid || !grid->exists("ground")) {
       RCLCPP_WARN_THROTTLE(
-        get_logger(), *get_clock(), 2000, "grid snapshot has no 'ground' layer");
+        get_logger(), *get_clock(), 2000, "no ground snapshot yet");
       return;
     }
+    const std::string grid_frame = grid->getFrameId();
 
     // 点云原始系 -> grid(odom) 系.
     geometry_msgs::msg::TransformStamped t_body_to_grid;
@@ -300,10 +366,10 @@ private:
       double ground = 0.0;
       bool have_ground = false;
       const grid_map::Position pos(p.x, p.y);
-      if (grid_snapshot.isInside(pos)) {
+      if (grid->isInside(pos)) {
         grid_map::Index idx;
-        if (grid_snapshot.getIndex(pos, idx)) {
-          ground = grid_snapshot.at("ground", idx);
+        if (grid->getIndex(pos, idx)) {
+          ground = grid->at("ground", idx);
           have_ground = std::isfinite(ground);
         }
       }
@@ -363,11 +429,6 @@ private:
       }
     }
 
-    // ---- 过陡的格子直接投影进同一条 scan(即使当前帧没打到点)-------------
-    if (slope_enable_ && slope_as_obstacle_ && grid_snapshot.exists("slope")) {
-      addSteepCellsToScan(grid_snapshot, t_grid_to_body, scan, ranges_n);
-    }
-
     scan_pub_->publish(scan);
 
     if (publish_filtered_pcd_ && !kept_body.points.empty() && pcd_pub_) {
@@ -381,42 +442,17 @@ private:
     }
   }
 
-  // 遍历 slope 层, 把过陡且地面有效的格心投影进 scan. bounded 约栅格数量级.
-  void addSteepCellsToScan(
-    const grid_map::GridMap & grid, const Eigen::Matrix4f & t_grid_to_body,
-    sensor_msgs::msg::LaserScan & scan, size_t ranges_n) const
-  {
-    const grid_map::Matrix & slope = grid["slope"];
-    const grid_map::Matrix & ground = grid["ground"];
-    const grid_map::Size size = grid.getSize();
-    for (int i = 0; i < size(0); ++i) {
-      for (int j = 0; j < size(1); ++j) {
-        const grid_map::Index idx(i, j);
-        const float s = slope(i, j);
-        const float g = ground(i, j);
-        if (!std::isfinite(s) || !std::isfinite(g)) continue;
-        if (s <= slope_obstacle_deg_) continue;
-        grid_map::Position pos;
-        if (!grid.getPosition(idx, pos)) continue;
-        const Eigen::Vector4f pg(
-          static_cast<float>(pos.x()), static_cast<float>(pos.y()), g, 1.f);
-        const Eigen::Vector4f pb = t_grid_to_body * pg;
-        insertPointToScan(pcl::PointXYZ(pb.x(), pb.y(), pb.z()), scan, ranges_n);
-      }
-    }
-  }
-
   // ---- params ----
   std::string cloud_topic_, elevation_topic_, elevation_layer_;
-  std::string output_topic_, grid_output_topic_, base_frame_;
+  std::string output_topic_, grid_output_topic_, slope_cost_topic_, base_frame_;
   double ground_percentile_;
   int ground_radius_, ground_min_cells_;
   double obstacle_min_height_, obstacle_max_height_;
   bool fallback_on_unknown_;
   double fallback_min_height_, fallback_max_height_;
-  bool slope_enable_, slope_as_obstacle_;
+  bool slope_enable_;
   int slope_window_;
-  double slope_obstacle_deg_;
+  double slope_free_deg_, slope_lethal_deg_, slope_gamma_;
   double angle_min_, angle_max_, angle_increment_, range_min_, range_max_;
   bool accumulate_enable_;
   double accumulate_time_;
@@ -424,24 +460,29 @@ private:
   bool publish_filtered_pcd_;
 
   // ---- ros ----
+  rclcpp::CallbackGroup::SharedPtr grid_cbg_;
+  rclcpp::CallbackGroup::SharedPtr cloud_cbg_;
   rclcpp::Subscription<grid_map_msgs::msg::GridMap>::SharedPtr grid_sub_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub_;
   rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr scan_pub_;
   rclcpp::Publisher<grid_map_msgs::msg::GridMap>::SharedPtr grid_pub_;
+  rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr slope_cost_pub_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pcd_pub_;
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
 
   std::mutex grid_mutex_;
-  grid_map::GridMap grid_;
-  bool have_grid_ = false;
+  std::shared_ptr<const grid_map::GridMap> grid_snapshot_;
   std::deque<AccumFrame> frame_buffer_;
 };
 
 int main(int argc, char ** argv)
 {
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<TerrainScanNode>());
+  auto node = std::make_shared<TerrainScanNode>();
+  rclcpp::executors::MultiThreadedExecutor exec;
+  exec.add_node(node);
+  exec.spin();
   rclcpp::shutdown();
   return 0;
 }

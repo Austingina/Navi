@@ -10,6 +10,7 @@ def generate_launch_description():
         'elevation_layer': 'elevation',
         'output_topic': '/livox_scan2',
         'grid_output_topic': '/terrain_grid_map',
+        'slope_cost_topic': '/slope_costmap',
         'base_frame': 'base_link',
         # 地面层: 邻域低分位(0=最小值, 0.5=中位数). 低分位对障碍顶免疫又能跟随坡面.
         'ground_percentile': 0.2,
@@ -22,11 +23,12 @@ def generate_launch_description():
         'fallback_on_unknown_elevation': True,
         'fallback_min_height': 0.05,
         'fallback_max_height': 1.6,
-        # 坡度
+        # 坡度 -> 分级代价 OccupancyGrid(/slope_costmap)
         'slope_enable': True,
         'slope_window': 2,
-        'slope_obstacle_deg': 25.0,
-        'slope_as_obstacle_enable': True,
+        'slope_free_deg': 5.0,
+        'slope_lethal_deg': 25.0,
+        'slope_gamma': 1.0,
         # 多帧累积
         'accumulate_enable': True,
         'accumulate_time': 0.8,

@@ -51,6 +51,7 @@ def generate_launch_description():
             'elevation_layer': 'elevation',
             'output_topic': '/livox_scan2',
             'grid_output_topic': '/terrain_grid_map',
+            'slope_cost_topic': '/slope_costmap',
             'base_frame': 'base_link',
             # 局部地面层 = 邻域低分位(0=最小值,0.5=中位数)。低分位跟随坡面但不跟随
             # 戳出来的障碍顶,静态障碍才不会被自己建的高程图吃掉,斜坡也不会整段误报。
@@ -64,11 +65,15 @@ def generate_launch_description():
             'fallback_on_unknown_elevation': True,
             'fallback_min_height': 0.2,
             'fallback_max_height': 1.6,
-            # 坡度：地面层梯度。过陡(>阈值)的格子额外投影进同一条 /livox_scan2。
+            # 坡度：地面层梯度 -> 分级代价 OccupancyGrid(/slope_costmap)。
+            # <=free_deg 记 0；free~lethal 线性升到 99（缓坡代价递增，同等条件优先平地）；
+            # >=lethal_deg 记 100(lethal，基本过不去)。不再往 scan 里塞假障碍点。
             'slope_enable': True,
             'slope_window': 1,
-            'slope_obstacle_deg': 15.0,
-            'slope_as_obstacle_enable': True,
+            'slope_free_deg': 3.0,
+            'slope_lethal_deg': 12.0,
+            # <1 使中等坡度代价更高(更强软避让),不改 lethal 阈值。0.5=明显加重。
+            'slope_gamma': 0.5,
             # 多帧累积：把最近若干帧的存活障碍点在 odom 系累起来再投 2D，
             # 单帧稀疏被时间窗补满，障碍不再闪烁/缺角。
             'accumulate_enable': True,
