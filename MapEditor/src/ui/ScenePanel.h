@@ -50,7 +50,8 @@ signals:
     void importOsmRequested();
     void addSlamMapRequested();
     void removeSlamMapRequested(const QString& id);
-    void renameSlamMapRequested(const QString& id, const QString& newName);  ///< 右键重命名
+    void renameSlamMapRequested(const QString& id, const QString& newName,
+                                const QString& newCode);  ///< 右键重命名（全名 + code）
     void exportSlamMapRequested(const QString& id);           ///< 右键：单独导出为独立工程
     void slamMapActivated(const QString& id);                 ///< 双击：激活并进入编辑
     void slamMapSelected(const QString& id);                  ///< 单击：在总览里高亮

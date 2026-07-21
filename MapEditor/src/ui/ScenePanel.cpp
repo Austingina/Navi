@@ -8,6 +8,9 @@
 #include <QMenu>
 #include <QInputDialog>
 #include <QLineEdit>
+#include <QDialog>
+#include <QFormLayout>
+#include <QDialogButtonBox>
 #include <QFileInfo>
 #include <QMap>
 #include <QSet>
@@ -399,13 +402,30 @@ void ScenePanel::onContextMenu(const QPoint& pos) {
         menu.addAction("✅ 激活并编辑此地图", [this, id]() { emit slamMapActivated(id); });
         menu.addSeparator();
         menu.addAction("✏️ 重命名此地图", [this, id]() {
-            QString cur = id;
-            if (scene_) if (auto* e = scene_->mapById(id))
-                cur = e->name.isEmpty() ? e->id : e->name;
-            bool ok; QString nn = QInputDialog::getText(this, "重命名 SLAM 地图",
-                QString("将「%1」重命名为:").arg(cur), QLineEdit::Normal, cur, &ok);
-            nn = nn.trimmed();
-            if (ok && !nn.isEmpty() && nn != cur) emit renameSlamMapRequested(id, nn);
+            QString curName = id, curCode = id;
+            if (scene_) if (auto* e = scene_->mapById(id)) {
+                curName = e->name.isEmpty() ? e->id : e->name;
+                curCode = e->id;
+            }
+            QDialog dlg(this);
+            dlg.setWindowTitle("重命名 SLAM 地图");
+            auto* form = new QFormLayout(&dlg);
+            auto* edName = new QLineEdit(curName, &dlg);
+            auto* edCode = new QLineEdit(curCode, &dlg);
+            edCode->setToolTip("code 作为地图的唯一标识（节点名），路线/传送门引用均以 code 为准。");
+            form->addRow("全名:", edName);
+            form->addRow("code:", edCode);
+            auto* box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+            form->addRow(box);
+            connect(box, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+            connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+            if (dlg.exec() != QDialog::Accepted) return;
+            QString newName = edName->text().trimmed();
+            QString newCode = edCode->text().trimmed();
+            if (newName.isEmpty()) newName = curName;
+            if (newCode.isEmpty()) newCode = curCode;
+            if (newName == curName && newCode == curCode) return;
+            emit renameSlamMapRequested(id, newName, newCode);
         });
         menu.addAction("📤 单独导出此地图...", [this, id]() { emit exportSlamMapRequested(id); });
         menu.addSeparator();

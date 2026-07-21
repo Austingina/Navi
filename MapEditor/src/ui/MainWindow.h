@@ -53,7 +53,8 @@ private slots:
     void onSlamMapSelected(const QString& slamMapId);
     void onSlamMapActivated(const QString& slamMapId);
     void onRemoveSlamMap(const QString& slamMapId);
-    void onRenameSlamMap(const QString& slamMapId, const QString& newName);
+    void onRenameSlamMap(const QString& slamMapId, const QString& newName,
+                         const QString& newCode);
     void onExportSlamMap(const QString& slamMapId);
     void onAlignSlamMap(const QString& slamMapId);
     void onOrthoVisibilityChanged(const QString& slamMapId, bool visible);

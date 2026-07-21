@@ -848,15 +848,35 @@ void MainWindow::onRemoveSlamMap(const QString& slamMapId) {
     statusLabel_->setText("已移除地图");
 }
 
-void MainWindow::onRenameSlamMap(const QString& slamMapId, const QString& newName) {
+void MainWindow::onRenameSlamMap(const QString& slamMapId, const QString& newName,
+                                 const QString& newCode) {
     auto* e = scene_.mapById(slamMapId);
     if (!e) return;
+
+    // 先改 code（id）：涉及全局路线/传送门引用同步，需校验唯一性
+    QString code = newCode.trimmed();
+    code.replace(' ', '_').replace('\t', '_');
+    if (!code.isEmpty() && code != slamMapId) {
+        if (scene_.indexOfMap(code) >= 0) {
+            QMessageBox::warning(this, "重命名 SLAM 地图",
+                QString("code「%1」已被其他地图占用，请换一个。").arg(code));
+            return;
+        }
+        if (!scene_.renameMapId(slamMapId, code)) {
+            QMessageBox::warning(this, "重命名 SLAM 地图", "code 修改失败。");
+            return;
+        }
+        e = scene_.mapById(code);   // 条目指针不变，但按新 id 重新获取更稳妥
+    }
+
+    // 再改全名
     const QString nn = newName.trimmed();
-    if (nn.isEmpty() || nn == e->name) return;
-    e->name = nn;
+    if (e && !nn.isEmpty()) e->name = nn;
+
     markDirty();
     refreshScenePanels();               // 刷新场景树 + 总览足迹标签
-    statusLabel_->setText("已重命名地图为: " + nn);
+    statusLabel_->setText(QString("已重命名地图: %1 (%2)")
+                              .arg(e ? e->name : nn, e ? e->id : code));
 }
 
 void MainWindow::onExportSlamMap(const QString& slamMapId) {
