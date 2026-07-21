@@ -26,6 +26,9 @@ signals:
                                   int insertIndex);
     /// 语义点位拖到区域（area 为空表示未归属）。
     void scenePointDroppedToArea(const QString& pointName, const QString& area);
+    /// SLAM 内部路线拖入全局路线（作为一段，按落点位置插入）。
+    void internalRouteDroppedToRoute(const QString& slamMapId, const QString& routeName,
+                                     const QString& globalRouteName, int insertIndex);
 
 protected:
     QStringList mimeTypes() const override;
@@ -77,6 +80,9 @@ signals:
     /// 将语义点位拖入某条全局路线（按落点位置插入途经点）。
     void addScenePointToRouteRequested(const QString& pointName, const QString& routeName,
                                        int insertIndex);
+    /// 将某张 SLAM 地图内部路线拖入某条全局路线（按落点位置插入）。
+    void addInternalRouteToRouteRequested(const QString& slamMapId, const QString& routeName,
+                                          const QString& globalRouteName, int insertIndex);
 
     // ── 语义点位区域（按区域聚合）────────────────────────────────────
     void addScenePointAreaRequested();

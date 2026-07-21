@@ -148,6 +148,10 @@ static GlobalWaypoint parseGlobalWaypoint(const QJsonObject& o) {
     if (o.contains("scene_point")) {
         wp.kind = GlobalWaypoint::ScenePoint;
         wp.scenePoint = o.value("scene_point").toString();
+    } else if (o.contains("route")) {
+        wp.kind = GlobalWaypoint::Route;
+        wp.slamMap = o.value("slam_map").toString();
+        wp.route   = o.value("route").toString();
     } else if (o.contains("instruction")) {
         wp.kind = GlobalWaypoint::Instruction;
         wp.instruction = o.value("instruction").toString();
@@ -169,6 +173,9 @@ static QJsonObject globalWaypointToJson(const GlobalWaypoint& wp) {
     switch (wp.kind) {
         case GlobalWaypoint::ScenePoint:
             o["scene_point"] = wp.scenePoint; break;
+        case GlobalWaypoint::Route:
+            o["slam_map"] = wp.slamMap;
+            o["route"]    = wp.route; break;
         case GlobalWaypoint::Instruction:
             o["instruction"] = wp.instruction; break;
         case GlobalWaypoint::Gps:

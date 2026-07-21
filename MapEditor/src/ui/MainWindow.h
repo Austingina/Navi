@@ -80,6 +80,8 @@ private slots:
     void onMoveScenePointToArea(const QString& name, const QString& area);
     void onAddScenePointToRoute(const QString& pointName, const QString& routeName,
                                 int insertIndex);
+    void onAddInternalRouteToRoute(const QString& slamMapId, const QString& routeName,
+                                   const QString& globalRouteName, int insertIndex);
 
     // ── 语义点位区域 ─────────────────────────────────────────────────
     void onAddScenePointArea();

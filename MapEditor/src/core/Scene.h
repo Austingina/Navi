@@ -35,9 +35,9 @@ struct SlamMapEntry {
     bool      locked = false;              ///< 锁定后在场景总览中拖拽 = 平移视图，不改动 geo_anchor
 };
 
-/// 全局路线途经点（异构：map / gps / instruction / scene_point）。
+/// 全局路线途经点（异构：map / gps / instruction / scene_point / route）。
 struct GlobalWaypoint {
-    enum Kind { Map, Gps, Instruction, ScenePoint };
+    enum Kind { Map, Gps, Instruction, ScenePoint, Route };
     Kind    kind = Map;
     // map
     QString slamMap, submap, semanticPoint;
@@ -47,6 +47,8 @@ struct GlobalWaypoint {
     QString instruction;
     // scene_point：引用 OSM 底图上的场景语义点位（按名称）
     QString scenePoint;
+    // route：引用某张 SLAM 地图内部路线，作为全局路线的一段（slamMap + route）
+    QString route;
 };
 
 struct GlobalRoute {

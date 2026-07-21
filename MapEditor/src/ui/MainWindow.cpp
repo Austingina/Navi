@@ -13,6 +13,7 @@
 #include <QToolBar>
 #include <QDockWidget>
 #include <QTabWidget>
+#include <QTabBar>
 #include <QStackedWidget>
 #include <QVBoxLayout>
 #include <QFileDialog>
@@ -175,6 +176,10 @@ void MainWindow::setupUI() {
     leftTabs_->addTab(scenePanel_,  "场景地图");   // kSceneTab = 0
     leftTabs_->addTab(submapPanel_, "SLAM地图");   // kSlamTab  = 1
     leftTabs_->setCurrentIndex(kSlamTab);
+    // 拖拽时（例如把内部路线拖向「场景地图」Tab）悬停在标签上自动切换该 Tab。
+    // 注意：仅 setChangeCurrentOnDrag 不够，还需让 tabBar 接受拖放才能收到拖拽事件。
+    leftTabs_->tabBar()->setAcceptDrops(true);
+    leftTabs_->tabBar()->setChangeCurrentOnDrag(true);
     connect(leftTabs_, &QTabWidget::currentChanged, this, &MainWindow::onLeftTabChanged);
     auto* leftDock = new QDockWidget("场景管理", this);
     leftDock->setWidget(leftTabs_);
@@ -411,6 +416,8 @@ void MainWindow::connectSignals() {
             this, &MainWindow::onMoveScenePointToArea);
     connect(scenePanel_, &ScenePanel::addScenePointToRouteRequested,
             this, &MainWindow::onAddScenePointToRoute);
+    connect(scenePanel_, &ScenePanel::addInternalRouteToRouteRequested,
+            this, &MainWindow::onAddInternalRouteToRoute);
     connect(scenePanel_, &ScenePanel::addScenePointAreaRequested,
             this, &MainWindow::onAddScenePointArea);
     connect(scenePanel_, &ScenePanel::renameScenePointAreaRequested,
@@ -674,7 +681,8 @@ void MainWindow::clearViewerActiveMap() {
 void MainWindow::refreshScenePanels() {
     syncActiveEntryFromProject();
     scenePanel_->rebuild(&scene_);
-    submapPanel_->rebuildActiveMap(scene_.activeMap() ? &project_ : nullptr);
+    submapPanel_->rebuildActiveMap(scene_.activeMap() ? &project_ : nullptr,
+                                   scene_.activeMap() ? scene_.activeMap()->id : QString());
     sceneView_->setScenePoints(scene_.osmPoints());
     sceneView_->setSelectedScenePoint(selectedScenePoint_);
     sceneOverviewDirty_ = true;
@@ -1169,6 +1177,28 @@ void MainWindow::onAddScenePointToRoute(const QString& pointName, const QString&
     markDirty();
     refreshScenePointsOnly();
     statusLabel_->setText(QString("已将语义点位「%1」加入路线「%2」").arg(pointName, routeName));
+}
+
+void MainWindow::onAddInternalRouteToRoute(const QString& slamMapId, const QString& routeName,
+                                           const QString& globalRouteName, int insertIndex) {
+    if (slamMapId.isEmpty() || routeName.isEmpty()) return;
+    GlobalRoute* route = nullptr;
+    for (auto& r : scene_.globalRoutes())
+        if (r.name == globalRouteName) { route = &r; break; }
+    if (!route) return;
+    GlobalWaypoint wp;
+    wp.kind    = GlobalWaypoint::Route;
+    wp.slamMap = slamMapId;
+    wp.route   = routeName;
+    if (insertIndex < 0 || insertIndex > route->waypoints.size())
+        route->waypoints.append(wp);
+    else
+        route->waypoints.insert(insertIndex, wp);
+    markDirty();
+    refreshScenePointsOnly();
+    statusLabel_->setText(
+        QString("已将内部路线「%1/%2」加入全局路线「%3」")
+            .arg(slamMapId, routeName, globalRouteName));
 }
 
 void MainWindow::onAddScenePointArea() {
