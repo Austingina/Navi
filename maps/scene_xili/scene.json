@@ -1,5 +1,25 @@
 {
     "routes": {
+        "智城AB栋巡检": {
+            "description": "",
+            "waypoints": [
+                {
+                    "scene_point": "智城西北角"
+                },
+                {
+                    "scene_point": "智城兴科一街北出口"
+                },
+                {
+                    "scene_point": "智城仙茶路北出口"
+                },
+                {
+                    "scene_point": "智城兴科一街先创路交叉口"
+                },
+                {
+                    "scene_point": "智城先创路西出口"
+                }
+            ]
+        }
     },
     "scene": {
         "crs": "WGS84",
@@ -20,6 +40,80 @@
                 }
             },
             "source": "osm/xili_5km_merged.osm.pbf"
+        },
+        "portals": {
+            "彩虹南门": {
+                "target_slam_map": "408"
+            }
+        },
+        "semantic_point_areas": [
+            "智城",
+            "彩虹"
+        ],
+        "semantic_points": {
+            "彩虹南门": {
+                "alt": 0,
+                "area": "彩虹",
+                "heading_deg": 0,
+                "lat": 22.55731771,
+                "lon": 113.93580277,
+                "need_inspect": false,
+                "type": "single_pose"
+            },
+            "智城A2北入口": {
+                "alt": 0,
+                "area": "智城",
+                "heading_deg": 0,
+                "lat": 22.57443146,
+                "lon": 113.93499027,
+                "need_inspect": false,
+                "type": "single_pose"
+            },
+            "智城仙茶路北出口": {
+                "alt": 0,
+                "area": "智城",
+                "heading_deg": 0,
+                "lat": 22.57445137,
+                "lon": 113.9370582,
+                "need_inspect": false,
+                "type": "single_pose"
+            },
+            "智城先创路西出口": {
+                "alt": 0,
+                "area": "智城",
+                "heading_deg": 0,
+                "lat": 22.57312086,
+                "lon": 113.93433673,
+                "need_inspect": false,
+                "type": "single_pose"
+            },
+            "智城兴科一街先创路交叉口": {
+                "alt": 0,
+                "area": "智城",
+                "heading_deg": 0,
+                "lat": 22.57314254,
+                "lon": 113.93567472,
+                "need_inspect": false,
+                "type": "single_pose"
+            },
+            "智城兴科一街北出口": {
+                "alt": 0,
+                "area": "智城",
+                "heading_deg": 0,
+                "lat": 22.57443596,
+                "lon": 113.93563413,
+                "need_inspect": false,
+                "type": "single_pose"
+            },
+            "智城西北角": {
+                "alt": 0,
+                "area": "智城",
+                "heading_deg": 90,
+                "lat": 22.57442797,
+                "lon": 113.93428749,
+                "need_inspect": false,
+                "type": "single_pose"
+            }
         }
     },
     "slam_maps": {
@@ -40,7 +134,7 @@
                 "default_submap": "2f",
                 "version": "1.0.1"
             },
-            "name": "408",
+            "name": "彩虹科技大厦",
             "ortho_visible": true,
             "pcd_base": "408",
             "routes": {
@@ -2066,6 +2160,53 @@
                             "x": -0.2549,
                             "y": 0.5439,
                             "z": 15.5421
+                        }
+                    }
+                }
+            }
+        },
+        "slam_map": {
+            "_comment": "多楼层地图配置文件 / Multi-floor map configuration",
+            "geo_anchor": {
+                "heading_deg": 0.46589395731814065,
+                "origin": {
+                    "alt": 0,
+                    "lat": 22.574330289914144,
+                    "lon": 113.93503914088625
+                },
+                "scale": 1
+            },
+            "global": {
+                "build_no": 0,
+                "default_route": "",
+                "default_submap": "",
+                "version": "1.0"
+            },
+            "name": "智城A2A3",
+            "ortho_visible": true,
+            "pcd_base": "slam_map",
+            "routes": {
+            },
+            "submaps": {
+                "1f": {
+                    "description": "",
+                    "map_file": "zhichengA.pcd",
+                    "name": "1楼",
+                    "semantic_points": {
+                    },
+                    "submap_portals": [
+                    ],
+                    "transform": {
+                        "rotation": {
+                            "w": 1,
+                            "x": 0,
+                            "y": 0,
+                            "z": 0
+                        },
+                        "translation": {
+                            "x": 0,
+                            "y": 0,
+                            "z": 0
                         }
                     }
                 }
