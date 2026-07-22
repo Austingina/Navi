@@ -178,6 +178,7 @@ private slots:
     void onColorChanged(const QString& id, const QColor& color);
 
     // ── 全局降采样 ──────────────────────────────────────────────────
+    void onEditGlobalVoxel();               ///< 视图菜单：对话框设置全局显示降采样值
     void onGlobalVoxelSizeChanged(double size);
 
     // ── 拾取 ─────────────────────────────────────────────────────────
@@ -248,7 +249,7 @@ private:
     SubmapPanel*      submapPanel_ = nullptr;       ///< 「SLAM地图」Tab（含活跃地图内部路线）
     PropertiesPanel*  propsPanel_ = nullptr;
     QLabel*           statusLabel_ = nullptr;
-    QDoubleSpinBox*   globalVoxelSpin_ = nullptr;
+    double            globalVoxelSize_ = 1.0;   ///< 全局显示降采样体素大小（仅影响显示）
     QMenu*            sceneMapMenu_ = nullptr;   ///< 「场景地图」菜单
     QList<QAction*>   sceneMapActiveActions_;    ///< 仅在「场景地图」Tab 激活时可用的菜单项（导入组除外）
     QMenu*            slamMapMenu_ = nullptr;    ///< 「SLAM地图」菜单：仅在 SLAM地图 Tab 激活时可用

@@ -216,6 +216,8 @@ void MainWindow::setupMenuBar() {
 
     auto* viewMenu = menuBar()->addMenu("视图(&V)");
     viewMenu->addAction("重置视角", this, &MainWindow::onResetView, QKeySequence("R"));
+    viewMenu->addSeparator();
+    viewMenu->addAction("全局降采样（仅显示）...", this, &MainWindow::onEditGlobalVoxel);
 
     auto* editMenu = menuBar()->addMenu("编辑(&E)");
     editMenu->addAction("撤销拖拽", this, &MainWindow::onUndo, QKeySequence::Undo);
@@ -281,33 +283,6 @@ void MainWindow::setupMenuBar() {
     // 菜单弹出前按当前上下文刷新各项可用状态
     connect(slamMapMenu_, &QMenu::aboutToShow, this, &MainWindow::updateSlamMapMenuState);
     slamMapMenu_->menuAction()->setEnabled(leftTabs_ && leftTabs_->currentIndex() == kSlamTab);
-
-    // 工具栏
-    auto* toolbar = addToolBar("主工具栏");
-    toolbar->addAction("📂 打开", this, &MainWindow::onOpen);
-    toolbar->addAction("💾 保存", this, &MainWindow::onSave);
-    toolbar->addSeparator();
-    toolbar->addAction("+ Submap", this, &MainWindow::onAddSubmap);
-    toolbar->addSeparator();
-    toolbar->addAction("🔄 重置视角", this, &MainWindow::onResetView);
-
-    // 全局降采样设置
-    toolbar->addSeparator();
-    toolbar->addWidget(new QLabel(" 降采样(m): "));
-    globalVoxelSpin_ = new QDoubleSpinBox();
-    globalVoxelSpin_->setRange(0.01, 5.0);
-    globalVoxelSpin_->setDecimals(2);
-    globalVoxelSpin_->setSingleStep(0.1);
-    globalVoxelSpin_->setValue(1.0);
-    globalVoxelSpin_->setToolTip("全局显示降采样体素大小 (仅影响显示, 不影响保存)");
-    globalVoxelSpin_->setFixedWidth(80);
-    toolbar->addWidget(globalVoxelSpin_);
-    auto* btnApplyVoxel = new QPushButton("应用");
-    btnApplyVoxel->setFixedWidth(50);
-    toolbar->addWidget(btnApplyVoxel);
-    connect(btnApplyVoxel, &QPushButton::clicked, [this]() {
-        onGlobalVoxelSizeChanged(globalVoxelSpin_->value());
-    });
 }
 
 void MainWindow::connectSignals() {
@@ -2394,6 +2369,17 @@ void MainWindow::onSubmapPropertiesChanged(const QString& id) {
 void MainWindow::onColorChanged(const QString& id, const QColor& color) {
     Q_UNUSED(color);
     refreshSubmap(id);
+}
+
+void MainWindow::onEditGlobalVoxel() {
+    bool ok = false;
+    double vs = QInputDialog::getDouble(
+        this, "全局降采样（仅显示）",
+        "体素大小 (m)，仅影响显示、不影响保存:",
+        globalVoxelSize_, 0.01, 5.0, 2, &ok);
+    if (!ok) return;
+    globalVoxelSize_ = vs;
+    onGlobalVoxelSizeChanged(vs);
 }
 
 void MainWindow::onGlobalVoxelSizeChanged(double size) {
