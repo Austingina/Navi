@@ -11,6 +11,7 @@
 
 #include <QMenuBar>
 #include <QMenu>
+#include <QAction>
 #include <QToolBar>
 #include <QDockWidget>
 #include <QTabWidget>
@@ -251,6 +252,35 @@ void MainWindow::setupMenuBar() {
     // 初始可用状态与当前激活的 Tab 一致
     const bool sceneActive = (leftTabs_ && leftTabs_->currentIndex() == kSceneTab);
     for (auto* a : sceneMapActiveActions_) a->setEnabled(sceneActive);
+
+    // ── 「SLAM地图」菜单：列出活跃 SLAM 地图支持的操作，仅在 SLAM地图 Tab 激活时可用 ──
+    slamMapMenu_ = menuBar()->addMenu("SLAM地图(&L)");
+    // 新建组
+    actNewSlamMap_ = slamMapMenu_->addAction("新增 SLAM 地图...", this, &MainWindow::onNewSlamMap);
+    actAddSubmap_  = slamMapMenu_->addAction("新增 Submap...",    this, &MainWindow::onAddSubmap);
+    slamMapMenu_->addSeparator();
+    // 全局类
+    actSetDefaultSub_  = slamMapMenu_->addAction("设为默认地图...", this, &MainWindow::onMenuSetDefaultSubmap);
+    actSetParentSub_   = slamMapMenu_->addAction("设置父地图...",   this, &MainWindow::onMenuSetParentSubmap);
+    actShowTfTree_     = slamMapMenu_->addAction("显示 TF 树",      this, &MainWindow::onShowTfTree);
+    actAlignTransform_ = slamMapMenu_->addAction("对齐 Transform...", this, &MainWindow::onMenuAlignSubmap);
+    slamMapMenu_->addSeparator();
+    // 语义点位类
+    actAddSemPoint_    = slamMapMenu_->addAction("添加语义点位...", this, &MainWindow::onMenuAddSemanticPoint);
+    actRenameSemPoint_ = slamMapMenu_->addAction("重命名语义点位...", this, &MainWindow::onMenuRenameSemanticPoint);
+    actOrbitCenter_    = slamMapMenu_->addAction("设为视角旋转/缩放中心...", this, &MainWindow::onMenuOrbitCenterSemantic);
+    actDelSemPoint_    = slamMapMenu_->addAction("删除语义点位...", this, &MainWindow::onMenuRemoveSemanticPoint);
+    slamMapMenu_->addSeparator();
+    // 传送门类
+    actAddPortal_ = slamMapMenu_->addAction("添加传送门...", this, &MainWindow::onMenuAddPortal);
+    actDelPortal_ = slamMapMenu_->addAction("删除传送门...", this, &MainWindow::onMenuRemovePortal);
+    slamMapMenu_->addSeparator();
+    // 内部路线类
+    actAddRoute_ = slamMapMenu_->addAction("添加路线...", this, &MainWindow::onMenuAddInternalRoute);
+    actDelRoute_ = slamMapMenu_->addAction("删除路线...", this, &MainWindow::onMenuRemoveInternalRoute);
+    // 菜单弹出前按当前上下文刷新各项可用状态
+    connect(slamMapMenu_, &QMenu::aboutToShow, this, &MainWindow::updateSlamMapMenuState);
+    slamMapMenu_->menuAction()->setEnabled(leftTabs_ && leftTabs_->currentIndex() == kSlamTab);
 
     // 工具栏
     auto* toolbar = addToolBar("主工具栏");
@@ -1505,6 +1535,270 @@ void MainWindow::onEditOsmPath() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+//  「SLAM地图」菜单：作用于活跃 SLAM 地图（project_）的操作
+// ═══════════════════════════════════════════════════════════════════════
+
+void MainWindow::updateSlamMapMenuState() {
+    const bool hasActive = !activeMapId().isEmpty();
+    const int  nSub      = project_.submapCount();
+    const bool hasSub    = nSub > 0;
+
+    // 当前是否已点选一个仍存在的语义点位
+    bool hasSelSem = false;
+    if (!selectedSemanticSmId_.isEmpty() && !selectedSemanticPtName_.isEmpty()) {
+        auto* sm = project_.submap(selectedSemanticSmId_);
+        hasSelSem = sm && sm->hasSemanticPoint(selectedSemanticPtName_);
+    }
+    // 活跃地图中是否存在任意传送门 / 内部路线
+    bool hasPortal = false;
+    for (const auto& sid : project_.submapIds()) {
+        auto* sm = project_.submap(sid);
+        if (sm && !sm->portals().isEmpty()) { hasPortal = true; break; }
+    }
+    const bool hasRoute = !project_.routes().isEmpty();
+
+    // 新建组：新增 SLAM 地图始终可用；新增 Submap 需已有活跃地图
+    if (actNewSlamMap_)    actNewSlamMap_->setEnabled(true);
+    if (actAddSubmap_)     actAddSubmap_->setEnabled(hasActive);
+    // 全局类
+    if (actSetDefaultSub_) actSetDefaultSub_->setEnabled(hasSub);
+    if (actSetParentSub_)  actSetParentSub_->setEnabled(nSub >= 2);
+    if (actShowTfTree_)    actShowTfTree_->setEnabled(hasSub);
+    if (actAlignTransform_)actAlignTransform_->setEnabled(hasSub);
+    // 语义点位类：新增需有 submap；重命名/设中心/删除需已点选某个语义点位
+    if (actAddSemPoint_)   actAddSemPoint_->setEnabled(hasSub);
+    if (actRenameSemPoint_)actRenameSemPoint_->setEnabled(hasSelSem);
+    if (actOrbitCenter_)   actOrbitCenter_->setEnabled(hasSelSem);
+    if (actDelSemPoint_)   actDelSemPoint_->setEnabled(hasSelSem);
+    // 传送门类：新增需有 submap；删除需存在传送门
+    if (actAddPortal_)     actAddPortal_->setEnabled(hasSub);
+    if (actDelPortal_)     actDelPortal_->setEnabled(hasPortal);
+    // 内部路线类：新增需有活跃地图；删除需存在路线
+    if (actAddRoute_)      actAddRoute_->setEnabled(hasActive);
+    if (actDelRoute_)      actDelRoute_->setEnabled(hasRoute);
+}
+
+QString MainWindow::pickSubmapId(const QString& title, const QString& label) {
+    QStringList ids = project_.submapIds();
+    if (ids.isEmpty()) {
+        QMessageBox::information(this, title, "当前活跃 SLAM 地图还没有 submap。");
+        return QString();
+    }
+    if (ids.size() == 1) return ids.first();
+    int cur = 0;
+    if (!selectedSubmapId_.isEmpty()) {
+        int i = ids.indexOf(selectedSubmapId_);
+        if (i >= 0) cur = i;
+    }
+    bool ok = false;
+    QString id = QInputDialog::getItem(this, title, label, ids, cur, false, &ok);
+    if (!ok) return QString();
+    return id;
+}
+
+bool MainWindow::pickSemanticPoint(const QString& title, QString& smId, QString& ptName) {
+    QStringList labels;
+    QVector<QPair<QString, QString>> refs;
+    for (const auto& sid : project_.submapIds()) {
+        auto* sm = project_.submap(sid);
+        if (!sm) continue;
+        const auto& pts = sm->semanticPoints();
+        for (auto it = pts.begin(); it != pts.end(); ++it) {
+            labels << QString("%1 :: %2").arg(sid, it.key());
+            refs.append(qMakePair(sid, it.key()));
+        }
+    }
+    if (labels.isEmpty()) {
+        QMessageBox::information(this, title, "当前活跃 SLAM 地图还没有语义点位。");
+        return false;
+    }
+    int cur = 0;
+    if (!selectedSemanticSmId_.isEmpty() && !selectedSemanticPtName_.isEmpty()) {
+        int i = refs.indexOf(qMakePair(selectedSemanticSmId_, selectedSemanticPtName_));
+        if (i >= 0) cur = i;
+    }
+    bool ok = false;
+    QString picked = QInputDialog::getItem(this, title, "选择语义点位:", labels, cur, false, &ok);
+    if (!ok || picked.isEmpty()) return false;
+    int idx = labels.indexOf(picked);
+    if (idx < 0 || idx >= refs.size()) return false;
+    smId   = refs[idx].first;
+    ptName = refs[idx].second;
+    return true;
+}
+
+// ── 全局类 ───────────────────────────────────────────────────────────
+void MainWindow::onMenuSetDefaultSubmap() {
+    QString id = pickSubmapId("设为默认地图", "选择要设为默认地图的 submap:");
+    if (id.isEmpty()) return;
+    onSetDefaultSubmap(id);
+}
+
+void MainWindow::onMenuSetParentSubmap() {
+    QString child = pickSubmapId("设置父地图", "选择要设置父地图的 submap:");
+    if (child.isEmpty()) return;
+    QStringList opts;
+    const QString kClear = "（无 / 清除父节点）";
+    opts << kClear;
+    for (const auto& sid : project_.submapIds())
+        if (sid != child) opts << sid;
+    bool ok = false;
+    QString parent = QInputDialog::getItem(this, "设置父地图",
+        QString("为「%1」选择父地图:").arg(child), opts, 0, false, &ok);
+    if (!ok) return;
+    if (parent == kClear) parent.clear();
+    onSetParentSubmap(child, parent);
+}
+
+void MainWindow::onMenuAlignSubmap() {
+    QString id = pickSubmapId("对齐 Transform", "选择要对齐 transform 的 submap:");
+    if (id.isEmpty()) return;
+    onAlignSubmap(id);
+}
+
+// ── 语义点位类 ───────────────────────────────────────────────────────
+void MainWindow::onMenuAddSemanticPoint() {
+    QString id = pickSubmapId("添加语义点位", "选择要添加语义点位的 submap:");
+    if (id.isEmpty()) return;
+    onAddSemanticPoint(id);
+}
+
+void MainWindow::onMenuRenameSemanticPoint() {
+    QString smId = selectedSemanticSmId_, ptName = selectedSemanticPtName_;
+    auto* sm = project_.submap(smId);
+    if (smId.isEmpty() || ptName.isEmpty() || !sm || !sm->hasSemanticPoint(ptName)) {
+        if (!pickSemanticPoint("重命名语义点位", smId, ptName)) return;
+    }
+    bool ok = false;
+    QString nn = QInputDialog::getText(this, "重命名语义点位",
+        QString("将语义点位「%1」重命名为:").arg(ptName), QLineEdit::Normal, ptName, &ok);
+    nn = nn.trimmed();
+    if (!ok || nn.isEmpty() || nn == ptName) return;
+    onRenameSemanticPoint(smId, ptName, nn);
+}
+
+void MainWindow::onMenuOrbitCenterSemantic() {
+    QString smId = selectedSemanticSmId_, ptName = selectedSemanticPtName_;
+    auto* sm = project_.submap(smId);
+    if (smId.isEmpty() || ptName.isEmpty() || !sm || !sm->hasSemanticPoint(ptName)) {
+        if (!pickSemanticPoint("设为视角旋转/缩放中心", smId, ptName)) return;
+    }
+    setViewerOrbitCenterAtSemantic(smId, ptName);
+    statusLabel_->setText(QString("已将视角中心设到语义点位: %1 :: %2").arg(smId, ptName));
+}
+
+void MainWindow::onMenuRemoveSemanticPoint() {
+    QString smId = selectedSemanticSmId_, ptName = selectedSemanticPtName_;
+    auto* sm = project_.submap(smId);
+    if (smId.isEmpty() || ptName.isEmpty() || !sm || !sm->hasSemanticPoint(ptName)) {
+        if (!pickSemanticPoint("删除语义点位", smId, ptName)) return;
+    }
+    if (QMessageBox::question(this, "删除语义点位",
+            QString("确定删除语义点位「%1 :: %2」？\n（引用它的内部路线途经点会一并移除）")
+                .arg(smId, ptName)) != QMessageBox::Yes)
+        return;
+    onRemoveSemanticPoint(smId, ptName);
+}
+
+// ── 传送门类 ─────────────────────────────────────────────────────────
+void MainWindow::onMenuAddPortal() {
+    QString id = pickSubmapId("添加传送门", "选择要添加传送门的 submap:");
+    if (id.isEmpty()) return;
+    onAddPortal(id);
+}
+
+void MainWindow::onMenuRemovePortal() {
+    QStringList labels;
+    QVector<QPair<QString, int>> refs;
+    for (const auto& sid : project_.submapIds()) {
+        auto* sm = project_.submap(sid);
+        if (!sm) continue;
+        const auto& portals = sm->portals();
+        for (int i = 0; i < portals.size(); ++i) {
+            labels << QString("%1 :: %2 → %3")
+                          .arg(sid, portals[i].portalName, portals[i].targetSubmap);
+            refs.append(qMakePair(sid, i));
+        }
+    }
+    if (labels.isEmpty()) {
+        QMessageBox::information(this, "删除传送门", "当前活跃 SLAM 地图还没有传送门。");
+        return;
+    }
+    bool ok = false;
+    QString picked = QInputDialog::getItem(this, "删除传送门",
+        "选择要删除的传送门:", labels, 0, false, &ok);
+    if (!ok || picked.isEmpty()) return;
+    int idx = labels.indexOf(picked);
+    if (idx < 0 || idx >= refs.size()) return;
+    onRemoveSubmapPortal(refs[idx].first, refs[idx].second);
+}
+
+// ── 内部路线类 ───────────────────────────────────────────────────────
+void MainWindow::onMenuAddInternalRoute() {
+    if (activeMapId().isEmpty() && project_.submapCount() == 0) {
+        QMessageBox::information(this, "添加路线", "请先激活一张 SLAM 地图。");
+        return;
+    }
+    onAddRoute();
+}
+
+void MainWindow::onMenuRemoveInternalRoute() {
+    QStringList names = project_.routes().keys();
+    if (names.isEmpty()) {
+        QMessageBox::information(this, "删除路线", "当前活跃 SLAM 地图还没有内部路线。");
+        return;
+    }
+    bool ok = false;
+    QString name = QInputDialog::getItem(this, "删除路线",
+        "选择要删除的内部路线:", names, 0, false, &ok);
+    if (!ok || name.isEmpty()) return;
+    if (QMessageBox::question(this, "删除路线",
+            QString("确定删除内部路线「%1」？").arg(name)) != QMessageBox::Yes)
+        return;
+    onRemoveInternalRoute(activeMapId(), name);
+}
+
+// ── 删除语义点位 / 传送门（数据模型层）────────────────────────────────
+void MainWindow::onRemoveSemanticPoint(const QString& smId, const QString& ptName) {
+    auto* sm = project_.submap(smId);
+    if (!sm || !sm->hasSemanticPoint(ptName)) return;
+    sm->removeSemanticPoint(ptName);
+    // 同步移除内部路线中引用该点的途经点
+    const QStringList routeNames = project_.routes().keys();
+    for (const auto& rn : routeNames) {
+        Route* r = project_.route(rn);
+        if (!r) continue;
+        for (int i = r->waypoints.size() - 1; i >= 0; --i) {
+            const auto& wp = r->waypoints[i];
+            if (!wp.isRouteRef() && wp.submapId == smId && wp.semanticPoint == ptName)
+                r->waypoints.remove(i);
+        }
+    }
+    if (selectedSemanticSmId_ == smId && selectedSemanticPtName_ == ptName) {
+        selectedSemanticSmId_.clear();
+        selectedSemanticPtName_.clear();
+    }
+    markDirty();
+    submapPanel_->rebuild(&project_);
+    refreshSubmap(smId);
+    refreshMarkers();
+    refreshRouteLines();
+    statusLabel_->setText(QString("已删除语义点位: %1 :: %2").arg(smId, ptName));
+}
+
+void MainWindow::onRemoveSubmapPortal(const QString& smId, int portalIdx) {
+    auto* sm = project_.submap(smId);
+    if (!sm || portalIdx < 0 || portalIdx >= sm->portals().size()) return;
+    const QString label = sm->portals()[portalIdx].portalName;
+    sm->removePortal(portalIdx);
+    markDirty();
+    submapPanel_->rebuild(&project_);
+    refreshSubmap(smId);
+    refreshMarkers();
+    statusLabel_->setText(QString("已删除传送门: %1 :: %2").arg(smId, label));
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 //  正交叠加对齐窗口：各 SLAM 地图俯视投影叠加到 OSM 底图
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -1575,6 +1869,9 @@ void MainWindow::onLeftTabChanged(int index) {
     const bool sceneActive = (index == kSceneTab);
     for (auto* a : sceneMapActiveActions_)
         if (a) a->setEnabled(sceneActive);
+    // 「SLAM地图」菜单仅在「SLAM地图」Tab 激活时可用
+    if (slamMapMenu_)
+        slamMapMenu_->menuAction()->setEnabled(index == kSlamTab);
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1841,6 +2138,7 @@ void MainWindow::refreshMarkers() {
 void MainWindow::onSubmapSelected(const QString& id) {
     selectedSemanticSmId_.clear();
     selectedSemanticPtName_.clear();
+    selectedSubmapId_ = id;
     refreshMarkers();
     auto* sm = project_.submap(id);
     if (sm) propsPanel_->showSubmapProperties(sm);
@@ -1849,6 +2147,7 @@ void MainWindow::onSubmapSelected(const QString& id) {
 void MainWindow::onSemanticPointSelected(const QString& smId, const QString& ptName) {
     selectedSemanticSmId_   = smId;
     selectedSemanticPtName_ = ptName;
+    selectedSubmapId_       = smId;
     refreshMarkers();
     auto* sm = project_.submap(smId);
     if (sm) propsPanel_->showSemanticPointProperties(sm, ptName);
@@ -1886,6 +2185,7 @@ void MainWindow::onSemanticPointChanged(const QString& smId, const QString& ptNa
 void MainWindow::onPortalSelected(const QString& smId, int portalIdx) {
     selectedSemanticSmId_.clear();
     selectedSemanticPtName_.clear();
+    selectedSubmapId_ = smId;
     refreshMarkers();
     auto* sm = project_.submap(smId);
     if (sm) propsPanel_->showPortalProperties(sm, portalIdx, project_.submapIds());
