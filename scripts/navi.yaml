@@ -1,20 +1,20 @@
 session_name: navi
-start_directory: /home/nvidia/Navi/scripts
+start_directory: /home/nvidia/work/Navi/scripts
 
 windows:
   - window_name: navi_services
     layout: tiled
     panes:
       - shell_command:
-          - sleep 2
-          - bash $NAVI_SCRIPT_DIR/start_gridmap.bash -v
+          - sleep 5
+          - bash $NAVI_SCRIPT_DIR/start_localization.bash --simulated
       - shell_command:
-          - sleep 3
-          - bash $NAVI_SCRIPT_DIR/start_navigation.bash
+          - sleep 10
+          - bash $NAVI_SCRIPT_DIR/start_mcp.sh -m http://10.239.18.181:8080/mapserver/408
       - shell_command:
-          - sleep 4
-          - bash $NAVI_SCRIPT_DIR/start_mcp.sh
-          
+          - sleep 15
+          - bash $NAVI_SCRIPT_DIR/start_navigation.bash --simulated
+
   - window_name: monitoring
     panes:
       - shell_command:

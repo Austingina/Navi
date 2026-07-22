@@ -10,15 +10,24 @@ export RCUTILS_LOGGING_BUFFERED_STREAM=0
 export RCUTILS_COLORIZED_OUTPUT=0
 export PYTHONUNBUFFERED=1
 
+# 解析参数：-v 打开 rviz；--simulated 使用仿真时钟 (use_sim_time:=true)
+RVIZ_USE=false
+USE_SIM_TIME=false
+for arg in "$@"; do
+    case "$arg" in
+        -v)
+            RVIZ_USE=true
+            ;;
+        -s|--simulated)
+            USE_SIM_TIME=true
+            ;;
+    esac
+done
+
 LOG_DIR="$NAVI_ROOT_DIR/logs"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/localization_$(date +%Y%m%d_%H%M%S).log"
 echo "logging to $LOG_FILE"
 
-if [[ "$1" == "-v" ]]; then
-    ros2 launch fast_lio odometry_lslidar.launch.py rviz:=true map_file_path:=$NAVI_ROOT_DIR/mapdata/408/2f.pcd 2>&1 \
-        | stdbuf -oL -eL tee -a "$LOG_FILE"
-else
-    ros2 launch fast_lio odometry_lslidar.launch.py rviz:=false map_file_path:=$NAVI_ROOT_DIR/mapdata/408/2f.pcd 2>&1 \
-        | stdbuf -oL -eL tee -a "$LOG_FILE"
-fi
+ros2 launch fast_lio odometry_lslidar.launch.py rviz:=$RVIZ_USE use_sim_time:=$USE_SIM_TIME map_file_path:=$NAVI_ROOT_DIR/maps/zhichengA.pcd 2>&1 \
+    | stdbuf -oL -eL tee -a "$LOG_FILE"
