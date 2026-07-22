@@ -22,9 +22,11 @@ namespace me {
 
 // ── SceneTreeWidget：把语义点位拖到区域/路线上（与 SLAM 路线拖拽一致）────
 static const char* kScenePointMime = "application/x-mapeditor-scenepoint";
+// 跨面板：来自「SLAM地图」Tab 的内部路线（slamMapId + routeName）
+static const char* kInternalRouteMime = "application/x-mapeditor-internal-route";
 
 QStringList SceneTreeWidget::mimeTypes() const {
-    return {kScenePointMime};
+    return {kScenePointMime, kInternalRouteMime};
 }
 
 #if QT_VERSION >= QT_VERSION_CHECK(6,0,0)
@@ -50,7 +52,35 @@ Qt::DropActions SceneTreeWidget::supportedDropActions() const {
 
 bool SceneTreeWidget::dropMimeData(QTreeWidgetItem* parent, int index,
                                    const QMimeData* data, Qt::DropAction /*action*/) {
-    if (!data || !parent || !data->hasFormat(kScenePointMime)) return false;
+    if (!data || !parent) return false;
+
+    // 跨面板：SLAM 内部路线拖入全局路线（作为一段）
+    if (data->hasFormat(kInternalRouteMime)) {
+        QByteArray buf = data->data(kInternalRouteMime);
+        QDataStream ds(&buf, QIODevice::ReadOnly);
+        QString slamMapId, routeName;
+        ds >> slamMapId >> routeName;
+        if (routeName.isEmpty()) return false;
+        const int t = parent->data(0, ScenePanel::RoleType).toInt();
+        if (t == ScenePanel::TGlobalRoute) {
+            emit internalRouteDroppedToRoute(
+                slamMapId, routeName,
+                parent->data(0, ScenePanel::RoleName).toString(), index);
+            return true;
+        }
+        if (t == ScenePanel::TWaypoint) {
+            auto* routeItem = parent->parent();
+            if (!routeItem) return false;
+            emit internalRouteDroppedToRoute(
+                slamMapId, routeName,
+                routeItem->data(0, ScenePanel::RoleName).toString(),
+                routeItem->indexOfChild(parent));
+            return true;
+        }
+        return false;   // 内部路线只能落到全局路线上
+    }
+
+    if (!data->hasFormat(kScenePointMime)) return false;
     QByteArray buf = data->data(kScenePointMime);
     QDataStream ds(&buf, QIODevice::ReadOnly);
     QString point;
@@ -97,6 +127,9 @@ static QString sceneGlobalWpLabel(int i, const GlobalWaypoint& wp) {
             return QString("%1. 💬 %2").arg(i + 1).arg(wp.instruction);
         case GlobalWaypoint::ScenePoint:
             return QString("%1. 📍 %2 (场景点)").arg(i + 1).arg(wp.scenePoint);
+        case GlobalWaypoint::Route:
+            return QString("%1. 🛤️ %2 / %3 (内部路线)").arg(i + 1)
+                .arg(wp.slamMap, wp.route);
         case GlobalWaypoint::Map:
         default:
             return QString("%1. 📍 %2/%3/%4").arg(i + 1)
@@ -150,6 +183,8 @@ void ScenePanel::setupUI() {
             &ScenePanel::addScenePointToRouteRequested);
     connect(tree_, &SceneTreeWidget::scenePointDroppedToArea, this,
             &ScenePanel::moveScenePointToAreaRequested);
+    connect(tree_, &SceneTreeWidget::internalRouteDroppedToRoute, this,
+            &ScenePanel::addInternalRouteToRouteRequested);
     layout->addWidget(tree_);
 
     auto* hint = new QLabel("双击 SLAM 地图进入其内部 submap 编辑；勾选控制其正交投影叠加显示。"

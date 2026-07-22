@@ -18,6 +18,8 @@
 #include <QString>
 #include <QStringList>
 #include <QVector>
+#include <QByteArray>
+#include <QJsonObject>
 #include <memory>
 
 namespace me {
@@ -33,9 +35,9 @@ struct SlamMapEntry {
     bool      locked = false;              ///< 锁定后在场景总览中拖拽 = 平移视图，不改动 geo_anchor
 };
 
-/// 全局路线途经点（异构：map / gps / instruction / scene_point）。
+/// 全局路线途经点（异构：map / gps / instruction / scene_point / route）。
 struct GlobalWaypoint {
-    enum Kind { Map, Gps, Instruction, ScenePoint };
+    enum Kind { Map, Gps, Instruction, ScenePoint, Route };
     Kind    kind = Map;
     // map
     QString slamMap, submap, semanticPoint;
@@ -45,6 +47,8 @@ struct GlobalWaypoint {
     QString instruction;
     // scene_point：引用 OSM 底图上的场景语义点位（按名称）
     QString scenePoint;
+    // route：引用某张 SLAM 地图内部路线，作为全局路线的一段（slamMap + route）
+    QString route;
 };
 
 struct GlobalRoute {
@@ -64,6 +68,8 @@ public:
     std::shared_ptr<OsmData> osm() const { return osm_; }
     QString osmSource() const { return osmSource_; }
     void setOsm(std::shared_ptr<OsmData> osm, const QString& source);
+    /// 仅修改底图源文件路径引用（不重新解析几何，用于修正/迁移路径）。
+    void setOsmSource(const QString& source) { osmSource_ = source; }
 
     // ── 场景 ENU 原点 ────────────────────────────────────────────────
     bool   hasOrigin() const { return hasOrigin_; }
@@ -73,6 +79,10 @@ public:
 
     QString name() const { return name_; }
     void setName(const QString& n) { name_ = n; }
+
+    /// 场景构建号 = 最近一次「场景内容有更新」的保存时刻 (YYYYMMDDHHMMSS)。
+    /// 与各 SLAM 地图 global.build_no 同格式；首次未保存时为 0。
+    qint64 buildNo() const { return buildNo_; }
 
     // ── SLAM 地图 ────────────────────────────────────────────────────
     QVector<SlamMapEntry>&       maps()       { return maps_; }
@@ -144,6 +154,13 @@ private:
     QVector<ScenePortal>  scenePortals_;
     int activeIndex_ = -1;
     QString sceneFilePath_;
+
+    qint64     buildNo_ = 0;      ///< 场景级构建号（内容有更新才在保存时刷新）
+    QByteArray contentHash_;      ///< 最近一次加载/保存时的场景内容指纹（剔除所有 build_no）
+
+    /// 组装完整 scene.json root 对象（资源路径以 baseDir 解析为相对/绝对）。
+    /// 不写 scene.build_no（由保存流程按需注入）。
+    QJsonObject buildRootObject(const QString& baseDir) const;
 };
 
 } // namespace me

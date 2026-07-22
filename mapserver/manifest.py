@@ -25,13 +25,20 @@ Manifest 是服务器和客户端之间的共享契约：
 
 版本号来源（按优先级）：
 
-1. ``<map_dir>/<map_id>.json`` 中 ``global.version`` 与 ``global.build_no``
-   —— **MapEditor 写出的位置**，单一信息源，地图数据本身和版本号天然耦合。
-2. ``<map_dir>/version.json`` 形如 ``{"version": "...", "build_no": N}``
+1. ``<map_dir>/scene.json`` 中 ``scene.build_no``
+   —— **MapEditor「场景」产物**（分层场景地图：OSM 底图 + 多张 SLAM 地图 + 全局路线）。
+   顶层无 ``global``；version 取 ``scene.name``，build_no 取 ``scene.build_no``。
+2. ``<map_dir>/<map_id>.json`` 中 ``global.version`` 与 ``global.build_no``
+   —— **MapEditor 单张 SLAM 地图工程**（``multifloor.json`` 风格），地图数据与版本号天然耦合。
+3. ``<map_dir>/version.json`` 形如 ``{"version": "...", "build_no": N}``
    —— 向后兼容的备用入口。
-3. 都没有时自动回退：``version = "auto-<8位 sha>"``、
+4. 都没有时自动回退：``version = "auto-<8位 sha>"``、
    ``build_no = int(strftime("%Y%m%d%H%M%S", max(mtime)))``。
    保证 manifest 始终可用，但 build_no 取决于文件 mtime，仅适合开发环境。
+
+> build_no 均为 ``YYYYMMDDHHMMSS`` 格式，且 MapEditor **仅在对应内容有更新时**才刷新时间戳
+> （``scene.build_no`` 反映整个场景、``global.build_no`` 反映单张 SLAM 地图内部）。
+> 文件级增量同步与地图格式无关（纯按 ``sha256`` 比对），场景 / 单图两种布局都适用。
 """
 
 from __future__ import annotations
@@ -186,6 +193,36 @@ def _read_version_from_main_json(map_dir: Path, map_id: str) -> Optional[Tuple[s
     return version, build_no
 
 
+def _read_version_from_scene_json(map_dir: Path) -> Optional[Tuple[str, int]]:
+    """从 ``<map_dir>/scene.json`` 的 ``scene.build_no`` 读取（分层场景地图格式）。
+
+    场景文件（MapEditor「保存场景」产物）顶层没有 ``global``：底图/多张 SLAM 地图/全局路线
+    分别在 ``scene`` / ``slam_maps`` / ``routes`` 下，版本以 ``scene.build_no`` 为准
+    （``YYYYMMDDHHMMSS``，仅在场景内容有更新时才刷新）。version 取场景名，便于人读；
+    实际“是否需要更新”的判定主要看 build_no。
+
+    缺字段或文件不存在时返回 None。
+    """
+    scene_json = map_dir / "scene.json"
+    if not scene_json.is_file():
+        return None
+    try:
+        data = json.loads(scene_json.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    scene_obj = data.get("scene")
+    if not isinstance(scene_obj, dict) or "build_no" not in scene_obj:
+        return None
+    try:
+        build_no = int(scene_obj.get("build_no", 0))
+    except (TypeError, ValueError):
+        return None
+    version = str(scene_obj.get("name") or "scene")
+    return version, build_no
+
+
 def _read_version_sidecar(map_dir: Path) -> Optional[Tuple[str, int]]:
     """Fallback：从独立的 ``<map_dir>/version.json`` 读取。"""
     vfile = map_dir / "version.json"
@@ -203,10 +240,14 @@ def _read_version_sidecar(map_dir: Path) -> Optional[Tuple[str, int]]:
 def _resolve_version_info(map_dir: Path, map_id: str) -> Optional[Tuple[str, int]]:
     """按优先级返回 (version, build_no)：
 
-    1. ``<map_id>.json/global``（MapEditor 写出）
-    2. ``version.json``（兼容旧约定）
-    3. 都没有 → None，由调用方决定 fallback
+    1. ``scene.json/scene.build_no``（MapEditor「场景」产物：分层场景地图）
+    2. ``<map_id>.json/global``（MapEditor 单张 SLAM 地图工程）
+    3. ``version.json``（兼容旧约定）
+    4. 都没有 → None，由调用方决定 fallback
     """
+    info = _read_version_from_scene_json(map_dir)
+    if info is not None:
+        return info
     info = _read_version_from_main_json(map_dir, map_id)
     if info is not None:
         return info

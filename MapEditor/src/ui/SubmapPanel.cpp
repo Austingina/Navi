@@ -21,9 +21,11 @@ namespace me {
 
 static const char* kMimeType      = "application/x-mapeditor-sempoint";
 static const char* kRouteMimeType = "application/x-mapeditor-route";
+// 跨面板：把内部路线拖到「场景地图」Tab 的全局路线上（携带 slamMapId + routeName）
+static const char* kInternalRouteMimeType = "application/x-mapeditor-internal-route";
 
 QStringList DragDropTree::mimeTypes() const {
-    return {kMimeType, kRouteMimeType};
+    return {kMimeType, kRouteMimeType, kInternalRouteMimeType};
 }
 
 #if QT_VERSION >= QT_VERSION_CHECK(6,0,0)
@@ -47,10 +49,21 @@ QMimeData* DragDropTree::mimeData(const QList<QTreeWidgetItem*> items) const {
 
     if (type == SubmapPanel::TypeRoute) {
         auto* md = new QMimeData();
-        QByteArray buf;
-        QDataStream ds(&buf, QIODevice::WriteOnly);
-        ds << item->data(0, SubmapPanel::RoleRouteName).toString();
-        md->setData(kRouteMimeType, buf);
+        const QString routeName = item->data(0, SubmapPanel::RoleRouteName).toString();
+        // 同 SLAM 地图内嵌套引用（仅路线名）
+        {
+            QByteArray buf;
+            QDataStream ds(&buf, QIODevice::WriteOnly);
+            ds << routeName;
+            md->setData(kRouteMimeType, buf);
+        }
+        // 跨面板到全局路线（slamMapId + 路线名）
+        {
+            QByteArray buf;
+            QDataStream ds(&buf, QIODevice::WriteOnly);
+            ds << item->data(0, SubmapPanel::RoleSlamMapId).toString() << routeName;
+            md->setData(kInternalRouteMimeType, buf);
+        }
         return md;
     }
 
@@ -320,7 +333,7 @@ void SubmapPanel::rebuildScene(Scene* scene) {
     tree_->blockSignals(false);
 }
 
-void SubmapPanel::rebuildActiveMap(MapProject* project) {
+void SubmapPanel::rebuildActiveMap(MapProject* project, const QString& slamMapId) {
     scene_ = nullptr;
     project_ = project;
 
@@ -380,6 +393,7 @@ void SubmapPanel::rebuildActiveMap(MapProject* project) {
     if (project_) {
         for (auto it = project_->routes().begin(); it != project_->routes().end(); ++it) {
             auto* rItem = makeRouteItem(it.key(), it.value());
+            rItem->setData(0, RoleSlamMapId, slamMapId);   // 供跨面板拖到全局路线
             routeRoot->addChild(rItem);
             if (expandedRoutes.contains(it.key())) rItem->setExpanded(true);
         }

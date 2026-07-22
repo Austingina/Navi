@@ -35,8 +35,13 @@ public:
     /// 工程语义版本号，默认 "1.0"，由用户在 MapEditor 中显式修改。
     QString version() const { return version_; }
     void setVersion(const QString& v) { version_ = v; }
-    /// 构建号 = 最近一次保存时刻的 Unix epoch 秒；首次创建未保存时为 0。
+    /// 构建号 = 最近一次「内容有变更」的保存时刻 (YYYYMMDDHHMMSS)；首次创建未保存时为 0。
     qint64 buildNo() const { return buildNo_; }
+    /// 内容指纹（对 toObject() 剔除 build_no 后哈希），用于判断「是否有更新」。
+    QByteArray contentSignature() const;
+    /// 保存前调用：若内容较上次(加载/保存)发生变化则把 build_no 刷新为当前时间戳，
+    /// 否则保持不变。返回最终 build_no。
+    qint64 refreshBuildNoIfChanged();
 
     // ── Submap 管理 ──────────────────────────────────────────────────
     QString defaultSubmapId() const { return defaultSubmapId_; }
@@ -103,7 +108,8 @@ private:
     QString  defaultSubmapId_;
     QString  defaultRouteId_;
     QString  version_ = "1.0";   // 新工程默认 "1.0"
-    qint64   buildNo_ = 0;       // 由 save() 在每次保存时自动更新
+    qint64   buildNo_ = 0;       // 内容有更新时才在保存时刷新
+    QByteArray contentHash_;     // 最近一次加载/保存时的内容指纹（剔除 build_no）
     bool     dirty_ = false;
 
     // 使用 ordered map 保持插入顺序

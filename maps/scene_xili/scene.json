@@ -7,6 +7,10 @@
                     "scene_point": "智城西北角"
                 },
                 {
+                    "route": "A2大堂",
+                    "slam_map": "zhichengA2A3"
+                },
+                {
                     "scene_point": "智城兴科一街北出口"
                 },
                 {
@@ -22,8 +26,9 @@
         }
     },
     "scene": {
+        "build_no": 20260722095311,
         "crs": "WGS84",
-        "name": "未命名场景",
+        "name": "xili",
         "origin": {
             "lat": 22.6373916,
             "lon": 114.0165988
@@ -2190,8 +2195,8 @@
                 "scale": 1
             },
             "global": {
-                "build_no": 0,
-                "default_route": "",
+                "build_no": 20260721202422,
+                "default_route": "A2大堂",
                 "default_submap": "",
                 "version": "1.0"
             },
@@ -2200,6 +2205,35 @@
             "ortho_visible": true,
             "pcd_base": "zhichengA2A3",
             "routes": {
+                "A2大堂": {
+                    "description": "",
+                    "waypoints": [
+                        {
+                            "semantic_point": "A2北门-entrance1",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "A2北门-entrance2",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "道通咖啡-autel coffee",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "前台-reception",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "A2西门-exit1",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "A2西门-exit2",
+                            "submap": "1f"
+                        }
+                    ]
+                }
             },
             "submaps": {
                 "1f": {

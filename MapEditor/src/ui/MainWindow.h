@@ -13,10 +13,13 @@
 
 class QStackedWidget;
 class QTabWidget;
+class QMenu;
+class QAction;
 #include "ui/PropertiesPanel.h"
 #include "ui/BuildVprDatabaseDialog.h"
 #include <QMainWindow>
 #include <QMap>
+#include <QList>
 #include <QSet>
 #include <QPair>
 #include <QStatusBar>
@@ -80,6 +83,8 @@ private slots:
     void onMoveScenePointToArea(const QString& name, const QString& area);
     void onAddScenePointToRoute(const QString& pointName, const QString& routeName,
                                 int insertIndex);
+    void onAddInternalRouteToRoute(const QString& slamMapId, const QString& routeName,
+                                   const QString& globalRouteName, int insertIndex);
 
     // ── 语义点位区域 ─────────────────────────────────────────────────
     void onAddScenePointArea();
@@ -90,6 +95,32 @@ private slots:
     void onAddScenePortal();
     void onEditScenePortal(const QString& name);
     void onRemoveScenePortal(const QString& name);
+
+    // ── 「场景地图」菜单入口（基于当前选中，否则弹出选择框）──────────
+    void onMenuRenameScenePoint();
+    void onMenuRemoveScenePoint();
+    void onMenuRemoveScenePortal();
+    void onMenuRemoveGlobalRoute();
+    void onMenuRemoveSlamMap();   ///< 菜单：弹选择框后删除某张 SLAM 地图
+    void onEditOsmPath();         ///< 菜单：修改 OSM 底图源文件路径引用
+    void onRenameScene();         ///< 菜单：修改整个场景的名称
+
+    // ── 「SLAM地图」菜单入口（作用于活跃 SLAM 地图；基于选中，否则弹选择框）──
+    void onMenuSetDefaultSubmap();
+    void onMenuSetParentSubmap();
+    void onMenuAlignSubmap();
+    void onMenuAddSemanticPoint();
+    void onMenuRenameSemanticPoint();
+    void onMenuOrbitCenterSemantic();
+    void onMenuRemoveSemanticPoint();
+    void onMenuAddPortal();
+    void onMenuRemovePortal();
+    void onMenuAddInternalRoute();
+    void onMenuRemoveInternalRoute();
+    /// 删除某 submap 的语义点位（并清理引用该点的内部路线途经点）
+    void onRemoveSemanticPoint(const QString& smId, const QString& ptName);
+    /// 删除某 submap 的传送门（按下标）
+    void onRemoveSubmapPortal(const QString& smId, int portalIdx);
 
     // ── 全局路线 ─────────────────────────────────────────────────────
     void onAddGlobalRoute();
@@ -147,6 +178,7 @@ private slots:
     void onColorChanged(const QString& id, const QColor& color);
 
     // ── 全局降采样 ──────────────────────────────────────────────────
+    void onEditGlobalVoxel();               ///< 视图菜单：对话框设置全局显示降采样值
     void onGlobalVoxelSizeChanged(double size);
 
     // ── 拾取 ─────────────────────────────────────────────────────────
@@ -217,7 +249,32 @@ private:
     SubmapPanel*      submapPanel_ = nullptr;       ///< 「SLAM地图」Tab（含活跃地图内部路线）
     PropertiesPanel*  propsPanel_ = nullptr;
     QLabel*           statusLabel_ = nullptr;
-    QDoubleSpinBox*   globalVoxelSpin_ = nullptr;
+    double            globalVoxelSize_ = 1.0;   ///< 全局显示降采样体素大小（仅影响显示）
+    QMenu*            sceneMapMenu_ = nullptr;   ///< 「场景地图」菜单
+    QList<QAction*>   sceneMapActiveActions_;    ///< 仅在「场景地图」Tab 激活时可用的菜单项（导入组除外）
+    QMenu*            slamMapMenu_ = nullptr;    ///< 「SLAM地图」菜单：仅在 SLAM地图 Tab 激活时可用
+    // 「SLAM地图」菜单各项（用于按上下文动态启用/禁用）
+    QAction* actNewSlamMap_    = nullptr;   ///< 新增 SLAM 地图（另起炉灶）
+    QAction* actAddSubmap_     = nullptr;   ///< 新增 Submap
+    QAction* actSetDefaultSub_ = nullptr;   ///< 设为默认地图
+    QAction* actSetParentSub_  = nullptr;   ///< 设置父地图
+    QAction* actShowTfTree_    = nullptr;   ///< 显示 TF 树
+    QAction* actAlignTransform_= nullptr;   ///< 对齐 Transform
+    QAction* actAddSemPoint_   = nullptr;   ///< 添加语义点位
+    QAction* actRenameSemPoint_= nullptr;   ///< 重命名语义点位
+    QAction* actOrbitCenter_   = nullptr;   ///< 设为视角旋转/缩放中心
+    QAction* actDelSemPoint_   = nullptr;   ///< 删除语义点位
+    QAction* actAddPortal_     = nullptr;   ///< 添加传送门
+    QAction* actDelPortal_     = nullptr;   ///< 删除传送门
+    QAction* actAddRoute_      = nullptr;   ///< 添加路线
+    QAction* actDelRoute_      = nullptr;   ///< 删除路线
+    /// 按当前上下文刷新「SLAM地图」菜单各项可用状态（菜单弹出前调用）
+    void updateSlamMapMenuState();
+
+    /// 弹框选择活跃地图内的一个 submap（仅 1 个时直接返回；无则提示并返回空）
+    QString pickSubmapId(const QString& title, const QString& label);
+    /// 弹框选择活跃地图内的一个语义点位（返回 false 表示取消/无点位）
+    bool    pickSemanticPoint(const QString& title, QString& smId, QString& ptName);
 
     bool sceneOverviewDirty_ = true;   ///< 场景组成变化后需重建总览足迹
     QVector<QString> sceneViewRowToId_;  ///< 总览足迹行 → SLAM 地图 id
@@ -234,6 +291,8 @@ private:
     /// 子图树中选中的语义点，用于 3D 中高亮（红色）
     QString    selectedSemanticSmId_;
     QString    selectedSemanticPtName_;
+    /// 「SLAM地图」Tab 当前上下文 submap（供菜单操作默认目标）
+    QString    selectedSubmapId_;
 
     // 拾取回调
     enum PendingAction { NoPending, PendingSemanticPanelPick,

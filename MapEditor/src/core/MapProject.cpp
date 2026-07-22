@@ -11,6 +11,7 @@
 #include <QDebug>
 #include <QRegularExpression>
 #include <QTextStream>
+#include <QCryptographicHash>
 
 #include <pcl/io/pcd_io.h>
 #include <algorithm>
@@ -336,6 +337,34 @@ void MapProject::parseRootObject(const QJsonObject& root) {
     }
 
     dirty_ = false;
+    // 记录加载时的内容指纹：后续保存时若内容未变则保持 build_no 不变
+    contentHash_ = contentSignature();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  内容指纹 / build_no 刷新（内容有更新才刷新时间戳）
+// ═══════════════════════════════════════════════════════════════════════
+QByteArray MapProject::contentSignature() const {
+    QJsonObject root = toObject();
+    // 剔除 build_no 本身，避免时间戳参与指纹计算造成自我循环
+    QJsonObject g = root.value("global").toObject();
+    g.remove("build_no");
+    root["global"] = g;
+    // _comment 为固定注释，不影响内容
+    root.remove("_comment");
+    const QByteArray bytes = QJsonDocument(root).toJson(QJsonDocument::Compact);
+    return QCryptographicHash::hash(bytes, QCryptographicHash::Sha1);
+}
+
+qint64 MapProject::refreshBuildNoIfChanged() {
+    const QByteArray sig = contentSignature();
+    if (buildNo_ == 0 || sig != contentHash_) {
+        buildNo_ = QDateTime::currentDateTime()
+                       .toString(QStringLiteral("yyyyMMddhhmmss"))
+                       .toLongLong();
+        contentHash_ = sig;
+    }
+    return buildNo_;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -352,12 +381,11 @@ bool MapProject::save(const QString& dirPath) {
     QString dirName = dir.dirName();
     QString jsonPath = dir.absoluteFilePath(dirName + ".json");
 
-    // 每次保存时把 build_no 更新为 YYYYMMDDHHMMSS（本地时间，14 位整数）。
+    // build_no 采用 YYYYMMDDHHMMSS（本地时间，14 位整数）：
     // - 既单调递增（供 mapserver 比对"是否有新版本"），又人类可读
     // - 14 位最大 ~1e14 ≪ 2^63，qint64 范围充裕
-    buildNo_ = QDateTime::currentDateTime()
-                   .toString(QStringLiteral("yyyyMMddhhmmss"))
-                   .toLongLong();
+    // 仅在「内容较上次加载/保存有更新」时才刷新时间戳，否则保持不变。
+    refreshBuildNoIfChanged();
 
     QJsonObject root = toObject();
 

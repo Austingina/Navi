@@ -54,7 +54,8 @@ public:
     void rebuildScene(Scene* scene);
 
     /// 仅展示单张（活跃）SLAM 地图的 submap 树（「SLAM地图」Tab 用）。
-    void rebuildActiveMap(MapProject* project);
+    /// slamMapId 用于把内部路线拖到全局路线时标识来源地图。
+    void rebuildActiveMap(MapProject* project, const QString& slamMapId = QString());
 
     /// 展开指定路线项
     void expandRoute(const QString& routeName);
