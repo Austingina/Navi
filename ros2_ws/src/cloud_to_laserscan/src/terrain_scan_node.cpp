@@ -14,10 +14,12 @@
 // 执行器用 MultiThreadedExecutor + 独立回调组，重的 grid 处理不会阻塞点云链。
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
+#include <sensor_msgs/point_cloud2_iterator.hpp>
 #include <sensor_msgs/msg/laser_scan.hpp>
 #include <nav_msgs/msg/occupancy_grid.hpp>
 #include <grid_map_msgs/msg/grid_map.hpp>
 #include <grid_map_core/GridMap.hpp>
+#include <grid_map_core/iterators/GridMapIterator.hpp>
 #include <grid_map_ros/GridMapRosConverter.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <tf2_ros/buffer.h>
@@ -57,6 +59,11 @@ public:
       declare_parameter<std::string>("grid_output_topic", "/terrain_grid_map");
     slope_cost_topic_ =
       declare_parameter<std::string>("slope_cost_topic", "/slope_costmap");
+    // 地形代价点云：给自定义 TerrainLayer 用(渐变 + 持久)。每个有效 slope_cost
+    // 格子发一个点(x,y=格心, 字段 cost=0..100),odom 系。
+    cost_cloud_enable_ = declare_parameter<bool>("cost_cloud_enable", true);
+    cost_cloud_topic_ =
+      declare_parameter<std::string>("cost_cloud_topic", "/terrain_cost_cloud");
     base_frame_ = declare_parameter<std::string>("base_frame", "base_link");
 
     // ---- 地面层（邻域低分位）------------------------------------------------
@@ -121,6 +128,10 @@ public:
     scan_pub_ = create_publisher<sensor_msgs::msg::LaserScan>(output_topic_, 10);
     grid_pub_ = create_publisher<grid_map_msgs::msg::GridMap>(grid_output_topic_, 1);
     slope_cost_pub_ = create_publisher<nav_msgs::msg::OccupancyGrid>(slope_cost_topic_, 1);
+    if (cost_cloud_enable_) {
+      cost_cloud_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(
+        cost_cloud_topic_, rclcpp::SensorDataQoS());
+    }
     if (publish_filtered_pcd_) {
       pcd_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>("/livox_pcd", 10);
     }
@@ -174,7 +185,56 @@ private:
       // slope_cost 层已是 0..100（NaN=未知）; 直接线性映射到 OccupancyGrid.
       grid_map::GridMapRosConverter::toOccupancyGrid(*grid, "slope_cost", 0.0f, 100.0f, occ);
       slope_cost_pub_->publish(occ);
+
+      // 地形代价点云(给 TerrainLayer): 每个有效格发一个点, 附 cost=0..100.
+      if (cost_cloud_enable_ && cost_cloud_pub_) {
+        publishCostCloud(*grid, msg->header.stamp);
+      }
     }
+  }
+
+  // 把 slope_cost 层拍成 PointCloud2(x,y=格心, z=0, float cost=0..100), grid(odom) 系.
+  void publishCostCloud(const grid_map::GridMap & grid, const rclcpp::Time & stamp)
+  {
+    const grid_map::Matrix & cost = grid["slope_cost"];
+    const grid_map::Size size = grid.getSize();
+
+    sensor_msgs::msg::PointCloud2 cloud;
+    cloud.header.frame_id = grid.getFrameId();
+    cloud.header.stamp = stamp;
+    cloud.height = 1;
+    cloud.is_dense = false;
+    cloud.is_bigendian = false;
+
+    sensor_msgs::PointCloud2Modifier mod(cloud);
+    mod.setPointCloud2Fields(
+      4,
+      "x", 1, sensor_msgs::msg::PointField::FLOAT32,
+      "y", 1, sensor_msgs::msg::PointField::FLOAT32,
+      "z", 1, sensor_msgs::msg::PointField::FLOAT32,
+      "cost", 1, sensor_msgs::msg::PointField::FLOAT32);
+    mod.resize(static_cast<size_t>(size(0)) * static_cast<size_t>(size(1)));
+
+    sensor_msgs::PointCloud2Iterator<float> ox(cloud, "x");
+    sensor_msgs::PointCloud2Iterator<float> oy(cloud, "y");
+    sensor_msgs::PointCloud2Iterator<float> oz(cloud, "z");
+    sensor_msgs::PointCloud2Iterator<float> oc(cloud, "cost");
+
+    size_t n = 0;
+    for (grid_map::GridMapIterator it(grid); !it.isPastEnd(); ++it) {
+      const grid_map::Index idx(*it);
+      const float c = cost(idx(0), idx(1));
+      if (!std::isfinite(c)) continue;
+      grid_map::Position pos;
+      grid.getPosition(idx, pos);
+      *ox = static_cast<float>(pos.x());
+      *oy = static_cast<float>(pos.y());
+      *oz = 0.0f;
+      *oc = c;
+      ++ox; ++oy; ++oz; ++oc; ++n;
+    }
+    mod.resize(n);
+    cost_cloud_pub_->publish(cloud);
   }
 
   // 地面层 = 邻域低分位. 低分位对"戳出来的障碍/植被"免疫, 又能跟随坡面.
@@ -445,6 +505,8 @@ private:
   // ---- params ----
   std::string cloud_topic_, elevation_topic_, elevation_layer_;
   std::string output_topic_, grid_output_topic_, slope_cost_topic_, base_frame_;
+  bool cost_cloud_enable_;
+  std::string cost_cloud_topic_;
   double ground_percentile_;
   int ground_radius_, ground_min_cells_;
   double obstacle_min_height_, obstacle_max_height_;
@@ -467,6 +529,7 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr scan_pub_;
   rclcpp::Publisher<grid_map_msgs::msg::GridMap>::SharedPtr grid_pub_;
   rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr slope_cost_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr cost_cloud_pub_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pcd_pub_;
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;

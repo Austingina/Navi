@@ -71,9 +71,14 @@ def generate_launch_description():
             'slope_enable': True,
             'slope_window': 1,
             'slope_free_deg': 3.0,
+            # 统一阈值：>=15° 判不能通行(TerrainLayer 记 LETHAL 并 60m 持久)，
+            # 8~12° 路口斜坡落在软代价区间仍可走。
             'slope_lethal_deg': 12.0,
             # <1 使中等坡度代价更高(更强软避让),不改 lethal 阈值。0.5=明显加重。
             'slope_gamma': 0.5,
+            # 地形代价点云(给自定义 TerrainLayer 用)。
+            'cost_cloud_enable': True,
+            'cost_cloud_topic': '/terrain_cost_cloud',
             # 多帧累积：把最近若干帧的存活障碍点在 odom 系累起来再投 2D，
             # 单帧稀疏被时间窗补满，障碍不再闪烁/缺角。
             'accumulate_enable': True,

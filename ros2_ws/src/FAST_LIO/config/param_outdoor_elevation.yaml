@@ -176,19 +176,19 @@ local_costmap:
       height: 10
       resolution: 0.05
       footprint: "[ [-0.4, -0.4], [-0.4, 0.4],[0.4, 0.4],[0.4, -0.4] ]"
-      # slope_layer 在前写入分级坡度代价，obstacle_layer 用 Max 叠加点云障碍。
-      plugins: ["slope_layer", "obstacle_layer", "inflation_layer"]
+      # terrain_layer 在前写入分级地形代价(渐变+陡坡lethal),obstacle_layer 用 Max 叠加点云障碍。
+      plugins: ["terrain_layer", "obstacle_layer", "inflation_layer"]
 
-      # 坡度分级代价层：读 terrain_scan 发布的 /slope_costmap（odom 系）。
-      # trinary_costmap:false -> 0..100 线性映射成 0..254 代价，100=lethal；
-      # -1(未知) 不覆盖。缓坡代价递增 => 同等条件优先平地；陡坡 lethal => 过不去。
-      slope_layer:
-        plugin: "nav2_costmap_2d::StaticLayer"
+      # 自定义地形代价层：读 terrain_scan 的 /terrain_cost_cloud（cost=0..100, odom 系）。
+      # cost<lethal_cost_threshold -> 渐变代价(缓坡软避让)；>= -> LETHAL(陡坡/路沿)。
+      # 自带滚动栅格,随窗口累积持久(60m 内不遗忘),取代旧 StaticLayer(不持久+刷屏)。
+      terrain_layer:
+        plugin: "terrain_costmap_layer::TerrainLayer"
         enabled: True
-        map_topic: /slope_costmap
-        subscribe_to_updates: false
-        map_subscribe_transient_local: false
-        trinary_costmap: false
+        cost_topic: /terrain_cost_cloud
+        combination_method: 1
+        lethal_cost_threshold: 100.0
+        transform_tolerance: 0.3
 
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
@@ -247,18 +247,18 @@ global_costmap:
       # false：未观测格子当作 FREE，配合 planner allow_unknown:true 可朝远处目标规划。
       track_unknown_space: false
       footprint: "[ [-0.4, -0.4], [-0.4, 0.4],[0.4, 0.4],[0.4, -0.4] ]"
-      # slope_layer 提供全局的分级坡度代价，让全局规划优先选平地路线。
-      plugins: ["slope_layer", "obstacle_layer", "inflation_layer"]
+      # terrain_layer 提供全局的分级地形代价 + 陡坡/路沿 lethal，且随 60m 窗口累积持久。
+      plugins: ["terrain_layer", "obstacle_layer", "inflation_layer"]
 
-      # 坡度分级代价层（同局部）。/slope_costmap 为 odom 系，StaticLayer 经 tf
-      # 变换到 global_frame(map)；若跨帧变换异常，可只在局部代价图启用本层。
-      slope_layer:
-        plugin: "nav2_costmap_2d::StaticLayer"
+      # 自定义地形代价层（同局部）。/terrain_cost_cloud 为 odom 系，层内经 tf 变换到
+      # global_frame(map) 并写入自身滚动栅格累积；本机 map->odom 仅平移,变换稳定。
+      terrain_layer:
+        plugin: "terrain_costmap_layer::TerrainLayer"
         enabled: True
-        map_topic: /slope_costmap
-        subscribe_to_updates: false
-        map_subscribe_transient_local: false
-        trinary_costmap: false
+        cost_topic: /terrain_cost_cloud
+        combination_method: 1
+        lethal_cost_threshold: 100.0
+        transform_tolerance: 0.3
 
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"

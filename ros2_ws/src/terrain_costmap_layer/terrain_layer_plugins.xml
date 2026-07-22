@@ -1,0 +1,11 @@
+<class_libraries>
+  <library path="terrain_costmap_layer">
+    <class type="terrain_costmap_layer::TerrainLayer" base_class_type="nav2_costmap_2d::Layer">
+      <description>
+        Persistent graded terrain (slope) cost layer. Writes graded cost for
+        gentle terrain and LETHAL for steep terrain / curb drop-offs, and
+        accumulates over the rolling window so it persists as the robot moves.
+      </description>
+    </class>
+  </library>
+</class_libraries>

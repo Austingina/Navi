@@ -29,6 +29,9 @@ def generate_launch_description():
         'slope_free_deg': 5.0,
         'slope_lethal_deg': 25.0,
         'slope_gamma': 1.0,
+        # 地形代价点云(给自定义 TerrainLayer 用)
+        'cost_cloud_enable': True,
+        'cost_cloud_topic': '/terrain_cost_cloud',
         # 多帧累积
         'accumulate_enable': True,
         'accumulate_time': 0.8,
