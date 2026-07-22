@@ -1,21 +1,68 @@
 # Navi Map Server
 
-地图分发服务：把 `/maps/<map_id>/` 下的整套地图资源（PCD 点云、`<map_id>.json`
-路径图、VPR 数据库等）通过 HTTP 暴露给机器人，并支持增量更新。
+地图分发服务：把 `/maps/<map_id>/` 下的整套地图资源通过 HTTP 暴露给机器人，并支持增量更新。
+支持两种地图数据布局（均由 MapEditor 产出）：
+
+- **场景地图（Scene，推荐 / 新格式）**：`scene.json` + OSM 底图（`osm/*.osm|*.osm.pbf`）
+  + 各 SLAM 地图的 PCD（按 `pcd_base` 分子目录）。一个 `scene.json` 内联 OSM、多张 SLAM 地图与跨地图全局路线。
+- **单张 SLAM 地图工程（旧格式，兼容）**：`<map_id>.json`（`multifloor.json` 风格）+ 若干 `.pcd` + VPR 数据库等。
+
+两种布局的分发/增量同步机制完全一致——服务端只按文件 `sha256` 做差异，与地图格式无关。
 
 ## 设计要点
 
 - **接口**：`GET http://ip:port/mapserver/<map_id>` 返回 manifest（JSON）。
-- **增量更新**：客户端按 manifest 中每个文件的 `sha256` 比对，只重传变更或缺失的文件。
-- **版本号**：优先读 `<map_dir>/<map_id>.json` 中 `global.version` 与 `global.build_no`
-  —— 这是 **MapEditor 保存时写入的位置**（保存时 `build_no` 自动刷新为当前 epoch 秒）。
-  备选：独立的 `<map_dir>/version.json`（兼容旧布局）；都没有时由服务端按 mtime 自动派生。
+- **增量更新**：客户端按 manifest 中每个文件的 `sha256` 比对，只重传变更或缺失的文件（格式无关）。
+- **版本号**：按优先级读取（详见「版本号来源」）：
+  1. `<map_dir>/scene.json` 的 `scene.build_no`（**场景地图**，顶层无 `global`）；
+  2. `<map_dir>/<map_id>.json` 的 `global.version` / `global.build_no`（**单张 SLAM 地图工程**）；
+  3. 独立的 `<map_dir>/version.json`（兼容旧布局）；
+  4. 都没有时由服务端按 mtime 自动派生。
+  MapEditor 的 `build_no` 均为 14 位 `YYYYMMDDHHMMSS`，且**仅在对应内容有更新时**才刷新时间戳。
 - **断点续传**：服务端支持 HTTP `Range`；客户端写 `*.partial` → 校验 sha256 → 原子 `os.replace`。
 - **崩溃可续**：客户端每下完一个文件就持久化一次本地 manifest，下次重启不会重传已下完的部分。
 - **路径遍历防护**：所有相对路径 `..`、绝对路径、转义字符都会被服务端拒绝。
 - **认证**：暂未做（默认仅在内网部署），可在反向代理层加 Basic Auth 或 mTLS。
 
 ## 目录结构
+
+**场景地图（新格式）** —— 一个 `map_id` 目录即一个「场景」：
+
+```
+/home/nvidia/Navi/maps/
+├── park/                ← map_id="park"（场景目录）
+│   ├── scene.json       ← scene.build_no 即权威版本号（顶层无 global）
+│   ├── osm/
+│   │   └── park.osm.pbf ← OSM 底图（scene.osm.source 相对引用）
+│   ├── buildingA/       ← 某张 SLAM 地图的 PCD（slam_maps.buildingA.pcd_base）
+│   │   ├── 1f.pcd
+│   │   └── 2f.pcd
+│   ├── buildingB/
+│   │   └── 1F.pcd
+│   └── .mapserver_manifest.json  ← 客户端自动生成（同步状态）
+```
+
+`scene.json` 顶部（MapEditor「保存场景」写出）：
+
+```json
+{
+  "scene": {
+    "name": "示例园区",
+    "crs": "WGS84",
+    "build_no": 20260721204312,
+    "osm": { "source": "osm/park.osm.pbf", "bounds": { "...": "..." } }
+  },
+  "slam_maps": { "buildingA": { "geo_anchor": {"...": "..."}, "global": {"...": "..."} } },
+  "routes": { "...": "跨地图全局路线" }
+}
+```
+
+- 场景版本以 **`scene.build_no`** 为准（`YYYYMMDDHHMMSS`）：**仅当场景内容有更新时**才刷新
+  （任一 SLAM 地图内部信息变化也会带动它更新）；服务端 version 取 `scene.name`、build_no 取 `scene.build_no`。
+- 每张 SLAM 地图各自的 `slam_maps.<id>.global.build_no` 也遵循“**其内部信息有更新才刷新**”。它们随
+  `scene.json` 的内容一起参与文件哈希，因此任何一张地图变化都会触发对应文件重传。
+
+**单张 SLAM 地图工程（旧格式，兼容）** —— 一个 `map_id` 目录即一张多子地图 SLAM 地图：
 
 ```
 /home/nvidia/Navi/maps/
@@ -25,9 +72,7 @@
 │   ├── 2f.pcd
 │   ├── vpr/2f/...
 │   ├── version.json     ← (可选) 兼容旧布局，独立维护版本号
-│   └── .mapserver_manifest.json  ← 客户端自动生成（同步状态）
-└── multifloor/
-    └── ...
+│   └── .mapserver_manifest.json
 ```
 
 `408.json` 顶部（MapEditor 写出）：
@@ -45,13 +90,20 @@
 ```
 
 - **`version`**：人维护，从 `"1.0"` 开始，按需在 MapEditor 的"文件 → 修改版本号..."里改。
-- **`build_no`**：每次保存自动刷为本地时间 `YYYYMMDDHHMMSS`（如 `20260518205930` 表示 2026-05-18 20:59:30）。14 位整数，单调递增 + 一眼可读。
+- **`build_no`**：内容有更新时刷为本地时间 `YYYYMMDDHHMMSS`（如 `20260518205930` 表示 2026-05-18 20:59:30）。14 位整数，单调递增 + 一眼可读。
 
 可选的独立 `version.json`（仅当地图不由 MapEditor 编辑时使用）：
 
 ```json
 { "version": "1.2.3", "build_no": 20260518205930 }
 ```
+
+### 版本号来源（服务端解析优先级）
+
+1. `scene.json` → `scene.build_no`（场景地图）；
+2. `<map_id>.json` → `global.version` / `global.build_no`（单张 SLAM 地图工程）；
+3. `version.json`（兼容旧约定）；
+4. 都没有 → 自动派生（`version="auto-<8位sha>"`、`build_no` 取最新 mtime 的 `YYYYMMDDHHMMSS`，仅适合开发环境）。
 
 ## 部署服务端
 
@@ -199,8 +251,9 @@ if result.status == SyncStatus.FAILED:
 - **backup（备份）**：`~/mapserver/backup`（默认根），按
   `~/mapserver/backup/<map_id>/<build_no>` 分层存放。
 
-`build_no` 取当前地图 `<map_id>.json` 中 `global.build_no`（14 位时间戳
-`YYYYMMDDHHMMSS`），所以"同一张地图的每个保存版本"自然落到不同的备份目录。
+`build_no` 按与 manifest 相同的优先级解析（`scene.json` 的 `scene.build_no` →
+`<map_id>.json` 的 `global.build_no` → `version.json`；均为 14 位时间戳 `YYYYMMDDHHMMSS`），
+所以"同一张地图/场景的每个保存版本"自然落到不同的备份目录。
 
 ```
 ~/mapserver/

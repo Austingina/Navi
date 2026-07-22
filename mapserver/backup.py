@@ -7,9 +7,10 @@
 - **backup（备份目录）**：``~/mapserver/backup``（默认），按
   ``~/mapserver/backup/<map_id>/<build_no>`` 分层存放历史快照。
 
-``build_no`` 取当前地图 ``<map_id>.json`` 中 ``global.build_no``
-（14 位时间戳 ``YYYYMMDDHHMMSS``，如 ``20260601151834``），既单调递增又人类可读，
-天然适合做"同一张地图的多个历史版本"的目录名。
+``build_no`` 按与 manifest 相同的优先级解析（``scene.json`` 的 ``scene.build_no`` →
+``<map_id>.json`` 的 ``global.build_no`` → ``version.json``；均为 14 位时间戳
+``YYYYMMDDHHMMSS``，如 ``20260601151834``），既单调递增又人类可读，
+天然适合做"同一张地图/场景的多个历史版本"的目录名。
 
 典型用法::
 
@@ -119,8 +120,8 @@ def _dir_size(path: Path) -> int:
 def _resolve_build_no(map_dir: Path, map_id: str) -> str:
     """确定 front 目录当前应使用的 build_no。
 
-    优先级：``<map_id>.json`` 的 ``global.build_no`` → ``version.json`` →
-    都没有时回退到当前本地时间 ``YYYYMMDDHHMMSS``（保证总能产出一个目录名）。
+    优先级：``scene.json`` 的 ``scene.build_no`` → ``<map_id>.json`` 的 ``global.build_no``
+    → ``version.json`` → 都没有时回退到当前本地时间 ``YYYYMMDDHHMMSS``（保证总能产出目录名）。
     """
     info = _resolve_version_info(map_dir, map_id)
     if info is not None:
@@ -404,7 +405,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     pb = sub.add_parser("backup", help="备份 front/<map_id> 到 backup/<map_id>/<build_no>")
     pb.add_argument("--map", required=True, dest="map_id")
     pb.add_argument("--build-no", default=None,
-                    help="指定 build_no（默认读 <map_id>.json 的 global.build_no）")
+                    help="指定 build_no（默认读 scene.json 的 scene.build_no 或 <map_id>.json 的 global.build_no）")
     pb.add_argument("--force", action="store_true",
                     help="目标 build_no 已存在时覆盖（默认跳过）")
     pb.set_defaults(func=_cmd_backup)
