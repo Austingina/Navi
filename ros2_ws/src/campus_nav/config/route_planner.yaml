@@ -37,7 +37,7 @@
     nav2_batch_enable: true
     nav2_batch_radius_m: 9.0
     nav2_batch_advance_m: 5.0
-    nav2_reach_tol_m: 3.0
+    nav2_reach_tol_m: 1.0
     nav2_batch_period_s: 2.0
     patrol_enable: true
     patrol_name: patrol_01

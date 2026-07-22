@@ -1,0 +1,71 @@
+# =============================================================================
+# dual_ekf_navsat_heading_align.yaml — 实车 GPS 融合 + 在线航向对北
+# =============================================================================
+# 与 dual_ekf_navsat.yaml 相同的 EKF 段；navsat 段改为配合 gps_heading_align：
+#   - wait_for_datum: true  → 等 align 首锁后 SetDatum，避免错误航向锁原点
+#   - yaw_offset: 0         → 绝对航向已打进 /odometry/absolute_yaw
+#   - use_odometry_yaw: true
+#
+# 仅 outdoor_localization.launch.py 默认使用本文件。
+# outdoor_bringup / outdoor_localization_dammy 继续用 dual_ekf_navsat.yaml。
+#
+# 城市峡谷：align 节点在 GPS 质差时冻结 yaw_offset，不反复 SetDatum。
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# 全局 EKF：融合 LIO 里程(连续) + GPS(绝对) → 发布 map->odom
+# -----------------------------------------------------------------------------
+ekf_filter_node_map:
+  ros__parameters:
+    frequency: 30.0
+    sensor_timeout: 0.2
+    two_d_mode: true
+    transform_time_offset: 0.0
+    transform_timeout: 0.0
+    print_diagnostics: true
+    debug: true
+    publish_tf: true
+
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_link
+    world_frame: map
+
+    odom0: /Odometry
+    # 顺序: [x, y, z, roll, pitch, yaw, vx, vy, vz, vroll, vpitch, vyaw, ax, ay, az]
+    odom0_config: [false, false, false,
+                   false, false, true,
+                   true,  true,  false,
+                   false, false, true,
+                   false, false, false]
+
+    odom0_queue_size: 10
+    odom0_differential: false
+    odom0_relative: false
+
+    odom1: /odometry/gps
+    odom1_config: [true,  true,  false,
+                   false, false, false,
+                   false, false, false,
+                   false, false, false,
+                   false, false, false]
+    odom1_queue_size: 10
+    odom1_differential: false
+    odom1_relative: false
+
+    use_control: false
+
+# -----------------------------------------------------------------------------
+# navsat_transform：航向来自 gps_heading_align 的 /odometry/absolute_yaw
+# -----------------------------------------------------------------------------
+navsat_transform:
+  ros__parameters:
+    frequency: 30.0
+    delay: 3.0
+    magnetic_declination_radians: 0.0
+    yaw_offset: 0.0                  # 补偿已打进 absolute_yaw，保持 0
+    zero_altitude: true
+    broadcast_cartesian_transform: false
+    publish_filtered_gps: true
+    use_odometry_yaw: true           # 读 absolute_yaw 的绝对 ENU 航向
+    wait_for_datum: true             # 等 gps_heading_align 首锁后 SetDatum

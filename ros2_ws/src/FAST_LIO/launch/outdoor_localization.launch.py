@@ -13,8 +13,10 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time', default='true')
 
     fast_lio_dir = get_package_share_directory('fast_lio')
+    # Heading-align params (wait_for_datum + absolute yaw). Simulation bringup
+    # keeps using dual_ekf_navsat.yaml via outdoor_localization_dammy.
     params_file = LaunchConfiguration('params', default=os.path.join(
-        fast_lio_dir, 'config', 'dual_ekf_navsat.yaml'))
+        fast_lio_dir, 'config', 'dual_ekf_navsat_heading_align.yaml'))
 
     # FAST-LIO sensor config, overridable from CLI.
     config_path = LaunchConfiguration('config_path', default=os.path.join(
@@ -25,7 +27,7 @@ def generate_launch_description():
         description='Use simulation clock if true')
     declare_params = DeclareLaunchArgument(
         'params', default_value=params_file,
-        description='robot_localization params (ekf + navsat)')
+        description='robot_localization params (ekf + navsat); default=heading_align')
     declare_config_path = DeclareLaunchArgument(
         'config_path', default_value=config_path,
         description='FAST-LIO sensor yaml config path')
@@ -82,6 +84,29 @@ def generate_launch_description():
         condition=use_cupy_elevation,
     )
 
+    # GPS course → absolute ENU yaw for navsat (urban-canyon gated).
+    heading_align_node = Node(
+        package='fast_lio',
+        executable='gps_heading_align.py',
+        name='gps_heading_align',
+        output='screen',
+        parameters=[{
+            'use_sim_time': use_sim_time,
+            'fix_topic': '/gps/fix',
+            'odom_topic': '/Odometry',
+            'absolute_yaw_topic': '/odometry/absolute_yaw',
+            'status_topic': '/heading_align/status',
+            'datum_service': '/navsat_transform/datum',
+            'auto_drive': False,
+            'exit_after_lock': False,
+            'refine_after_lock': False,
+            'min_speed': 0.5,
+            'min_distance': 5.0,
+            'max_h_var': 25.0,
+            'call_set_datum': True,
+        }],
+    )
+
     # 全局 EKF：输出 map->odom。内部话题 odometry/filtered 重映射成独立名，
     # 供 navsat_transform 回读（datum/反馈用）。
     ekf_map_node = Node(
@@ -110,7 +135,7 @@ def generate_launch_description():
         condition=use_gps_simple,
     )
 
-    # navsat_transform：/fix -> /odometry/gps。
+    # navsat_transform：/fix + absolute_yaw -> /odometry/gps。
     navsat_node = Node(
         package='robot_localization',
         executable='navsat_transform_node',
@@ -120,9 +145,7 @@ def generate_launch_description():
         remappings=[
             ('imu', '/livox/imu'),
             ('gps/fix', '/gps/fix'),
-            # ('odometry/filtered', '/odometry/filtered_map'),
-            ('odometry/filtered', '/odom_gt'),
-            # Output
+            ('odometry/filtered', '/odometry/absolute_yaw'),
             ('odometry/gps', '/odometry/gps'),
             ('gps/filtered', '/gps/filtered'),
         ],
@@ -136,9 +159,10 @@ def generate_launch_description():
         declare_map_odom_source,
         fast_lio_node,
         cupy_elevation,
+        heading_align_node,
         ekf_map_node,
         map_odom_gps_node,
         navsat_node,
-        # tf_odom_to_camera_init,
-        # tf_body_to_base_link,
+        tf_odom_to_camera_init,
+        tf_body_to_base_link,
     ])

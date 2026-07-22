@@ -92,9 +92,9 @@ void ClearCostmapService::clearEntireCallback(
   const std::shared_ptr<ClearEntirely::Request>/*request*/,
   const std::shared_ptr<ClearEntirely::Response>/*response*/)
 {
-  RCLCPP_INFO(
+  RCLCPP_WARN(
     logger_, "%s",
-    ("Received request to clear entirely the " + costmap_.getName()).c_str());
+    ("[clearEntirely] Received request to clear entirely the " + costmap_.getName()).c_str());
 
   clearEntirely();
 }

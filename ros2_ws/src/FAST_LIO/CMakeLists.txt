@@ -164,6 +164,7 @@ install(TARGETS fastlio_mapping fastlio_odometry chassis_ekf
 install(PROGRAMS
   scripts/cmd_vel_bridge.py
   scripts/map_odom_from_gps.py
+  scripts/gps_heading_align.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

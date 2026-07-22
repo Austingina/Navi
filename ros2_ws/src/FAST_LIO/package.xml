@@ -26,6 +26,8 @@
   <exec_depend>grid_map_pcl</exec_depend>
   <exec_depend>elevation_mapping_cupy</exec_depend>
   <exec_depend>campus_nav</exec_depend>
+  <exec_depend>robot_localization</exec_depend>
+  <exec_depend>geographic_msgs</exec_depend>
   <depend>std_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>common_interfaces</depend>

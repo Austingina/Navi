@@ -1,7 +1,7 @@
 bt_navigator:
   ros__parameters:
     use_sim_time: True # 仿真时为 True
-    transform_tolerance: 0.1
+    transform_tolerance: 0.5 # 仿真时为 0.5, 真实时为 0.1
     goal_reached_tol: 0.25
     global_frame: map
     robot_base_frame: base_link
@@ -241,8 +241,8 @@ global_costmap:
       use_sim_time: True
       transform_tolerance: 1.3
       rolling_window: true
-      width: 60
-      height: 60
+      width: 100
+      height: 100
       resolution: 0.1
       # false：未观测格子当作 FREE，配合 planner allow_unknown:true 可朝远处目标规划。
       track_unknown_space: false
