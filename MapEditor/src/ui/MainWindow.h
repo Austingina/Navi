@@ -14,10 +14,12 @@
 class QStackedWidget;
 class QTabWidget;
 class QMenu;
+class QAction;
 #include "ui/PropertiesPanel.h"
 #include "ui/BuildVprDatabaseDialog.h"
 #include <QMainWindow>
 #include <QMap>
+#include <QList>
 #include <QSet>
 #include <QPair>
 #include <QStatusBar>
@@ -99,6 +101,9 @@ private slots:
     void onMenuRemoveScenePoint();
     void onMenuRemoveScenePortal();
     void onMenuRemoveGlobalRoute();
+    void onMenuRemoveSlamMap();   ///< 菜单：弹选择框后删除某张 SLAM 地图
+    void onEditOsmPath();         ///< 菜单：修改 OSM 底图源文件路径引用
+    void onRenameScene();         ///< 菜单：修改整个场景的名称
 
     // ── 全局路线 ─────────────────────────────────────────────────────
     void onAddGlobalRoute();
@@ -227,7 +232,8 @@ private:
     PropertiesPanel*  propsPanel_ = nullptr;
     QLabel*           statusLabel_ = nullptr;
     QDoubleSpinBox*   globalVoxelSpin_ = nullptr;
-    QMenu*            sceneMapMenu_ = nullptr;   ///< 「场景地图」菜单：仅在场景地图 Tab 激活时可用
+    QMenu*            sceneMapMenu_ = nullptr;   ///< 「场景地图」菜单
+    QList<QAction*>   sceneMapActiveActions_;    ///< 仅在「场景地图」Tab 激活时可用的菜单项（导入组除外）
 
     bool sceneOverviewDirty_ = true;   ///< 场景组成变化后需重建总览足迹
     QVector<QString> sceneViewRowToId_;  ///< 总览足迹行 → SLAM 地图 id

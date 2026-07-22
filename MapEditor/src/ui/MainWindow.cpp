@@ -221,23 +221,36 @@ void MainWindow::setupMenuBar() {
     editMenu->addSeparator();
     editMenu->addAction("新增 Submap...", this, &MainWindow::onAddSubmap, QKeySequence("Ctrl+N"));
 
-    // ── 「场景地图」菜单：仅在「场景地图」Tab 激活时可用 ────────────────
+    // ── 「场景地图」菜单 ────────────────────────────────────────────────
     sceneMapMenu_ = menuBar()->addMenu("场景地图(&S)");
+    // 场景相关：始终可用
+    sceneMapMenu_->addAction("场景重命名...", this, &MainWindow::onRenameScene);
+    sceneMapMenu_->addSeparator();
+    // 导入相关：始终可用（即使「场景地图」Tab 未激活）
+    sceneMapMenu_->addAction("导入 OSM 底图...", this, &MainWindow::onImportOsm);
+    sceneMapMenu_->addAction("导入 SLAM 地图...", this, &MainWindow::onImportSlamMap);
+    sceneMapMenu_->addAction("删除 SLAM 地图...", this, &MainWindow::onMenuRemoveSlamMap);
+    sceneMapMenu_->addAction("修改 OSM 底图路径...", this, &MainWindow::onEditOsmPath);
+    sceneMapMenu_->addSeparator();
+
+    // 以下操作仅在「场景地图」Tab 激活时可用
+    sceneMapActiveActions_.clear();
     // 语义节点
-    sceneMapMenu_->addAction("新增语义节点", this, &MainWindow::onAddScenePoint);
-    sceneMapMenu_->addAction("重命名语义节点...", this, &MainWindow::onMenuRenameScenePoint);
-    sceneMapMenu_->addAction("新建区域...", this, &MainWindow::onAddScenePointArea);
-    sceneMapMenu_->addAction("删除语义节点...", this, &MainWindow::onMenuRemoveScenePoint);
+    sceneMapActiveActions_ << sceneMapMenu_->addAction("新增语义节点", this, &MainWindow::onAddScenePoint);
+    sceneMapActiveActions_ << sceneMapMenu_->addAction("重命名语义节点...", this, &MainWindow::onMenuRenameScenePoint);
+    sceneMapActiveActions_ << sceneMapMenu_->addAction("新建区域...", this, &MainWindow::onAddScenePointArea);
+    sceneMapActiveActions_ << sceneMapMenu_->addAction("删除语义节点...", this, &MainWindow::onMenuRemoveScenePoint);
     sceneMapMenu_->addSeparator();
     // 传送门
-    sceneMapMenu_->addAction("添加传送门...", this, &MainWindow::onAddScenePortal);
-    sceneMapMenu_->addAction("删除传送门...", this, &MainWindow::onMenuRemoveScenePortal);
+    sceneMapActiveActions_ << sceneMapMenu_->addAction("添加传送门...", this, &MainWindow::onAddScenePortal);
+    sceneMapActiveActions_ << sceneMapMenu_->addAction("删除传送门...", this, &MainWindow::onMenuRemoveScenePortal);
     sceneMapMenu_->addSeparator();
     // 全局路线
-    sceneMapMenu_->addAction("添加全局路线...", this, &MainWindow::onAddGlobalRoute);
-    sceneMapMenu_->addAction("删除全局路线...", this, &MainWindow::onMenuRemoveGlobalRoute);
+    sceneMapActiveActions_ << sceneMapMenu_->addAction("添加全局路线...", this, &MainWindow::onAddGlobalRoute);
+    sceneMapActiveActions_ << sceneMapMenu_->addAction("删除全局路线...", this, &MainWindow::onMenuRemoveGlobalRoute);
     // 初始可用状态与当前激活的 Tab 一致
-    sceneMapMenu_->menuAction()->setEnabled(leftTabs_ && leftTabs_->currentIndex() == kSceneTab);
+    const bool sceneActive = (leftTabs_ && leftTabs_->currentIndex() == kSceneTab);
+    for (auto* a : sceneMapActiveActions_) a->setEnabled(sceneActive);
 
     // 工具栏
     auto* toolbar = addToolBar("主工具栏");
@@ -1441,6 +1454,56 @@ void MainWindow::onMenuRemoveGlobalRoute() {
     onRemoveGlobalRoute(name);
 }
 
+void MainWindow::onMenuRemoveSlamMap() {
+    const auto& maps = scene_.maps();
+    if (maps.isEmpty()) {
+        QMessageBox::information(this, "删除 SLAM 地图", "当前场景还没有 SLAM 地图。");
+        return;
+    }
+    QStringList labels, ids;
+    for (const auto& e : maps) {
+        labels << (e.name.isEmpty() ? e.id : QString("%1 (%2)").arg(e.name, e.id));
+        ids   << e.id;
+    }
+    bool ok = false;
+    QString picked = QInputDialog::getItem(this, "删除 SLAM 地图",
+        "选择要删除的 SLAM 地图:", labels, 0, false, &ok);
+    if (!ok || picked.isEmpty()) return;
+    int idx = labels.indexOf(picked);
+    if (idx < 0 || idx >= ids.size()) return;
+    onRemoveSlamMap(ids[idx]);   // 内部已带确认框
+}
+
+void MainWindow::onRenameScene() {
+    bool ok = false;
+    const QString cur = scene_.name();
+    QString name = QInputDialog::getText(this, "场景重命名",
+        "场景名称:", QLineEdit::Normal, cur, &ok);
+    name = name.trimmed();
+    if (!ok || name.isEmpty() || name == cur) return;
+    scene_.setName(name);
+    markDirty();
+    statusLabel_->setText("已重命名场景: " + name);
+}
+
+void MainWindow::onEditOsmPath() {
+    if (!scene_.hasOsm()) {
+        QMessageBox::information(this, "修改 OSM 底图路径",
+            "当前场景还没有 OSM 底图，请先「导入 OSM 底图」。");
+        return;
+    }
+    bool ok = false;
+    const QString cur = scene_.osmSource();
+    QString path = QInputDialog::getText(this, "修改 OSM 底图路径",
+        "OSM 底图源文件路径（仅修改引用，不重新解析几何）:",
+        QLineEdit::Normal, cur, &ok);
+    path = path.trimmed();
+    if (!ok || path.isEmpty() || path == cur) return;
+    scene_.setOsmSource(path);
+    markDirty();
+    statusLabel_->setText("已修改 OSM 底图路径: " + path);
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 //  正交叠加对齐窗口：各 SLAM 地图俯视投影叠加到 OSM 底图
 // ═══════════════════════════════════════════════════════════════════════
@@ -1508,9 +1571,10 @@ void MainWindow::onLeftTabChanged(int index) {
     } else {
         centralStack_->setCurrentWidget(viewer_);
     }
-    // 「场景地图」菜单仅在「场景地图」Tab 激活时可用
-    if (sceneMapMenu_)
-        sceneMapMenu_->menuAction()->setEnabled(index == kSceneTab);
+    // 「场景地图」菜单里除导入组外的操作，仅在「场景地图」Tab 激活时可用
+    const bool sceneActive = (index == kSceneTab);
+    for (auto* a : sceneMapActiveActions_)
+        if (a) a->setEnabled(sceneActive);
 }
 
 // ═══════════════════════════════════════════════════════════════════════

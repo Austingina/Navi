@@ -68,6 +68,8 @@ public:
     std::shared_ptr<OsmData> osm() const { return osm_; }
     QString osmSource() const { return osmSource_; }
     void setOsm(std::shared_ptr<OsmData> osm, const QString& source);
+    /// 仅修改底图源文件路径引用（不重新解析几何，用于修正/迁移路径）。
+    void setOsmSource(const QString& source) { osmSource_ = source; }
 
     // ── 场景 ENU 原点 ────────────────────────────────────────────────
     bool   hasOrigin() const { return hasOrigin_; }
