@@ -206,7 +206,7 @@ void MainWindow::setupMenuBar() {
     fileMenu->addAction("保存场景 (目录)", this, &MainWindow::onSave, QKeySequence::Save);
     fileMenu->addAction("场景另存为 (目录)...", this, &MainWindow::onSaveAs, QKeySequence("Ctrl+Shift+S"));
     fileMenu->addSeparator();
-    fileMenu->addAction("导入单张地图目录 (multifloor.json)...", this, &MainWindow::onOpen);
+    fileMenu->addAction("打开单张地图（替换场景）...", this, &MainWindow::onOpen);
     fileMenu->addAction("导入 OSM/PBF 底图...", this, &MainWindow::onImportOsm);
     fileMenu->addAction("导入 SLAM 地图...", this, &MainWindow::onImportSlamMap);
     fileMenu->addSeparator();
@@ -615,7 +615,12 @@ bool MainWindow::saveSceneToDir(const QString& dir) {
         return false;
     }
     project_.setDirty(false);
-    currentProjectDir_ = dir;
+    // currentProjectDir_ 用于解析活跃地图的 vpr/ 等资源，应指向活跃地图在场景目录内的
+    // 子目录（<dir>/<mapId>），而非场景根目录 <dir>——否则查看/构建 VPR 会找错路径。
+    if (auto* e = scene_.activeMap())
+        currentProjectDir_ = e->pcdBaseDir;   // saveToDir 已把它更新为 <dir>/<mapId>
+    else
+        currentProjectDir_ = dir;
     updateWindowTitle();
     statusLabel_->setText(QString("已保存场景目录: %1  (%2 张地图, %3 条全局路线)")
                               .arg(dir)
@@ -833,6 +838,17 @@ void MainWindow::onImportSlamMap() {
     refreshScenePanels();
     refreshActiveMapView();
     viewer_->resetCamera();
+
+    // 自动显示已构建 VPR 数据库且勾选可见的 submap 视觉特征点
+    // （此时 currentProjectDir_ 已由 loadProjectFromActiveEntry() 指向导入目录）
+    for (const auto& smId : project_.submapIds()) {
+        auto* sm = project_.submap(smId);
+        if (!sm || !sm->displayOptions().showVprFeatures) continue;
+        QString dbDir = QDir(currentProjectDir_).absoluteFilePath("vpr/" + smId);
+        if (!VprDatabaseData::dirHasDatabase(dbDir)) continue;
+        onShowVprFeaturesChanged(smId, true);
+    }
+
     showLeftTab(kSlamTab);
     markDirty();
     statusLabel_->setText(QString("已导入 SLAM 地图: %1  (%2 个子地图)")
@@ -1892,6 +1908,9 @@ void MainWindow::onOpenScene() {
         return;
     }
     if (scene_.activeMap()) {
+        // loadProjectFromActiveEntry() 会把 currentProjectDir_ 设为活跃地图子目录
+        // （<dir>/<mapId>，其 vpr/ 也在此）。不要再覆盖为场景根目录 <dir>，
+        // 否则查看/构建 VPR 会解析到错误路径而误报“尚未构建”。
         loadProjectFromActiveEntry();
         colorIndex_ = 0;
         for (const auto& id : project_.submapIds()) {
@@ -1900,8 +1919,8 @@ void MainWindow::onOpenScene() {
         }
     } else {
         project_ = MapProject();
+        currentProjectDir_.clear();
     }
-    currentProjectDir_ = dir;
     refreshScenePanels();
     refreshActiveMapView();
     viewer_->resetCamera();

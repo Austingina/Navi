@@ -506,6 +506,22 @@ static bool copyFileOverwrite(const QString& src, const QString& dst) {
     return true;
 }
 
+// 递归复制整个目录（含子目录），用于 VPR 数据库等资源子目录。
+static bool copyDirRecursive(const QString& srcDir, const QString& dstDir) {
+    const QDir src(srcDir);
+    if (!src.exists()) return false;
+    if (QFileInfo(srcDir).absoluteFilePath() == QFileInfo(dstDir).absoluteFilePath())
+        return true;   // 同一目录，无需复制
+    QDir().mkpath(dstDir);
+    for (const auto& fi : src.entryInfoList(QDir::Files | QDir::Hidden | QDir::NoSymLinks))
+        copyFileOverwrite(fi.absoluteFilePath(),
+                          QDir(dstDir).absoluteFilePath(fi.fileName()));
+    for (const auto& fi : src.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden))
+        copyDirRecursive(fi.absoluteFilePath(),
+                         QDir(dstDir).absoluteFilePath(fi.fileName()));
+    return true;
+}
+
 bool Scene::saveToDir(const QString& dir) {
     if (dir.isEmpty()) return false;
     QDir().mkpath(dir);
@@ -542,6 +558,13 @@ bool Scene::saveToDir(const QString& dir) {
         }
         // 兜底：源文件缺失时，用内存点云重新落盘到目录内
         if (anyMissing) e.project->savePcds(newBase);
+
+        // 复制 VPR 数据库目录（<oldBase>/vpr → <newBase>/vpr），保证场景目录自包含、可迁移
+        if (!oldBase.isEmpty()) {
+            const QString vprSrc = QDir(oldBase).absoluteFilePath("vpr");
+            if (QDir(vprSrc).exists())
+                copyDirRecursive(vprSrc, QDir(newBase).absoluteFilePath("vpr"));
+        }
         e.pcdBaseDir = newBase;
     }
 
