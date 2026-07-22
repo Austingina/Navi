@@ -10,6 +10,7 @@
 #include "ui/SceneAlignView.h"
 
 #include <QMenuBar>
+#include <QMenu>
 #include <QToolBar>
 #include <QDockWidget>
 #include <QTabWidget>
@@ -220,9 +221,23 @@ void MainWindow::setupMenuBar() {
     editMenu->addSeparator();
     editMenu->addAction("新增 Submap...", this, &MainWindow::onAddSubmap, QKeySequence("Ctrl+N"));
 
-    auto* sceneMenu = menuBar()->addMenu("场景(&S)");
-    sceneMenu->addAction("场景对齐 (OSM + SLAM)...", this,
-                         &MainWindow::onOpenSceneAlign, QKeySequence("Ctrl+M"));
+    // ── 「场景地图」菜单：仅在「场景地图」Tab 激活时可用 ────────────────
+    sceneMapMenu_ = menuBar()->addMenu("场景地图(&S)");
+    // 语义节点
+    sceneMapMenu_->addAction("新增语义节点", this, &MainWindow::onAddScenePoint);
+    sceneMapMenu_->addAction("重命名语义节点...", this, &MainWindow::onMenuRenameScenePoint);
+    sceneMapMenu_->addAction("新建区域...", this, &MainWindow::onAddScenePointArea);
+    sceneMapMenu_->addAction("删除语义节点...", this, &MainWindow::onMenuRemoveScenePoint);
+    sceneMapMenu_->addSeparator();
+    // 传送门
+    sceneMapMenu_->addAction("添加传送门...", this, &MainWindow::onAddScenePortal);
+    sceneMapMenu_->addAction("删除传送门...", this, &MainWindow::onMenuRemoveScenePortal);
+    sceneMapMenu_->addSeparator();
+    // 全局路线
+    sceneMapMenu_->addAction("添加全局路线...", this, &MainWindow::onAddGlobalRoute);
+    sceneMapMenu_->addAction("删除全局路线...", this, &MainWindow::onMenuRemoveGlobalRoute);
+    // 初始可用状态与当前激活的 Tab 一致
+    sceneMapMenu_->menuAction()->setEnabled(leftTabs_ && leftTabs_->currentIndex() == kSceneTab);
 
     // 工具栏
     auto* toolbar = addToolBar("主工具栏");
@@ -1347,6 +1362,85 @@ void MainWindow::onRemoveScenePortal(const QString& semanticPoint) {
     statusLabel_->setText("已删除传送门: " + semanticPoint);
 }
 
+// ── 「场景地图」菜单入口：优先作用于当前选中，否则弹出选择框 ──────────
+void MainWindow::onMenuRenameScenePoint() {
+    QString name = selectedScenePoint_;
+    if (name.isEmpty() || !scene_.osmPointByName(name)) {
+        QStringList names;
+        for (const auto& p : scene_.osmPoints()) names << p.name;
+        if (names.isEmpty()) {
+            QMessageBox::information(this, "重命名语义节点", "当前场景还没有语义节点。");
+            return;
+        }
+        bool ok = false;
+        name = QInputDialog::getItem(this, "重命名语义节点",
+            "选择要重命名的语义节点:", names, 0, false, &ok);
+        if (!ok || name.isEmpty()) return;
+    }
+    bool ok = false;
+    QString nn = QInputDialog::getText(this, "重命名语义节点",
+        "新名称:", QLineEdit::Normal, name, &ok);
+    nn = nn.trimmed();
+    if (!ok || nn.isEmpty()) return;
+    onRenameScenePoint(name, nn);
+}
+
+void MainWindow::onMenuRemoveScenePoint() {
+    QString name = selectedScenePoint_;
+    if (name.isEmpty() || !scene_.osmPointByName(name)) {
+        QStringList names;
+        for (const auto& p : scene_.osmPoints()) names << p.name;
+        if (names.isEmpty()) {
+            QMessageBox::information(this, "删除语义节点", "当前场景还没有语义节点。");
+            return;
+        }
+        bool ok = false;
+        name = QInputDialog::getItem(this, "删除语义节点",
+            "选择要删除的语义节点:", names, 0, false, &ok);
+        if (!ok || name.isEmpty()) return;
+    }
+    if (QMessageBox::question(this, "删除语义节点",
+            QString("确定删除语义节点「%1」？").arg(name)) != QMessageBox::Yes)
+        return;
+    onRemoveScenePoint(name);
+}
+
+void MainWindow::onMenuRemoveScenePortal() {
+    const auto& portals = scene_.scenePortals();
+    if (portals.isEmpty()) {
+        QMessageBox::information(this, "删除传送门", "当前场景还没有传送门。");
+        return;
+    }
+    QStringList labels;
+    for (const auto& p : portals)
+        labels << QString("%1 → %2").arg(p.semanticPoint, p.targetSlamMap);
+    bool ok = false;
+    QString picked = QInputDialog::getItem(this, "删除传送门",
+        "选择要删除的传送门:", labels, 0, false, &ok);
+    if (!ok || picked.isEmpty()) return;
+    int idx = labels.indexOf(picked);
+    if (idx < 0 || idx >= portals.size()) return;
+    onRemoveScenePortal(portals[idx].semanticPoint);
+}
+
+void MainWindow::onMenuRemoveGlobalRoute() {
+    const auto& routes = scene_.globalRoutes();
+    if (routes.isEmpty()) {
+        QMessageBox::information(this, "删除全局路线", "当前场景还没有全局路线。");
+        return;
+    }
+    QStringList names;
+    for (const auto& r : routes) names << r.name;
+    bool ok = false;
+    QString name = QInputDialog::getItem(this, "删除全局路线",
+        "选择要删除的全局路线:", names, 0, false, &ok);
+    if (!ok || name.isEmpty()) return;
+    if (QMessageBox::question(this, "删除全局路线",
+            QString("确定删除全局路线「%1」？").arg(name)) != QMessageBox::Yes)
+        return;
+    onRemoveGlobalRoute(name);
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 //  正交叠加对齐窗口：各 SLAM 地图俯视投影叠加到 OSM 底图
 // ═══════════════════════════════════════════════════════════════════════
@@ -1414,6 +1508,9 @@ void MainWindow::onLeftTabChanged(int index) {
     } else {
         centralStack_->setCurrentWidget(viewer_);
     }
+    // 「场景地图」菜单仅在「场景地图」Tab 激活时可用
+    if (sceneMapMenu_)
+        sceneMapMenu_->menuAction()->setEnabled(index == kSceneTab);
 }
 
 // ═══════════════════════════════════════════════════════════════════════

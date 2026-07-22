@@ -13,6 +13,7 @@
 
 class QStackedWidget;
 class QTabWidget;
+class QMenu;
 #include "ui/PropertiesPanel.h"
 #include "ui/BuildVprDatabaseDialog.h"
 #include <QMainWindow>
@@ -92,6 +93,12 @@ private slots:
     void onAddScenePortal();
     void onEditScenePortal(const QString& name);
     void onRemoveScenePortal(const QString& name);
+
+    // ── 「场景地图」菜单入口（基于当前选中，否则弹出选择框）──────────
+    void onMenuRenameScenePoint();
+    void onMenuRemoveScenePoint();
+    void onMenuRemoveScenePortal();
+    void onMenuRemoveGlobalRoute();
 
     // ── 全局路线 ─────────────────────────────────────────────────────
     void onAddGlobalRoute();
@@ -220,6 +227,7 @@ private:
     PropertiesPanel*  propsPanel_ = nullptr;
     QLabel*           statusLabel_ = nullptr;
     QDoubleSpinBox*   globalVoxelSpin_ = nullptr;
+    QMenu*            sceneMapMenu_ = nullptr;   ///< 「场景地图」菜单：仅在场景地图 Tab 激活时可用
 
     bool sceneOverviewDirty_ = true;   ///< 场景组成变化后需重建总览足迹
     QVector<QString> sceneViewRowToId_;  ///< 总览足迹行 → SLAM 地图 id
