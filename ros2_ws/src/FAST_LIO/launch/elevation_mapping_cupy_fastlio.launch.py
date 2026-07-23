@@ -69,11 +69,11 @@ def generate_launch_description():
             # <=free_deg 记 0；free~lethal 线性升到 99（缓坡代价递增，同等条件优先平地）；
             # >=lethal_deg 记 100(lethal，基本过不去)。不再往 scan 里塞假障碍点。
             'slope_enable': True,
-            'slope_window': 1,
-            'slope_free_deg': 5.0,
+            'slope_window': 2,
+            'slope_free_deg': 3.0,
             # 统一阈值：>=15° 判不能通行(TerrainLayer 记 LETHAL 并 60m 持久)，
             # 8~12° 路口斜坡落在软代价区间仍可走。
-            'slope_lethal_deg': 15.0,
+            'slope_lethal_deg': 12.0,
             # <1 使中等坡度代价更高(更强软避让),不改 lethal 阈值。0.5=明显加重。
             'slope_gamma': 0.99,
             # 地形代价点云(给自定义 TerrainLayer 用)。

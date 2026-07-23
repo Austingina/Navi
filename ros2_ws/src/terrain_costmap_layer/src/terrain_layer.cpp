@@ -10,6 +10,7 @@
 
 #include "pluginlib/class_list_macros.hpp"
 #include "nav2_costmap_2d/cost_values.hpp"
+#include "nav2_costmap_2d/footprint.hpp"
 #include "sensor_msgs/point_cloud2_iterator.hpp"
 #include "tf2_sensor_msgs/tf2_sensor_msgs.hpp"
 
@@ -33,11 +34,13 @@ void TerrainLayer::onInitialize()
   declareParameter("combination_method", rclcpp::ParameterValue(1));
   declareParameter("lethal_cost_threshold", rclcpp::ParameterValue(100.0));
   declareParameter("transform_tolerance", rclcpp::ParameterValue(0.1));
+  declareParameter("footprint_clearing_enabled", rclcpp::ParameterValue(true));
 
   node->get_parameter(name_ + "." + "enabled", enabled_);
   node->get_parameter(name_ + "." + "cost_topic", cost_topic_);
   node->get_parameter(name_ + "." + "combination_method", combination_method_);
   node->get_parameter(name_ + "." + "lethal_cost_threshold", lethal_cost_threshold_);
+  node->get_parameter(name_ + "." + "footprint_clearing_enabled", footprint_clearing_enabled_);
   double tf_tol = 0.1;
   node->get_parameter(name_ + "." + "transform_tolerance", tf_tol);
   transform_tolerance_ = tf2::durationFromSec(tf_tol);
@@ -85,7 +88,7 @@ void TerrainLayer::cloudCallback(sensor_msgs::msg::PointCloud2::ConstSharedPtr m
 }
 
 void TerrainLayer::updateBounds(
-  double robot_x, double robot_y, double /*robot_yaw*/,
+  double robot_x, double robot_y, double robot_yaw,
   double * min_x, double * min_y, double * max_x, double * max_y)
 {
   std::lock_guard<nav2_costmap_2d::Costmap2D::mutex_t> guard(*getMutex());
@@ -99,6 +102,16 @@ void TerrainLayer::updateBounds(
     return;
   }
   useExtraBounds(min_x, min_y, max_x, max_y);
+
+  // 脚印清除：把机器人当前脚印变换到全局系并纳入更新边界，实际清 FREE
+  // 在 updateCosts 里做（对齐 ObstacleLayer）。保证机器人所在处 terrain 不困住自己。
+  if (footprint_clearing_enabled_) {
+    nav2_costmap_2d::transformFootprint(
+      robot_x, robot_y, robot_yaw, getFootprint(), transformed_footprint_);
+    for (const auto & pt : transformed_footprint_) {
+      touch(pt.x, pt.y, min_x, min_y, max_x, max_y);
+    }
+  }
 
   sensor_msgs::msg::PointCloud2::ConstSharedPtr cloud;
   {
@@ -187,6 +200,11 @@ void TerrainLayer::updateCosts(
   std::lock_guard<nav2_costmap_2d::Costmap2D::mutex_t> guard(*getMutex());
   if (!enabled_) {
     return;
+  }
+  // 先把脚印内的格子在本层清成 FREE：既永久移除机器人开过的地形代价，
+  // 也保证 updateWithMax 不会把 terrain 的致命代价压到机器人脚下。
+  if (footprint_clearing_enabled_ && !transformed_footprint_.empty()) {
+    setConvexPolygonCost(transformed_footprint_, nav2_costmap_2d::FREE_SPACE);
   }
   if (combination_method_ == 0) {
     updateWithOverwrite(master_grid, min_i, min_j, max_i, max_j);

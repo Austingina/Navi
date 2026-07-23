@@ -12,10 +12,12 @@
 
 #include <mutex>
 #include <string>
+#include <vector>
 
 #include "rclcpp/rclcpp.hpp"
 #include "nav2_costmap_2d/costmap_layer.hpp"
 #include "nav2_costmap_2d/layered_costmap.hpp"
+#include "geometry_msgs/msg/point.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
 #include "tf2/time.h"
 
@@ -52,6 +54,11 @@ private:
   int combination_method_{1};
   double lethal_cost_threshold_{100.0};
   tf2::Duration transform_tolerance_{tf2::durationFromSec(0.1)};
+
+  // 脚印清除：每周期把机器人当前脚印内的格子在本层清成 FREE，
+  // 保证 terrain 代价永远不会把机器人自己困住（对齐 ObstacleLayer）。
+  bool footprint_clearing_enabled_{true};
+  std::vector<geometry_msgs::msg::Point> transformed_footprint_;
 };
 
 }  // namespace terrain_costmap_layer
