@@ -1,32 +1,38 @@
 #!/usr/bin/env python3
-"""Publish map->odom by fusing GPS + LIO on translation only (no rotation EKF).
+"""Publish map->odom by fusing GPS + LIO position, with an absolute-yaw rotation.
 
 Rationale
 ---------
-This robot has no absolute-heading source (no magnetometer / dual GPS), so a
-full pose EKF ends up trying to estimate an unobservable yaw and drifts. But we
-*do* want to fuse position, because both GPS (noisy / offset) and LIO (slow
-drift) are imperfect.
+LIO gives accurate short-term motion but its yaw is relative to an *arbitrary
+startup orientation*, not true north. GPS gives absolute position (and, via
+navsat, ENU/north). We fuse position in a small KF, and rotate the whole
+map->odom by the absolute-heading correction (yaw_offset) so the map frame is
+ENU/north — otherwise the LIO cloud stays rotated by yaw_offset and never lines
+up with the geo-referenced base map.
 
-So this node runs a small **2D position Kalman filter (x, y only)** and keeps
-the rotation of map->odom as identity — heading is trusted entirely to LIO.
+yaw_offset source
+-----------------
+gps_heading_align estimates yaw_offset = wrap(gps_course_enu - lio_yaw) and,
+once locked, publishes it on /heading_align/yaw_offset. Before any offset is
+received (or in setups without heading align, e.g. the sim EKF path where this
+node is not even started) yaw_offset stays 0 and map->odom is identity-rotation,
+i.e. the previous behavior — so nothing else changes.
 
 Filter
 ------
-State: robot position in the map frame  p = [px, py]  (two independent scalar KFs)
-    Predict: p += (LIO position delta)         # LIO gives accurate short-term motion
-             P  += q * dt                       # process noise (LIO drift)
-    Update : z = GPS position, R = GPS covariance (from msg, or default)
+State: robot position in the map(ENU) frame  p = [px, py]  (two scalar KFs)
+    Predict: p += R(yaw_offset) * (LIO position delta)   # rotate odom delta -> map/ENU
+             P  += q * dt                                 # process noise (LIO drift)
+    Update : z = GPS position (ENU, from navsat), R = GPS covariance
              standard KF update, with a Mahalanobis gate to reject GPS spikes
 
-Because map->odom rotation is identity, LIO position deltas (odom frame) equal
-map-frame deltas, so adding them to the map-frame estimate is consistent.
-
-Output: map->odom translation = p_filtered - LIO_position ; rotation = identity.
+Output: map->odom rotation = R(yaw_offset);
+        map->odom translation = p_filtered - R(yaw_offset) * LIO_position.
 
 Inputs:
-    /odometry/gps (nav_msgs/Odometry)  -- robot position in map (from navsat)
-    TF odom->base_link                 -- from FAST-LIO chain
+    /odometry/gps (nav_msgs/Odometry)      -- robot position in map (from navsat)
+    /heading_align/yaw_offset (std_msgs/Float64) -- ENU heading correction [rad]
+    TF odom->base_link                     -- from FAST-LIO chain
 """
 
 import math
@@ -35,6 +41,7 @@ import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import TransformStamped
+from std_msgs.msg import Float64
 import tf2_ros
 
 
@@ -46,6 +53,10 @@ class MapOdomFromGps(Node):
         self.declare_parameter('odom_frame', 'odom')
         self.declare_parameter('base_link_frame', 'base_link')
         self.declare_parameter('gps_topic', '/odometry/gps')
+        # Absolute-heading correction (rad) from gps_heading_align. map->odom is
+        # rotated by this so odom(LIO) is expressed in ENU/north. 0 => identity
+        # rotation (previous behavior / no heading-align running).
+        self.declare_parameter('yaw_offset_topic', '/heading_align/yaw_offset')
         self.declare_parameter('publish_rate', 20.0)
         # Process noise: how fast LIO position drifts (m^2 per second, per axis).
         self.declare_parameter('process_noise', 0.05)
@@ -63,6 +74,7 @@ class MapOdomFromGps(Node):
         self.odom_frame = self.get_parameter('odom_frame').value
         self.base_link_frame = self.get_parameter('base_link_frame').value
         gps_topic = self.get_parameter('gps_topic').value
+        yaw_offset_topic = self.get_parameter('yaw_offset_topic').value
         rate = float(self.get_parameter('publish_rate').value)
         self.q = float(self.get_parameter('process_noise').value)
         self.r_default = float(self.get_parameter('gps_variance_default').value)
@@ -75,6 +87,13 @@ class MapOdomFromGps(Node):
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         self.br = tf2_ros.TransformBroadcaster(self)
+
+        # Absolute-heading correction: map->odom yaw. 0 until gps_heading_align
+        # locks and starts publishing => identity rotation (previous behavior).
+        self.yaw_offset = 0.0
+        self._c = 1.0   # cos(yaw_offset)
+        self._s = 0.0   # sin(yaw_offset)
+        self.have_offset = False
 
         # KF state (map-frame position) + per-axis variance
         self.px = self.py = 0.0
@@ -89,10 +108,22 @@ class MapOdomFromGps(Node):
         self.last_time = None
 
         self.create_subscription(Odometry, gps_topic, self.gps_cb, 10)
+        self.create_subscription(Float64, yaw_offset_topic, self.offset_cb, 10)
         self.timer = self.create_timer(1.0 / rate, self.on_timer)
         self.get_logger().info(
-            f'map_odom_from_gps: 2D position KF (x,y), identity rotation. '
+            f'map_odom_from_gps: 2D position KF (x,y) + ENU yaw from '
+            f'{yaw_offset_topic} (identity until first offset). '
             f'q={self.q}, gate={self.gate} sigma')
+
+    def offset_cb(self, msg: Float64):
+        self.yaw_offset = float(msg.data)
+        self._c = math.cos(self.yaw_offset)
+        self._s = math.sin(self.yaw_offset)
+        if not self.have_offset:
+            self.have_offset = True
+            self.get_logger().info(
+                f'yaw_offset locked: {math.degrees(self.yaw_offset):.1f} deg; '
+                f'map->odom now rotates odom(LIO) into ENU/north')
 
     def gps_cb(self, msg: Odometry):
         rx = ry = self.r_default
@@ -122,7 +153,7 @@ class MapOdomFromGps(Node):
         # Not enough to run the filter yet
         if lio is None or (not self.initialized and self.gps is None):
             if self.publish_identity_until_gps and not self.initialized:
-                self.broadcast(0.0, 0.0)
+                self.broadcast(0.0, 0.0, 0.0)
             return
 
         # Initialize the estimate from the first GPS fix
@@ -133,16 +164,18 @@ class MapOdomFromGps(Node):
             self.last_time = now
             self.initialized = True
             self.gps_new = False
-            self.broadcast(self.px - lio[0], self.py - lio[1])
+            self._broadcast_from_state(lio)
             return
 
-        # --- Predict: advance by LIO delta, grow covariance ---
+        # --- Predict: advance by LIO delta (rotated odom->map), grow covariance ---
         dt = (now - self.last_time).nanoseconds * 1e-9
         self.last_time = now
         if dt < 0.0:
             dt = 0.0
-        self.px += lio[0] - self.lio_prev[0]
-        self.py += lio[1] - self.lio_prev[1]
+        dx = lio[0] - self.lio_prev[0]
+        dy = lio[1] - self.lio_prev[1]
+        self.px += self._c * dx - self._s * dy
+        self.py += self._s * dx + self._c * dy
         self.lio_prev = lio
         self.var_x += self.q * dt
         self.var_y += self.q * dt
@@ -154,7 +187,7 @@ class MapOdomFromGps(Node):
             self._kf_update_axis('x', zx, rx)
             self._kf_update_axis('y', zy, ry)
 
-        self.broadcast(self.px - lio[0], self.py - lio[1])
+        self._broadcast_from_state(lio)
 
     def _kf_update_axis(self, axis, z, r):
         if axis == 'x':
@@ -176,7 +209,14 @@ class MapOdomFromGps(Node):
         else:
             self.py, self.var_y = p, var
 
-    def broadcast(self, x, y):
+    def _broadcast_from_state(self, lio):
+        # map<-odom rotates by yaw_offset, so p_map = R * p_odom + t.
+        # For base_link: p_gps(map,ENU) = R * lio(odom) + t  =>  t = p - R*lio.
+        rx = self._c * lio[0] - self._s * lio[1]
+        ry = self._s * lio[0] + self._c * lio[1]
+        self.broadcast(self.px - rx, self.py - ry, self.yaw_offset)
+
+    def broadcast(self, x, y, yaw):
         tf = TransformStamped()
         tf.header.stamp = self.get_clock().now().to_msg()
         tf.header.frame_id = self.map_frame
@@ -184,7 +224,9 @@ class MapOdomFromGps(Node):
         tf.transform.translation.x = float(x)
         tf.transform.translation.y = float(y)
         tf.transform.translation.z = 0.0
-        tf.transform.rotation.w = 1.0   # identity: heading trusted to LIO
+        # Yaw-only correction (odom(LIO) -> ENU); roll/pitch stay with LIO.
+        tf.transform.rotation.z = math.sin(yaw * 0.5)
+        tf.transform.rotation.w = math.cos(yaw * 0.5)
         self.br.sendTransform(tf)
 
 

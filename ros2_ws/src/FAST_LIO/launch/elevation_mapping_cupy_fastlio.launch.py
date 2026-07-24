@@ -14,9 +14,14 @@ def generate_launch_description():
         elevation_dir, 'config', 'core', 'core_param.yaml')
     robot_params = os.path.join(
         fast_lio_dir, 'config', 'elevation_mapping_cupy_fastlio.yaml')
-    vpr_site_packages = os.path.join(
-        '/home/nvidia/Navi/NaviSkill/vpr/.venv/lib/python3.10/site-packages')
-    python_path = vpr_site_packages
+    # elevation_mapping 专用虚拟环境（与 vpr 解耦）。节点用系统 python3 跑，
+    # 这里只把该 venv 的 site-packages 前置到 PYTHONPATH 提供 torch（cupy/numpy
+    # 等系统/用户 site 已有）。重建见 envs/elevation_mapping/install.sh。
+    # 允许用环境变量 ELEVATION_VENV_SITE_PACKAGES 覆盖路径。
+    elevation_site_packages = os.environ.get(
+        'ELEVATION_VENV_SITE_PACKAGES',
+        '/home/nvidia/Navi/envs/elevation_mapping/.venv/lib/python3.10/site-packages')
+    python_path = elevation_site_packages
     if os.environ.get('PYTHONPATH'):
         python_path += os.pathsep + os.environ['PYTHONPATH']
 

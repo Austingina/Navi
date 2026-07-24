@@ -1,8 +1,12 @@
-# =============================================================================
+  # =============================================================================
 # dual_ekf_navsat_heading_align.yaml — 实车 GPS 融合 + 在线航向对北
 # =============================================================================
 # 与 dual_ekf_navsat.yaml 相同的 EKF 段；navsat 段改为配合 gps_heading_align：
-#   - wait_for_datum: true  → 等 align 首锁后 SetDatum，避免错误航向锁原点
+#   - wait_for_datum: false → 本版 robot_localization 里 wait_for_datum:true 且
+#     未给 datum 参数时，navsat 会在 delay 到点后直接用默认 (0,0,0) 建原点(实测)，
+#     并不会真的挂起等 SetDatum。改用「闸门」代替：gps_heading_align 锁定前
+#     根本不发 /odometry/absolute_yaw，navsat 缺 odom 就无法建 datum；一旦锁定
+#     再喂对北后的 yaw，navsat 用当前 GPS 自动建正确原点。
 #   - yaw_offset: 0         → 绝对航向已打进 /odometry/absolute_yaw
 #   - use_odometry_yaw: true
 #
@@ -68,4 +72,6 @@ navsat_transform:
     broadcast_cartesian_transform: false
     publish_filtered_gps: true
     use_odometry_yaw: true           # 读 absolute_yaw 的绝对 ENU 航向
-    wait_for_datum: true             # 等 gps_heading_align 首锁后 SetDatum
+    # 不要开 wait_for_datum：本版实现会用默认 (0,0,0) 直接建原点(见顶部说明)。
+    # 闸门靠 gps_heading_align 锁定前不发 absolute_yaw 实现。
+    wait_for_datum: false

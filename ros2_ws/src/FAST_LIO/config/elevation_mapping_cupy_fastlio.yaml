@@ -7,7 +7,7 @@ elevation_mapping_node:
     corrected_map_frame: odom
 
     resolution: 0.2
-    map_length: 20.0
+    map_length: 10.0
     sensor_noise_factor: 0.03
     mahalanobis_thresh: 2.5
     outlier_variance: 0.02

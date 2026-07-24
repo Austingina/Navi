@@ -391,7 +391,7 @@ private:
     try {
       t_body_to_grid = tf_buffer_->lookupTransform(
         grid_frame, cloud_msg->header.frame_id, cloud_msg->header.stamp,
-        tf2::durationFromSec(0.1));
+        tf2::durationFromSec(0.5));
     } catch (const std::exception & e) {
       RCLCPP_WARN(get_logger(), "TF %s<-%s failed: %s", grid_frame.c_str(),
         cloud_msg->header.frame_id.c_str(), e.what());
@@ -403,7 +403,7 @@ private:
     double z_foot = 0.0;
     try {
       auto t_foot = tf_buffer_->lookupTransform(
-        grid_frame, base_frame_, cloud_msg->header.stamp, tf2::durationFromSec(0.1));
+        grid_frame, base_frame_, cloud_msg->header.stamp, tf2::durationFromSec(0.5));
       z_foot = t_foot.transform.translation.z;
       have_foot = true;
     } catch (const std::exception & e) {

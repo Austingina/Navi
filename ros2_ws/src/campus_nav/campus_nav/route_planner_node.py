@@ -7,6 +7,7 @@ import rclpy
 from geometry_msgs.msg import PointStamped, PoseStamped
 from nav_msgs.msg import OccupancyGrid, Path
 from nav2_msgs.action import NavigateThroughPoses
+from nav2_msgs.srv import ClearEntireCostmap
 from rcl_interfaces.msg import SetParametersResult
 from rclpy.action import ActionClient
 from rclpy.duration import Duration
@@ -363,8 +364,10 @@ class RoutePlanner(Node):
         self.declare_parameter("respect_turns", False)
         self.declare_parameter("frame_id", "campus_map")
         # Datum = center of the dense campus area (see build_and_test.py output).
-        self.declare_parameter("datum_lat", 22.5779177)
-        self.declare_parameter("datum_lon", 113.9471564)
+        # NOTE: config/route_planner.yaml overrides these with the real computed
+        # center (22.574357630323675, 113.93507078035577); keep them in sync.
+        self.declare_parameter("datum_lat", 22.574357630323675)
+        self.declare_parameter("datum_lon", 113.93507078035577)
         self.declare_parameter("max_snap_m", 50.0)  # warn if start/goal far from a road
         # Road-network visualization for RViz.
         # OccupancyGrid blurs when zoomed out on large maps; use vector network instead.
@@ -393,6 +396,28 @@ class RoutePlanner(Node):
         self.declare_parameter("send_to_nav2", True)
         self.declare_parameter("nav2_action_name", "navigate_through_poses")
         self.declare_parameter("nav2_behavior_tree", "")
+        # Heading-lock gate: outdoors the `map` frame is only north-aligned after
+        # gps_heading_align first locks. Until then, GPS/OSM goals converted into
+        # `map` are rotated by the (arbitrary) LIO startup heading, so driving to
+        # them sends the robot the wrong way. When require_heading_lock is true we
+        # hold campus waypoints back from Nav2 until /heading_align/status reports
+        # locked. Default false so the sim stack (no heading_align node) is
+        # unaffected: without the topic it would otherwise never send.
+        self.declare_parameter("require_heading_lock", False)
+        self.declare_parameter("heading_status_topic", "/heading_align/status")
+        # On the first heading lock the map->odom TF snaps (rotates by yaw_offset),
+        # so everything accumulated in the map frame before the snap (global
+        # costmap obstacle marks, persistent terrain cost) is now misplaced.
+        # Clear the costmaps once at that moment so they rebuild north-aligned.
+        self.declare_parameter("clear_costmaps_on_lock", True)
+        self.declare_parameter(
+            "global_costmap_clear_service",
+            "/global_costmap/clear_entirely_global_costmap",
+        )
+        self.declare_parameter(
+            "local_costmap_clear_service",
+            "/local_costmap/clear_entirely_local_costmap",
+        )
         # Feed the route to Nav2 in rolling batches so every goal stays inside
         # the (rolling-window) global costmap. Disable to send the whole route.
         self.declare_parameter("nav2_batch_enable", True)
@@ -498,6 +523,29 @@ class RoutePlanner(Node):
         self._nav_batch_last_xy = None  # xy of last waypoint in the sent batch
         self._nav_sent_key = None       # (cursor, batch_end) of last sent batch
         self._nav_batch_timer = None
+        # -- heading-lock gate state --
+        self._require_heading_lock = bool(
+            self.get_parameter("require_heading_lock").value
+        )
+        # Latch: once aligned it stays aligned (gps_heading_align never unlocks;
+        # frozen_bad_gps still keeps a valid frozen heading offset).
+        self._heading_locked = not self._require_heading_lock
+        # Costmap-clear service clients (created lazily so we don't pay for them
+        # when the feature is off). Populated on first use in _clear_costmaps().
+        self._clear_costmaps_on_lock = bool(
+            self.get_parameter("clear_costmaps_on_lock").value
+        )
+        self._global_clear_cli = None
+        self._local_clear_cli = None
+        if self._require_heading_lock:
+            status_topic = self.get_parameter("heading_status_topic").value
+            self.create_subscription(
+                String, status_topic, self._on_heading_status, 10
+            )
+            self.get_logger().warn(
+                f"require_heading_lock: campus goals will be held from Nav2 until "
+                f"'{status_topic}' reports locked."
+            )
         if self.get_parameter("send_to_nav2").value:
             self.nav_action_client = ActionClient(
                 self,
@@ -1359,11 +1407,63 @@ class RoutePlanner(Node):
             out.append(q)
         return out
 
+    def _on_heading_status(self, msg: String):
+        # 'locked' or 'frozen_bad_gps' both mean the heading offset is valid and
+        # the map frame is north-aligned; 'unlocked' means not yet aligned.
+        aligned = msg.data.strip() in ("locked", "frozen_bad_gps")
+        if aligned and not self._heading_locked:
+            self._heading_locked = True
+            self.get_logger().info(
+                "GPS heading locked; campus waypoints will now flow to Nav2."
+            )
+            # The map->odom TF just snapped to north; wipe pre-snap map-frame
+            # costmap data so it rebuilds correctly.
+            if self._clear_costmaps_on_lock:
+                self._clear_costmaps()
+
+    def _clear_costmaps(self):
+        """Best-effort one-shot clear of the Nav2 global/local costmaps.
+
+        Fire-and-forget: if the services are not up (e.g. Nav2 not running) we
+        just warn and move on — never block the heading-status callback.
+        """
+        if self._global_clear_cli is None:
+            self._global_clear_cli = self.create_client(
+                ClearEntireCostmap,
+                self.get_parameter("global_costmap_clear_service").value,
+            )
+            self._local_clear_cli = self.create_client(
+                ClearEntireCostmap,
+                self.get_parameter("local_costmap_clear_service").value,
+            )
+        for name, cli in (
+            ("global", self._global_clear_cli),
+            ("local", self._local_clear_cli),
+        ):
+            if cli.service_is_ready() or cli.wait_for_service(timeout_sec=1.0):
+                cli.call_async(ClearEntireCostmap.Request())
+                self.get_logger().info(f"heading snap: cleared {name} costmap.")
+            else:
+                self.get_logger().warn(
+                    f"heading snap: {name} costmap clear service "
+                    f"'{cli.srv_name}' unavailable; skipping."
+                )
+
     def _send_nav2_waypoints(self, poses, preempt=False):
         if not poses:
             self.get_logger().warn("No nav waypoints to send.")
             return
         if self.nav_action_client is None:
+            return
+        if not self._heading_locked:
+            # Route is still computed/published for RViz; we just hold it back
+            # from Nav2 until the map frame is north-aligned. The batch timer
+            # keeps retrying, so it flushes automatically once locked.
+            self.get_logger().warn(
+                "Holding campus waypoints: GPS heading not locked yet "
+                "(/heading_align/status). Robot would drive the wrong way.",
+                throttle_duration_sec=5.0,
+            )
             return
         if not self.nav_action_client.wait_for_server(timeout_sec=0.2):
             self.get_logger().warn(

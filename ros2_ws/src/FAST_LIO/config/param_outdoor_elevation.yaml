@@ -204,7 +204,7 @@ local_costmap:
           data_type: "LaserScan"
           clearing: True
           marking: True
-          inf_is_valid: true
+          inf_is_valid: false
           observation_persistence: 0.3
           raytrace_max_range: 10.0
           raytrace_min_range: 0.0

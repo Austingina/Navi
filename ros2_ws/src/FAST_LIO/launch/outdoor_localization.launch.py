@@ -49,6 +49,19 @@ def generate_launch_description():
     use_gps_simple = IfCondition(PythonExpression(
         ["'", map_odom_source, "' == 'gps'"]))
 
+    # Fixed site origin for the map frame. MUST equal campus_nav's datum so the
+    # OSM overlay + goal lon-lat math line up (gps_heading_align pins the map
+    # origin here via SetDatum). Overridden from the top-level bringup.
+    # MUST equal campus_nav/config/route_planner.yaml's datum (OSM graph origin).
+    datum_lat = LaunchConfiguration('datum_lat', default='22.574357630323675')
+    datum_lon = LaunchConfiguration('datum_lon', default='113.93507078035577')
+    declare_datum_lat = DeclareLaunchArgument(
+        'datum_lat', default_value='22.574357630323675',
+        description='Fixed map/campus datum latitude (ENU origin)')
+    declare_datum_lon = DeclareLaunchArgument(
+        'datum_lon', default_value='113.93507078035577',
+        description='Fixed map/campus datum longitude (ENU origin)')
+
 
     tf_odom_to_camera_init = Node(
         package='tf2_ros', executable='static_transform_publisher',
@@ -96,12 +109,15 @@ def generate_launch_description():
             'odom_topic': '/Odometry',
             'absolute_yaw_topic': '/odometry/absolute_yaw',
             'status_topic': '/heading_align/status',
-            'datum_service': '/navsat_transform/datum',
+            'datum_service': '/datum',
+            'datum_lat': datum_lat,
+            'datum_lon': datum_lon,
             'auto_drive': False,
             'exit_after_lock': False,
             'refine_after_lock': False,
-            'min_speed': 0.5,
-            'min_distance': 5.0,
+            'min_distance': 1.5,        # min rolling baseline before chord usable
+            'min_total_distance': 3.0,  # baseline before lock; heading_err~=sigma/baseline
+            'lock_stable_tol_deg': 3.0,  # lock once estimate stops moving
             'max_h_var': 25.0,
             'call_set_datum': True,
         }],
@@ -141,6 +157,9 @@ def generate_launch_description():
         executable='navsat_transform_node',
         name='navsat_transform',
         output='screen',
+        # Silence the per-cycle "Datum ... is / Datum UTM coordinate is" INFO
+        # spam; keep WARN/ERROR.
+        arguments=['--ros-args', '--log-level', 'navsat_transform:=warn'],
         parameters=[params_file, {'use_sim_time': use_sim_time}],
         remappings=[
             ('imu', '/livox/imu'),
@@ -157,6 +176,8 @@ def generate_launch_description():
         declare_config_path,
         declare_enable_elevation,
         declare_map_odom_source,
+        declare_datum_lat,
+        declare_datum_lon,
         fast_lio_node,
         cupy_elevation,
         heading_align_node,

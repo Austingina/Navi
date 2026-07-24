@@ -52,6 +52,20 @@ def generate_launch_description():
                 default_value="campus_map",
                 description="TF frame for campus map markers and paths",
             ),
+            # ENU origin the OSM graph / goal lon-lat math is anchored to.
+            # Default MUST equal config/route_planner.yaml's datum (the value the
+            # graph was actually built with); the outdoor heading-align stack
+            # pins the map frame to this same point via gps_heading_align SetDatum.
+            DeclareLaunchArgument(
+                "datum_lat",
+                default_value="22.574357630323675",
+                description="Campus datum latitude (ENU origin)",
+            ),
+            DeclareLaunchArgument(
+                "datum_lon",
+                default_value="113.93507078035577",
+                description="Campus datum longitude (ENU origin)",
+            ),
             DeclareLaunchArgument(
                 "publish_map_to_campus_tf",
                 default_value="true",
@@ -123,6 +137,15 @@ def generate_launch_description():
                 description="Send sampled campus waypoints to Nav2 NavigateThroughPoses",
             ),
             DeclareLaunchArgument(
+                "require_heading_lock",
+                default_value="false",
+                description=(
+                    "Hold campus waypoints from Nav2 until /heading_align/status "
+                    "reports locked (outdoor GPS heading-align stack). Keep false "
+                    "for sim / setups without gps_heading_align."
+                ),
+            ),
+            DeclareLaunchArgument(
                 "nav_waypoint_spacing_m",
                 default_value="10.0",
                 description="Sampling distance for Nav2 waypoints along the campus route",
@@ -142,6 +165,8 @@ def generate_launch_description():
                     {
                         "use_sim_time": LaunchConfiguration("use_sim_time"),
                         "frame_id": LaunchConfiguration("frame_id"),
+                        "datum_lat": LaunchConfiguration("datum_lat"),
+                        "datum_lon": LaunchConfiguration("datum_lon"),
                         "pbf_path": LaunchConfiguration("pbf_path"),
                         "dev_overlay": LaunchConfiguration("dev_overlay"),
                         "gpkg_overlay": LaunchConfiguration("gpkg_overlay"),
@@ -150,6 +175,9 @@ def generate_launch_description():
                         "network_alpha": LaunchConfiguration("network_alpha"),
                         "goal_topic": LaunchConfiguration("goal_topic"),
                         "send_to_nav2": LaunchConfiguration("send_to_nav2"),
+                        "require_heading_lock": LaunchConfiguration(
+                            "require_heading_lock"
+                        ),
                         "nav_waypoint_spacing_m": LaunchConfiguration(
                             "nav_waypoint_spacing_m"
                         ),
