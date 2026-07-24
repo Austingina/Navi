@@ -64,7 +64,7 @@ def generate_launch_description():
             'ground_radius': 3,             # (2r+1)^2 窗
             'ground_min_cells': 4,
             # 障碍高度带(相对局部地面)：地面上方 3cm~1.6m 视为障碍。
-            'obstacle_min_height': 0.08,
+            'obstacle_min_height': 0.15,
             'obstacle_max_height': 1.6,
             # 地面未知的格子回退到脚底高度带(用 TF odom->base_link 的 z)。
             'fallback_on_unknown_elevation': True,
@@ -74,11 +74,11 @@ def generate_launch_description():
             # <=free_deg 记 0；free~lethal 线性升到 99（缓坡代价递增，同等条件优先平地）；
             # >=lethal_deg 记 100(lethal，基本过不去)。不再往 scan 里塞假障碍点。
             'slope_enable': True,
-            'slope_window': 2,
-            'slope_free_deg': 3.0,
+            'slope_window': 3,
+            'slope_free_deg': 5.0,
             # 统一阈值：>=15° 判不能通行(TerrainLayer 记 LETHAL 并 60m 持久)，
             # 8~12° 路口斜坡落在软代价区间仍可走。
-            'slope_lethal_deg': 12.0,
+            'slope_lethal_deg': 15.0,
             # <1 使中等坡度代价更高(更强软避让),不改 lethal 阈值。0.5=明显加重。
             'slope_gamma': 0.99,
             # 地形代价点云(给自定义 TerrainLayer 用)。

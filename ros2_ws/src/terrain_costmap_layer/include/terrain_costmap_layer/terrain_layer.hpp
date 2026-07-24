@@ -4,8 +4,17 @@
 // float "cost" field in 0..100) and writes it into its own rolling grid:
 //   cost >= lethal_cost_threshold -> LETHAL_OBSTACLE
 //   0 < cost < threshold          -> graded value in (0 .. MAX_NON_OBSTACLE]
-// The grid accumulates (max) and rolls with the window (same pattern as
-// ObstacleLayer), so terrain cost persists as the robot moves.
+//   cost <= 0 (flat/free)         -> depends on clearing_enabled (see below)
+// The grid rolls with the window (same pattern as ObstacleLayer), so terrain
+// cost persists as the robot moves.
+//
+// clearing_enabled (default true): obstacle-layer-like re-observation clearing.
+//   Every cell present in the current cost cloud is OVERWRITTEN with its latest
+//   value -- cells re-observed flat (cost<=0) are cleared to FREE, and graded
+//   values are corrected up or down. Cells NOT in the cloud (unknown slope /
+//   out of the elevation map) keep their previous value. When false, falls back
+//   to the legacy accumulate-max behavior (never lowers; flat contributes
+//   nothing) so terrain cost only ever grows until it scrolls out / is reset.
 
 #ifndef TERRAIN_COSTMAP_LAYER__TERRAIN_LAYER_HPP_
 #define TERRAIN_COSTMAP_LAYER__TERRAIN_LAYER_HPP_
@@ -54,6 +63,10 @@ private:
   int combination_method_{1};
   double lethal_cost_threshold_{100.0};
   tf2::Duration transform_tolerance_{tf2::durationFromSec(0.1)};
+
+  // Obstacle-like clearing: overwrite each observed cell with its latest cost
+  // (flat -> cleared to FREE), instead of accumulating the max forever.
+  bool clearing_enabled_{true};
 
   // 脚印清除：每周期把机器人当前脚印内的格子在本层清成 FREE，
   // 保证 terrain 代价永远不会把机器人自己困住（对齐 ObstacleLayer）。

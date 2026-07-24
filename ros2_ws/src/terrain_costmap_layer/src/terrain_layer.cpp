@@ -35,12 +35,14 @@ void TerrainLayer::onInitialize()
   declareParameter("lethal_cost_threshold", rclcpp::ParameterValue(100.0));
   declareParameter("transform_tolerance", rclcpp::ParameterValue(0.1));
   declareParameter("footprint_clearing_enabled", rclcpp::ParameterValue(true));
+  declareParameter("clearing_enabled", rclcpp::ParameterValue(true));
 
   node->get_parameter(name_ + "." + "enabled", enabled_);
   node->get_parameter(name_ + "." + "cost_topic", cost_topic_);
   node->get_parameter(name_ + "." + "combination_method", combination_method_);
   node->get_parameter(name_ + "." + "lethal_cost_threshold", lethal_cost_threshold_);
   node->get_parameter(name_ + "." + "footprint_clearing_enabled", footprint_clearing_enabled_);
+  node->get_parameter(name_ + "." + "clearing_enabled", clearing_enabled_);
   double tf_tol = 0.1;
   node->get_parameter(name_ + "." + "transform_tolerance", tf_tol);
   transform_tolerance_ = tf2::durationFromSec(tf_tol);
@@ -62,9 +64,10 @@ void TerrainLayer::onInitialize()
 
   RCLCPP_INFO(
     logger_,
-    "TerrainLayer initialized. topic=%s global_frame=%s rolling=%d lethal>=%.0f",
+    "TerrainLayer initialized. topic=%s global_frame=%s rolling=%d lethal>=%.0f "
+    "clearing=%d",
     cost_topic_.c_str(), global_frame_.c_str(), static_cast<int>(rolling_window_),
-    lethal_cost_threshold_);
+    lethal_cost_threshold_, static_cast<int>(clearing_enabled_));
 }
 
 void TerrainLayer::matchSize()
@@ -166,8 +169,25 @@ void TerrainLayer::updateBounds(
     if (!std::isfinite(px) || !std::isfinite(py) || !std::isfinite(c)) {
       continue;
     }
+
+    unsigned int mx, my;
+    if (!worldToMap(px, py, mx, my)) {
+      continue;
+    }
+    const unsigned int index = getIndex(mx, my);
+
     if (c <= 0.0f) {
-      continue;  // flat/free: contribute nothing (never lower other layers)
+      // Observed flat/free this frame.
+      if (!clearing_enabled_) {
+        continue;  // legacy: flat contributes nothing (never lowers)
+      }
+      // Obstacle-like clearing: re-scanned and nothing here -> drop any prior
+      // terrain cost at this cell. Lowering OUR grid is what actually clears it
+      // (updateWithMax rebuilds the master from our grid each cycle). FREE_SPACE
+      // only overrides terrain's own cost; other layers' marks stay via Max.
+      costmap_[index] = FREE_SPACE;
+      touch(px, py, min_x, min_y, max_x, max_y);
+      continue;
     }
 
     unsigned char value;
@@ -179,14 +199,15 @@ void TerrainLayer::updateBounds(
       value = static_cast<unsigned char>(std::lround(scaled));
     }
 
-    unsigned int mx, my;
-    if (!worldToMap(px, py, mx, my)) {
-      continue;
-    }
-    const unsigned int index = getIndex(mx, my);
-    // Accumulate: keep the higher of stored and new (NO_INFORMATION counts as lowest).
-    if (costmap_[index] == NO_INFORMATION || value > costmap_[index]) {
+    if (clearing_enabled_) {
+      // Reflect the latest observation (corrects up AND down), like a sensor.
       costmap_[index] = value;
+    } else {
+      // Legacy accumulate: keep the higher of stored and new
+      // (NO_INFORMATION counts as lowest).
+      if (costmap_[index] == NO_INFORMATION || value > costmap_[index]) {
+        costmap_[index] = value;
+      }
     }
     touch(px, py, min_x, min_y, max_x, max_y);
   }

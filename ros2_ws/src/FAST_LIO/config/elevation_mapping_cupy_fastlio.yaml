@@ -6,7 +6,7 @@ elevation_mapping_node:
     base_frame: base_link
     corrected_map_frame: odom
 
-    resolution: 0.2
+    resolution: 0.1
     map_length: 10.0
     sensor_noise_factor: 0.03
     mahalanobis_thresh: 2.5

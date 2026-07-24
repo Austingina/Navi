@@ -170,7 +170,7 @@ local_costmap:
       global_frame: odom
       robot_base_frame: base_link
       use_sim_time: True
-      transform_tolerance: 1.3
+      transform_tolerance: 0.3
       rolling_window: true
       width: 10
       height: 10
@@ -189,6 +189,9 @@ local_costmap:
         combination_method: 1
         lethal_cost_threshold: 100.0
         transform_tolerance: 0.3
+        # True：像 obstacle_layer 那样，重新扫到就用最新观测覆盖该格（扫到平地→清 FREE，
+        # 坡度变化→上下修正）；只有没扫到的格子(坡度未知)才保留旧值。False=旧的只增不减。
+        clearing_enabled: True
 
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
@@ -239,7 +242,7 @@ global_costmap:
       global_frame: map
       robot_base_frame: base_link
       use_sim_time: True
-      transform_tolerance: 1.3
+      transform_tolerance: 0.3
       rolling_window: true
       width: 100
       height: 100
@@ -259,6 +262,9 @@ global_costmap:
         combination_method: 1
         lethal_cost_threshold: 100.0
         transform_tolerance: 0.3
+        # True：重新扫到就用最新观测覆盖该格（扫到平地→清 FREE，坡度变化→上下修正）；
+        # 没扫到的格子(坡度未知)保留旧值。这解决 global 图上地形误报清不掉的问题。
+        clearing_enabled: True
 
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
@@ -274,7 +280,7 @@ global_costmap:
           clearing: True
           marking: True
           inf_is_valid: false
-          observation_persistence: 2.0
+          observation_persistence: 0.0
           raytrace_max_range: 12.0
           raytrace_min_range: 0.0
           obstacle_max_range: 8.0
