@@ -488,6 +488,324 @@ class NavigationToolManager:
         except Exception as e:
             logging.error(f"ROS spin线程出错: {e}")
 
+    # ══════════════════════════════════════════════════════════════════════
+    # 混合路线：逐 waypoint 自动切换导航模式（SLAM 室内点云 ↔ 室外 GPS）
+    #
+    # 一条路线的 waypoint 可以是某张 SLAM 地图内的语义点（map），也可以是室外
+    # 经纬度点（gps），还可能是进楼衔接的场景传送门（scene_point）。执行路线时
+    # 逐个 waypoint 判断其所需导航模式：从「某张 SLAM 地图」跨到「室外」，或从
+    # 「室外」跨回「某张 SLAM 地图」时，自动调用 NavNode.set_nav_mode 切换，并在
+    # SLAM 侧对齐目标 slam_map / submap（跨 SLAM 地图时用 geo_anchor 播种初始位姿）。
+    # ══════════════════════════════════════════════════════════════════════
+    @staticmethod
+    def _waypoint_nav_mode(wp: Dict[str, Any]) -> Optional[str]:
+        """由 waypoint 类型推断所需导航模式：
+
+        - ``gps``（经纬度 / OSM 主干）           → ``NavNode.NAV_MODE_GPS``（室外）
+        - ``map``（语义点 / ``{x,y}``，属某张 SLAM 地图）→ ``NavNode.NAV_MODE_SLAM``
+        - ``scene_point``（场景传送门，进楼衔接点） → ``NavNode.NAV_MODE_SLAM``
+        - ``instruction``（VLN）/ 未知             → ``None``（不改变当前模式）
+        """
+        wtype = wp.get('type') or MapManager.classify_waypoint(wp)
+        if wtype == 'gps':
+            return NavNode.NAV_MODE_GPS
+        if wtype in ('map', 'scene_point'):
+            return NavNode.NAV_MODE_SLAM
+        return None
+
+    def get_route_mode_plan(self, route_name: str) -> Dict[str, Any]:
+        """把一条路线展开成带导航模式标注的段计划（供混合路线执行 / 排障）。
+
+        - 场景全局路线（顶层 ``routes``，异构 waypoint）：用 ``get_global_route_by_name``；
+        - 旧单图内部路线：用 ``get_route_by_name``（全部为 SLAM 段，向后兼容）。
+
+        :return: ``{success, route_name, waypoint_count, waypoints, segments}``；
+                 每个 waypoint 追加 ``nav_mode`` 字段，``segments`` 把相邻同模式的
+                 waypoint 归并成段（段边界即需要自动切换导航模式处）。
+        """
+        if not self.map_manager:
+            return {"success": False, "msg": "未配置 MapManager"}
+        route = None
+        try:
+            if route_name in self.map_manager.get_global_route_names():
+                route = self.map_manager.get_global_route_by_name(route_name)
+        except Exception as e:
+            logging.warning(f"读取全局路线失败({route_name}): {e}")
+        if route is None:
+            route = self.map_manager.get_route_by_name(route_name)
+        if route is None:
+            return {"success": False, "msg": f"路线不存在: {route_name}"}
+
+        waypoints = route.get('waypoints', [])
+        annotated = []
+        for wp in waypoints:
+            item = dict(wp)
+            item.setdefault('type', MapManager.classify_waypoint(wp))
+            item['nav_mode'] = self._waypoint_nav_mode(item)
+            annotated.append(item)
+
+        segments: list = []
+        for i, wp in enumerate(annotated):
+            mode = wp['nav_mode']
+            if segments and segments[-1]['mode'] == mode:
+                segments[-1]['waypoints'].append(i)
+            else:
+                segments.append({
+                    'index': len(segments),
+                    'mode': mode,
+                    'wp_type': wp['type'],
+                    'waypoints': [i],
+                })
+        return {
+            "success": True,
+            "route_name": route_name,
+            "waypoint_count": len(annotated),
+            "waypoints": annotated,
+            "segments": segments,
+        }
+
+    def _compute_slam_entry_pose(
+        self, wp: Dict[str, Any], slam_map_id: Optional[str]
+    ) -> Optional[Dict[str, Any]]:
+        """进入某张 SLAM 地图时的初始位姿（best-effort，用于 ``/pose_in_target``）。
+
+        - ``scene_point``：由传送门经纬度 + 朝向经 ``geo_anchor`` 反算根系位姿；
+        - 其它（多为紧接室外 GPS 段进楼）：用当前 GNSS fix 经 ``geo_anchor`` 反算。
+
+        失败返回 None——``_change_map`` 会跳过位姿发布，交由 VPR / 后续重定位兜底。
+        """
+        try:
+            if wp.get('type') == 'scene_point' and wp.get('scene_point'):
+                entry = self.map_manager.get_slam_entry_pose_from_scene_point(
+                    wp['scene_point'])
+                if entry and entry.get('pose'):
+                    return entry['pose']
+            fix = self.ros_node.get_latest_gps_fix()
+            if fix and slam_map_id:
+                return self.map_manager.lonlat_to_slam_root_pose(
+                    fix['lon'], fix['lat'], None, slam_map_id)
+        except Exception as e:
+            logging.warning(f"计算进入 SLAM 初始位姿失败(best-effort): {e}")
+        return None
+
+    def _ensure_slam_context_for_waypoint(self, wp: Dict[str, Any]) -> Dict[str, Any]:
+        """确保当前活跃 SLAM 地图 / submap 与该 map/scene_point waypoint 匹配。
+
+        跨 SLAM 地图时：切 slam_map + 换图（``_change_map``）并 best-effort 播种
+        初始位姿；同图内跨 submap 时：仅换图（复用现有跨 submap 位姿衔接）。
+        """
+        info: Dict[str, Any] = {"switched_slam_map": False, "switched_submap": False}
+        if not self.map_manager:
+            return info
+
+        desired_map = wp.get('slam_map')
+        desired_submap = wp.get('submap')
+        seed_target_map = desired_map
+        # 场景传送门：目标 SLAM 地图由传送门解析
+        if wp.get('type') == 'scene_point':
+            try:
+                entry = self.map_manager.get_slam_entry_pose_from_scene_point(
+                    wp.get('scene_point'))
+            except Exception:
+                entry = None
+            if entry and entry.get('slam_map'):
+                desired_map = entry['slam_map']
+                seed_target_map = desired_map
+
+        cur_map = self.map_manager.get_current_slam_map()
+        # 1) 跨 SLAM 地图
+        if desired_map and desired_map != cur_map:
+            seed = self._compute_slam_entry_pose(wp, seed_target_map)
+            if not self.map_manager.set_current_slam_map(desired_map):
+                info["error"] = f"SLAM 地图不存在: {desired_map}"
+                return info
+            info["switched_slam_map"] = True
+            info["slam_map"] = desired_map
+            target_submap = desired_submap or self.map_manager.get_current_submap()
+            info["change_map"] = self._change_map(
+                target_submap, init_pose_in_target=seed)
+            info["switched_submap"] = True
+            return info
+        # 2) 同一 SLAM 地图内跨 submap
+        if desired_submap and desired_submap != self.map_manager.get_current_submap():
+            info["change_map"] = self._change_map(desired_submap)
+            info["switched_submap"] = True
+        return info
+
+    def _auto_switch_nav_mode_for_waypoint(self, wp: Dict[str, Any]) -> Dict[str, Any]:
+        """混合路线核心：进入一个 waypoint 前，按其类型自动切换导航模式。
+
+        - 目标模式与当前不同（如 SLAM 地图 ↔ 室外）→ 调 ``NavNode.set_nav_mode``；
+        - 目标为 SLAM → 再对齐目标 ``slam_map`` / ``submap``（跨图播种初始位姿）；
+        - instruction/未知 → 保持当前模式（VLN 段不在本切换范围内）。
+        """
+        result: Dict[str, Any] = {"mode_switched": False}
+        target_mode = self._waypoint_nav_mode(wp)
+        cur_mode = self.ros_node.get_nav_mode()
+        result["from_mode"] = cur_mode
+        if target_mode is None:
+            result["to_mode"] = cur_mode
+            return result
+        result["to_mode"] = target_mode
+        if target_mode != cur_mode:
+            ok, msg = self.ros_node.set_nav_mode(target_mode)
+            result["mode_switched"] = ok
+            result["mode_switch_msg"] = msg
+            logging.info(
+                f"[route] waypoint 触发导航模式切换 {cur_mode} → {target_mode}: {msg}")
+        if target_mode == NavNode.NAV_MODE_SLAM:
+            result["slam_context"] = self._ensure_slam_context_for_waypoint(wp)
+        return result
+
+    def _build_waypoint_goal_pose(self, wp: Dict[str, Any]) -> Optional[PoseStamped]:
+        """为 map 型 waypoint 构造 navigate_to_pose 目标（frame 与 set_goal_by_name 一致）。"""
+        pose_info = wp.get('pose')
+        if not pose_info and wp.get('semantic_point'):
+            pi = self.map_manager.get_pose_in_submap(
+                wp.get('semantic_point'), wp.get('submap'), wp.get('slam_map'))
+            pose_info = pi.get('pose') if pi else None
+        pose = PoseStamped()
+        pose.header.frame_id = "odom"
+        if pose_info:
+            pos = pose_info.get('position', {})
+            ori = pose_info.get('orientation', {})
+            pose.pose.position.x = float(pos.get('x', 0.0))
+            pose.pose.position.y = float(pos.get('y', 0.0))
+            pose.pose.position.z = float(pos.get('z', 0.0))
+            pose.pose.orientation.x = float(ori.get('x', 0.0))
+            pose.pose.orientation.y = float(ori.get('y', 0.0))
+            pose.pose.orientation.z = float(ori.get('z', 0.0))
+            pose.pose.orientation.w = float(ori.get('w', 1.0))
+            return pose
+        # 直接 map 坐标 {x, y, (yaw)}
+        if 'x' in wp and 'y' in wp:
+            pose.pose.position.x = float(wp['x'])
+            pose.pose.position.y = float(wp['y'])
+            yaw = float(wp.get('yaw', 0.0))
+            pose.pose.orientation.z = float(np.sin(yaw / 2.0))
+            pose.pose.orientation.w = float(np.cos(yaw / 2.0))
+            return pose
+        return None
+
+    def _dispatch_waypoint_goal(self, wp: Dict[str, Any], label: str) -> Dict[str, Any]:
+        """按当前模式下发 waypoint 目标：
+
+        - ``gps`` → ``NavNode.set_outdoor_goal_by_lonlat``（交 campus_nav 路网规划器）；
+        - ``map`` → ``NavNode.publish_goal``（navigate_to_pose）；
+        - ``scene_point`` / ``instruction`` → 无独立目标（切换/衔接已在 auto-switch 处理，
+          VLN 段暂不在本执行器范围内），标记 ``skipped``。
+        """
+        wtype = wp.get('type') or MapManager.classify_waypoint(wp)
+        try:
+            if wtype == 'gps':
+                ok = self.ros_node.set_outdoor_goal_by_lonlat(
+                    float(wp['lon']), float(wp['lat']))
+                return {"success": ok, "kind": "gps"}
+            if wtype == 'map':
+                pose = self._build_waypoint_goal_pose(wp)
+                if pose is None:
+                    return {"success": False, "kind": "map",
+                            "msg": "waypoint 缺少可用 pose"}
+                self.ros_node.publish_goal(pose, label)
+                return {"success": True, "kind": "map"}
+            # scene_point / instruction
+            return {"success": True, "kind": wtype, "skipped": True}
+        except Exception as e:
+            return {"success": False, "kind": wtype, "msg": str(e)}
+
+    async def _wait_waypoint_reached(
+        self, wp: Dict[str, Any], timeout: float,
+        xy_tolerance: float, yaw_tolerance: float, gps_reach_tol: float,
+    ) -> Dict[str, Any]:
+        """等待单个 waypoint 到达：gps 段用室外距离近似判定，map 段复用 check_goal_reached。"""
+        wtype = wp.get('type') or MapManager.classify_waypoint(wp)
+        start = time.time()
+        if wtype == 'gps':
+            while time.time() - start < timeout:
+                await asyncio.sleep(0.1)
+                if self.ros_node.is_outdoor_goal_reached(gps_reach_tol):
+                    return {"reached": True, "msg": "室外 GPS 目标到达(近似)"}
+            return {"reached": False, "msg": "GPS 段等待超时"}
+        # map 段
+        while time.time() - start < timeout:
+            await asyncio.sleep(0.05)
+            status, fail = self.ros_node.check_goal_reached(xy_tolerance, yaw_tolerance)
+            if status == self.ros_node.GOAL_CHECK_REACHED:
+                return {"reached": True, "msg": "到达"}
+            if status == self.ros_node.GOAL_CHECK_FAILED:
+                return {"reached": False, "msg": fail or "导航失败", "nav_failed": True}
+        return {"reached": False, "msg": "等待超时"}
+
+    async def _follow_route_impl(
+        self, route_name: str, per_waypoint_timeout: float = 120.0,
+        xy_tolerance: float = 0.5, yaw_tolerance: float = 0.2,
+        gps_reach_tol: float = 3.0,
+    ) -> Dict[str, Any]:
+        """按序执行一条（可跨 SLAM 地图 / 室外的混合）路线，段间自动切换导航模式。"""
+        plan = self.get_route_mode_plan(route_name)
+        if not plan.get("success"):
+            return plan
+        waypoints = plan["waypoints"]
+        if not waypoints:
+            return {"success": False, "msg": f"路线 {route_name} 无 waypoint"}
+        if self.viz is not None:
+            try:
+                self.viz.set_active_route(route_name)
+            except Exception:
+                pass
+
+        results = []
+        for i, wp in enumerate(waypoints):
+            switch = self._auto_switch_nav_mode_for_waypoint(wp)
+            dispatch = self._dispatch_waypoint_goal(wp, f"{route_name}#wp{i}")
+            wp_res: Dict[str, Any] = {
+                "index": i,
+                "type": wp.get('type'),
+                "nav_mode": wp.get('nav_mode'),
+                "switch": switch,
+                "dispatch": dispatch,
+            }
+            if dispatch.get("skipped"):
+                wp_res["reached"] = True
+                results.append(wp_res)
+                continue
+            if not dispatch.get("success"):
+                wp_res["reached"] = False
+                results.append(wp_res)
+                return {
+                    "success": False, "route_name": route_name,
+                    "msg": f"waypoint {i} 目标下发失败: {dispatch.get('msg')}",
+                    "failed_index": i, "results": results,
+                }
+            reached = await self._wait_waypoint_reached(
+                wp, per_waypoint_timeout, xy_tolerance, yaw_tolerance, gps_reach_tol)
+            wp_res.update(reached)
+            results.append(wp_res)
+            if not reached.get("reached"):
+                return {
+                    "success": False, "route_name": route_name,
+                    "msg": f"waypoint {i} 未到达: {reached.get('msg')}",
+                    "failed_index": i, "results": results,
+                }
+        return {
+            "success": True, "route_name": route_name,
+            "waypoint_count": len(waypoints),
+            "segments": plan["segments"], "results": results,
+        }
+
+    def _ensure_nav_mode(self, target_mode: str) -> Dict[str, Any]:
+        """确保 NavNode 处于目标导航模式；已在目标模式则空操作。
+
+        供 set_goal 系列在下发前对齐模式（SLAM 语义点/坐标 → slam；经纬度 → gps）。
+        """
+        cur = self.ros_node.get_nav_mode()
+        if cur == target_mode:
+            return {"switched": False, "nav_mode": cur}
+        ok, msg = self.ros_node.set_nav_mode(target_mode)
+        return {
+            "switched": bool(ok), "from": cur,
+            "nav_mode": self.ros_node.get_nav_mode(), "msg": msg,
+        }
 
     def register_tools(self):
         """
@@ -496,14 +814,17 @@ class NavigationToolManager:
         客户端 JSON: {\"id\": optional, \"method\": 方法名, \"params\": {...}}
         服务端回复: {\"id\": ..., \"result\": ...} 或 {\"id\": ..., \"error\": \"...\"}
         """
-        def set_goal_by_name(target: str) -> Dict[str, Any]:
+        def set_goal_by_name(target: str, slam_map: str = None, submap: str = None) -> Dict[str, Any]:
             """
-            下发导航目标
+            下发导航目标（SLAM 模式：地图语义点）
             可用目标点：狗巢、配电房、灭火器箱、液晶大屏、会议桌
             参数:
             target: 目标点名称（必须在预设地图中）
-            
+            slam_map: 可选，目标所在 SLAM 地图 id（多 SLAM 地图场景）；与当前不同会自动切换
+            submap: 可选，目标所在 submap id；与当前不同会自动换图
+
             说明:
+            - 语义点属于 SLAM 导航：本接口会自动确保处于 `slam` 模式（若当前为 `gps` 室外模式则切回）。
             - 适用于 `type` 为 `single_pose` 的点位；调用此接口会使用普通导航下发目标。
             - 如果点位 `type` 为 `elevator_call`：机器人到达该点后应等待 agent 执行呼叫电梯的操作（本接口只负责下发导航）。
             - 如果点位 `type` 为 `elevator_wait`：机器人到达该点后应等待 agent 确认电梯已经到达并开门。
@@ -515,9 +836,18 @@ class NavigationToolManager:
             """
             """下发导航目标"""
             try:
+                # 语义点导航属于 SLAM：确保处于 slam 模式（室外→室内自动切换）
+                mode_switch = self._ensure_nav_mode(NavNode.NAV_MODE_SLAM)
+                # 若显式指定 slam_map/submap，先对齐地图上下文（跨图/跨 submap 自动换图）
+                ctx = None
+                if (slam_map or submap) and self.map_manager:
+                    ctx = self._ensure_slam_context_for_waypoint(
+                        {"type": "map", "slam_map": slam_map, "submap": submap})
+
                 # 检查目标点是否在预设地图中
                 if target not in self.map_manager.pose_map_current_submap:
-                    return {"success": False, "msg": f"目标点 {target} 不在白名单中"}
+                    return {"success": False, "msg": f"目标点 {target} 不在白名单中",
+                            "mode_switch": mode_switch, "slam_context": ctx}
                 
                 # 获取目标点的位姿信息
                 pose_info = self.map_manager.pose_map_current_submap[target].get("pose")
@@ -544,7 +874,8 @@ class NavigationToolManager:
                     logging.info("前往 elevator_in 点位 %s，enter_elevator: %s %s", target, ok, emsg)
 
                 self.ros_node.publish_goal(pose, target)
-                return {"success": True, "msg": f"目标 {target} 已下发", "target": target}
+                return {"success": True, "msg": f"目标 {target} 已下发", "target": target,
+                        "mode_switch": mode_switch}
             except Exception as e:
                 return {"success": False, "msg": f"设置目标失败: {str(e)}"}
 
@@ -563,6 +894,8 @@ class NavigationToolManager:
             Dict: 包含操作结果的字典，包括每个位姿点的到达状态
             """
             try:
+                # 多位姿点导航属于 SLAM：确保处于 slam 模式
+                self._ensure_nav_mode(NavNode.NAV_MODE_SLAM)
                 # 检查目标点是否在预设地图中
                 if target not in self.map_manager.pose_map_current_submap:
                     return {"success": False, "msg": f"目标点 {target} 不在白名单中"}
@@ -645,24 +978,48 @@ class NavigationToolManager:
             except Exception as e:
                 return {"success": False, "msg": f"多位姿导航失败: {str(e)}"}
 
-        def set_goal_by_lonlat(lon: float, lat: float, distance: float = 1.5) -> Dict[str, Any]:
+        def set_goal_by_lonlat(lon: float, lat: float, distance: float = 1.5,
+                               mode: str = "auto") -> Dict[str, Any]:
             """
-            根据输入的经纬度导航到目标点附近
-            步骤：
-            1. 经纬度转map坐标系
-            2. 判断是否在map bound范围内
-            3. 计算距离目标点distance距离的实际目标位置
-            4. 调用publish_goal发起导航
+            根据输入的经纬度下发导航目标（区分 SLAM / 室外 GPS 两种后端）。
 
             参数:
             lon: 目标点经度
             lat: 目标点纬度
-            distance: 距离目标点的距离，默认1.5米
+            distance: （仅 SLAM 模式）距离目标点的停靠距离，默认1.5米
+            mode: 目标后端选择——
+                  - ``"gps"``：走室外 GNSS 导航（campus_nav 路网规划器），自动切到 gps 模式；
+                  - ``"slam"``：把经纬度按单图 wgs84 锚点换算成当前 SLAM 地图坐标再 navigate_to_pose；
+                  - ``"auto"``（默认）：有场景(scene)地图或当前已是 gps 模式 → 走室外 GPS；
+                    否则回退到单图 SLAM 换算（向后兼容旧 408 单图用法）。
 
             返回:
             Dict: 操作结果
             """
             try:
+                # ── 选择后端：室外 GPS vs 单图 SLAM 换算 ──
+                use_gps = (
+                    mode == "gps" or (
+                        mode == "auto" and (
+                            (self.map_manager is not None and self.map_manager.has_scene())
+                            or self.ros_node.get_nav_mode() == NavNode.NAV_MODE_GPS
+                        )
+                    )
+                )
+                if use_gps:
+                    mode_switch = self._ensure_nav_mode(NavNode.NAV_MODE_GPS)
+                    ok = self.ros_node.set_outdoor_goal_by_lonlat(float(lon), float(lat))
+                    return {
+                        "success": bool(ok),
+                        "mode": "gps",
+                        "mode_switch": mode_switch,
+                        "target": {"lon": lon, "lat": lat},
+                        "msg": ("已向室外路网规划器下发经纬度目标" if ok
+                                else "室外经纬度目标下发失败"),
+                    }
+
+                # ── 单图 SLAM 换算路径（保持原行为，确保 slam 模式）──
+                self._ensure_nav_mode(NavNode.NAV_MODE_SLAM)
                 # 将经纬度转换为地图坐标系
                 x, y = self.wgs84_converter.lonlat_to_xy(lon, lat)
                 
@@ -730,6 +1087,7 @@ class NavigationToolManager:
 
                 return {
                     "success": True,
+                    "mode": "slam",
                     "target_str": target_str,
                     "msg": f"已下发目标，将在距离经纬度({lon}, {lat})约{distance}米处停下并面向目标点",
                     "original_target": {"lon": lon, "lat": lat, "x": x, "y": y},
@@ -756,6 +1114,8 @@ class NavigationToolManager:
             Dict: 操作结果
             """
             try:
+                # map 系坐标导航属于 SLAM：确保处于 slam 模式
+                self._ensure_nav_mode(NavNode.NAV_MODE_SLAM)
                 # 检查输入坐标是否在地图边界内
                 if not (self.ros_node.map_bound["xmin"] <= x <= self.ros_node.map_bound["xmax"] and
                         self.ros_node.map_bound["ymin"] <= y <= self.ros_node.map_bound["ymax"]):
@@ -859,25 +1219,36 @@ class NavigationToolManager:
             except Exception as e:
                 return {"success": False, "msg": f"继续导航失败: {str(e)}"}
 
-        def get_pose_list_in_current_submap() -> Dict[str, Any]:
+        def get_pose_list_in_current_submap(slam_map: str = None, submap_id: str = None) -> Dict[str, Any]:
             """
-            获取所有预设点名称
+            获取预设点名称列表（默认当前 submap；可指定 SLAM 地图 / submap）
 
+            :param slam_map: 可选 SLAM 地图 id（多 SLAM 地图场景），默认当前
+            :param submap_id: 可选 submap id，默认当前
             返回:
-            Dict: {"success": True, "keys": [...], "count": N}
+            Dict: {"success": True, "keys": [...], "count": N, "slam_map": ..., "submap": ...}
             """
             try:
-                keys = list(self.map_manager.pose_map_current_submap.keys())
-                return {"success": True, "keys": keys, "count": len(keys)}
+                if slam_map or submap_id:
+                    points = self.map_manager.get_semantic_points_in_submap(submap_id, slam_map)
+                    keys = list(points.keys())
+                else:
+                    keys = list(self.map_manager.pose_map_current_submap.keys())
+                return {
+                    "success": True, "keys": keys, "count": len(keys),
+                    "slam_map": slam_map or self.map_manager.get_current_slam_map(),
+                    "submap": submap_id or self.map_manager.get_current_submap(),
+                }
             except Exception as e:
                 return {"success": False, "msg": f"获取pose列表失败: {str(e)}"}
 
-        def get_pose_in_submap(pose_name: str, submap_id: str = None) -> Dict[str, Any]:
+        def get_pose_in_submap(pose_name: str, submap_id: str = None, slam_map: str = None) -> Dict[str, Any]:
             """
             获取指定点位的完整 point_info（由 MapManager.get_pose_in_submap 提供）
 
             :param pose_name: 点位名称
             :param submap_id: 可选 submap ID，默认为当前 submap
+            :param slam_map: 可选 SLAM 地图 id（多 SLAM 地图场景），默认当前
             :return: {success: bool, point_info: {...}} 或 error msg
 
             point_info 中 `type` 字段说明：
@@ -894,7 +1265,7 @@ class NavigationToolManager:
                 if not self.map_manager:
                     return {"success": False, "msg": "MapManager 未配置"}
 
-                point_info = self.map_manager.get_pose_in_submap(pose_name, submap_id)
+                point_info = self.map_manager.get_pose_in_submap(pose_name, submap_id, slam_map)
                 if point_info is None:
                     return {"success": False, "msg": f"点位 {pose_name} 在子地图 {submap_id or self.map_manager.get_current_submap()} 中不存在"}
 
@@ -902,37 +1273,46 @@ class NavigationToolManager:
             except Exception as e:
                 return {"success": False, "msg": f"获取点位失败: {str(e)}"}
 
-        def get_submap_list() -> Dict[str, Any]:
+        def get_submap_list(slam_map: str = None) -> Dict[str, Any]:
             """
-            获取所有子地图 ID 列表
+            获取子地图 ID 列表（默认当前 SLAM 地图；可指定其它 SLAM 地图）
+
+            参数:
+            slam_map: 可选 SLAM 地图 id（多 SLAM 地图场景），默认当前
 
             返回:
-            Dict: {"success": True, "submaps": [...], "count": N}
+            Dict: {"success": True, "submaps": [...], "count": N, "slam_map": ..., "slam_maps": [...]}
             """
             try:
-                submaps = self.map_manager.get_submap_list()
-                return {"success": True, "submaps": submaps, "count": len(submaps)}
+                submaps = self.map_manager.get_submap_list(slam_map)
+                return {
+                    "success": True, "submaps": submaps, "count": len(submaps),
+                    "slam_map": slam_map or self.map_manager.get_current_slam_map(),
+                    "slam_maps": self.map_manager.get_slam_map_list(),
+                }
             except Exception as e:
                 return {"success": False, "msg": f"获取子地图列表失败: {str(e)}"}
 
-        def get_submap_info(submap_id: str) -> Dict[str, Any]:
+        def get_submap_info(submap_id: str, slam_map: str = None) -> Dict[str, Any]:
             """
-            获取指定子地图的详细信息
+            获取指定子地图的详细信息（默认当前 SLAM 地图；可指定其它 SLAM 地图）
 
             参数:
             submap_id: 子地图 ID（如 floor, underground, 5floor）
+            slam_map: 可选 SLAM 地图 id（多 SLAM 地图场景），默认当前
 
             返回:
-            Dict: {"success": True, "submap_id": "...", "info": {...}}
+            Dict: {"success": True, "submap_id": "...", "slam_map": "...", "info": {...}}
             """
             try:
-                info = self.map_manager.get_submap_info(submap_id)
+                info = self.map_manager.get_submap_info(submap_id, slam_map)
                 if info is None:
-                    submaps = self.map_manager.get_submap_list()
+                    submaps = self.map_manager.get_submap_list(slam_map)
                     return {"success": False, "msg": f"子地图 {submap_id} 不存在，可用子地图: {submaps}"}
                 return {
                     "success": True,
                     "submap_id": submap_id,
+                    "slam_map": slam_map or self.map_manager.get_current_slam_map(),
                     "info": info
                 }
             except Exception as e:
@@ -946,21 +1326,38 @@ class NavigationToolManager:
             Dict: {"success": True, "map_id": "...", "map_path": "..."}
             """
             try:
+                slam_map = self.map_manager.get_current_slam_map() if self.map_manager else None
+                # 室外 GPS 模式：无 SLAM 点云地图加载，且室外栈不含
+                # grid_map_pcl_loader_node（查询它会白等 2s 超时）。直接短路返回，
+                # 明确 map_id 为空，避免回退到过时的室内 submap 造成误导。
+                if self.ros_node.get_nav_mode() == NavNode.NAV_MODE_GPS:
+                    return {
+                        "success": True,
+                        "nav_mode": NavNode.NAV_MODE_GPS,
+                        "map_id": None,
+                        "slam_map": None,
+                        "map_path": "",
+                        "msg": "当前为室外 GPS 导航模式，无活跃 SLAM 点云地图",
+                    }
                 map_path = self.ros_node.get_current_map_path()
                 if map_path:
                     map_id = self.map_manager.get_submap_id_by_map_file(map_path)
                     return {
                         "success": True,
+                        "nav_mode": NavNode.NAV_MODE_SLAM,
                         "map_id": map_id,
+                        "slam_map": slam_map,
                         "map_path": map_path,
-                        "msg": f"当前地图: {map_id or '未知'} ({map_path})"
+                        "msg": f"当前地图: {slam_map + '/' if slam_map else ''}{map_id or '未知'} ({map_path})"
                     }
                 # ROS 参数服务超时，回退到 MapManager 缓存
                 cached_id = self.map_manager.get_current_submap()
                 if cached_id:
                     return {
                         "success": True,
+                        "nav_mode": NavNode.NAV_MODE_SLAM,
                         "map_id": cached_id,
+                        "slam_map": slam_map,
                         "map_path": "",
                         "msg": f"当前地图(缓存): {cached_id}（ROS参数服务暂不可用）"
                     }
@@ -1081,18 +1478,32 @@ class NavigationToolManager:
 
         def get_route_names() -> Dict[str, Any]:
             """
-            获取所有巡逻线路名称
+            获取所有巡逻线路名称（含场景级全局路线与当前 SLAM 地图的内部路线）。
 
             返回:
-            Dict: {"success": True, "route_names": [...], "count": N}
+            Dict: {"success": True, "route_names": [...], "routes": [...],
+                   "global_routes": [...], "slam_routes": [...], "count": N}
+                  routes 每项含 ``scope``（``global`` 跨地图 / ``slam`` 当前 SLAM 地图内部）。
             """
             try:
-                route_list = self.map_manager.get_route_list()
+                slam_routes = self.map_manager.get_route_list()
+                global_routes = []
+                try:
+                    global_routes = self.map_manager.get_global_route_list()
+                except Exception:
+                    global_routes = []
+                combined = []
+                for r in global_routes:
+                    combined.append({**r, "scope": "global"})
+                for r in slam_routes:
+                    combined.append({**r, "scope": "slam"})
                 return {
                     "success": True,
-                    "route_names": [r['name'] for r in route_list],
-                    "routes": route_list,
-                    "count": len(route_list)
+                    "route_names": [r['name'] for r in combined],
+                    "routes": combined,
+                    "global_routes": [r['name'] for r in global_routes],
+                    "slam_routes": [r['name'] for r in slam_routes],
+                    "count": len(combined)
                 }
             except Exception as e:
                 return {"success": False, "msg": f"获取路线列表失败: {str(e)}"}
@@ -1116,19 +1527,40 @@ class NavigationToolManager:
             """
             根据路线名称获取巡逻点位列表。
 
+            - 场景级全局路线：返回异构 waypoint（每个带 ``type``：map/gps/instruction/scene_point），
+              并附带按导航模式归并的 ``segments``（段边界即 SLAM↔室外切换处）。
+            - 当前 SLAM 地图内部路线：返回展开后的 ``{submap, semantic_point}`` waypoint。
+
             Args:
                 route_name: 路线名称（如 线路A）
 
             Returns:
-            Dict: 包含路线描述和巡逻点位列表
+            Dict: 包含路线描述、巡逻点位列表（全局路线含 type/nav_mode）与可选 segments。
             """
             try:
+                is_global = False
+                try:
+                    is_global = route_name in self.map_manager.get_global_route_names()
+                except Exception:
+                    is_global = False
+                if is_global:
+                    plan = self.get_route_mode_plan(route_name)
+                    if not plan.get("success"):
+                        return plan
+                    return {
+                        "success": True,
+                        "scope": "global",
+                        "name": route_name,
+                        "waypoints": plan["waypoints"],
+                        "segments": plan["segments"],
+                        "count": plan["waypoint_count"],
+                    }
                 route_info = self.map_manager.get_route_by_name(route_name)
                 if not route_info:
                     return {"success": False, "msg": f"路线不存在: {route_name}"}
-
                 return {
                     "success": True,
+                    "scope": "slam",
                     "name": route_info['name'],
                     "description": route_info['description'],
                     "waypoints": route_info['waypoints'],
@@ -1152,7 +1584,8 @@ class NavigationToolManager:
             if not route_name or not isinstance(route_name, str):
                 return {"success": False, "msg": "route_name 不能为空"}
             try:
-                if self.map_manager.get_route_by_name(route_name) is None:
+                is_global = route_name in self.map_manager.get_global_route_names()
+                if not is_global and self.map_manager.get_route_by_name(route_name) is None:
                     return {"success": False, "msg": f"路线不存在: {route_name}"}
             except Exception as e:
                 return {"success": False, "msg": f"校验路线失败: {e}"}
@@ -1178,23 +1611,38 @@ class NavigationToolManager:
 
         def get_status() -> Dict[str, Any]:
             """
-            获取小车实时状态
-            
+            获取小车实时状态（含导航模式与按模式判定的定位状态）。
+
             返回:
-            Dict: success 为 True 时含 position、orientation，以及 localized（map→base_link TF 是否稳定可用）。
+            Dict: success 为 True 时含 position、orientation；并含：
+              - nav_mode: 当前导航模式（``slam`` / ``gps``）
+              - localized: 按当前模式判定是否已定位（slam 看 map→base_link TF；gps 看 GNSS fix + 位姿）
+              - map_localized / gps_available: 两种定位判据的原始值（便于排障）
+              - slam_map: 当前活跃 SLAM 地图 id
+              - gps_fix: gps 模式下的最新 GNSS fix（若有）
             """
-            """获取小车实时状态"""
             try:
                 # 获取当前里程计数据
                 odom = self.ros_node.current_pose
-                # print(f"get_status: return odom:{odom.pose.position, odom.pose.orientation}")
+                nav_mode = self.ros_node.get_nav_mode()
                 if not odom:
-                    return {"success": False, "msg": "无实时位姿数据"}
-                
-                # 构造状态信息字典
-                return {
+                    # 无位姿时也回报模式/定位判据，便于上层等待
+                    return {
+                        "success": False, "msg": "无实时位姿数据",
+                        "nav_mode": nav_mode,
+                        "localized": self.ros_node.is_localized(),
+                        "map_localized": self.ros_node.is_map_localized(),
+                        "gps_available": self.ros_node.is_gps_available(),
+                    }
+
+                status: Dict[str, Any] = {
                     "success": True,
-                    "localized": self.ros_node.is_map_localized(),
+                    "nav_mode": nav_mode,
+                    "localized": self.ros_node.is_localized(),
+                    "map_localized": self.ros_node.is_map_localized(),
+                    "gps_available": self.ros_node.is_gps_available(),
+                    "slam_map": (self.map_manager.get_current_slam_map()
+                                 if self.map_manager else None),
                     "position": {
                         "x": odom.pose.position.x,
                         "y": odom.pose.position.y,
@@ -1207,6 +1655,9 @@ class NavigationToolManager:
                         "w": odom.pose.orientation.w
                     },
                 }
+                if nav_mode == NavNode.NAV_MODE_GPS:
+                    status["gps_fix"] = self.ros_node.get_latest_gps_fix()
+                return status
             except Exception as e:
                 return {"success": False, "msg": f"获取状态失败: {str(e)}"}
 
@@ -1428,6 +1879,55 @@ class NavigationToolManager:
             except Exception as e:
                 return {"success": False, "msg": f"退出电梯模式失败: {str(e)}"}
 
+        def get_nav_mode() -> Dict[str, Any]:
+            """获取当前导航模式（``slam`` 室内点云定位 / ``gps`` 室外 GNSS）。"""
+            try:
+                return {"success": True, "nav_mode": self.ros_node.get_nav_mode()}
+            except Exception as e:
+                return {"success": False, "msg": f"获取导航模式失败: {str(e)}"}
+
+        def set_nav_mode(mode: str) -> Dict[str, Any]:
+            """手动切换导航模式：``slam`` ↔ ``gps``（会停当前目标并复位定位判据）。"""
+            try:
+                ok, msg = self.ros_node.set_nav_mode(mode)
+                return {"success": ok, "nav_mode": self.ros_node.get_nav_mode(), "msg": msg}
+            except Exception as e:
+                return {"success": False, "msg": f"切换导航模式失败: {str(e)}"}
+
+        def get_route_plan(route_name: str) -> Dict[str, Any]:
+            """返回一条路线逐 waypoint 的导航模式标注与段计划（SLAM/GPS 段边界即切换点）。"""
+            try:
+                return self.get_route_mode_plan(route_name)
+            except Exception as e:
+                return {"success": False, "msg": f"生成路线模式计划失败: {str(e)}"}
+
+        async def follow_route(
+            route_name: str,
+            per_waypoint_timeout: float = 120.0,
+            xy_tolerance: float = 0.5,
+            yaw_tolerance: float = 0.2,
+            gps_reach_tol: float = 3.0,
+        ) -> Dict[str, Any]:
+            """执行一条（可跨 SLAM 地图 / 室外的混合）路线。
+
+            逐 waypoint 推进：当 waypoint 从某张 SLAM 地图跨到室外、或从室外跨回
+            SLAM 地图时，自动切换导航模式（SLAM ↔ GPS）并对齐目标 slam_map/submap，
+            再下发对应后端目标并等待到达。返回逐点结果与段计划，便于排障。
+
+            参数:
+            route_name: 路线名（场景全局路线或旧单图内部路线）
+            per_waypoint_timeout: 每个 waypoint 的到达超时（秒）
+            xy_tolerance / yaw_tolerance: SLAM 段到达容差
+            gps_reach_tol: 室外 GPS 段到达距离容差（米）
+            """
+            try:
+                return await self._follow_route_impl(
+                    route_name, per_waypoint_timeout,
+                    xy_tolerance, yaw_tolerance, gps_reach_tol)
+            except Exception as e:
+                logging.error(f"follow_route 失败: {e}", exc_info=True)
+                return {"success": False, "msg": f"follow_route 异常: {str(e)}"}
+
         self._handlers = {
             "set_goal_by_name": set_goal_by_name,
             "set_goal_by_multipose": set_goal_by_multipose,
@@ -1456,6 +1956,10 @@ class NavigationToolManager:
             "enter_elevator": enter_elevator,
             "exit_elevator": exit_elevator,
             "set_xy_goal_tolerance": set_xy_goal_tolerance,
+            "get_nav_mode": get_nav_mode,
+            "set_nav_mode": set_nav_mode,
+            "get_route_plan": get_route_plan,
+            "follow_route": follow_route,
         }
 
     async def call_method(self, method: str, params: Dict[str, Any]) -> Any:

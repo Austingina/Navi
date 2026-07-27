@@ -241,13 +241,13 @@ class MapManager:
         cfg = self.slam_maps.get(slam_map_id)
         return cfg.get('pcd_base') if cfg else None
     
-    def get_submap_list(self) -> List[str]:
-        """获取所有 submap ID 列表"""
-        return list(self.submaps.keys())
-    
-    def get_submap_info(self, submap_id: str) -> Optional[Dict]:
-        """获取指定 submap 的信息"""
-        return self.submaps.get(submap_id)
+    def get_submap_list(self, slam_map_id: str = None) -> List[str]:
+        """获取（指定 / 当前 SLAM 地图的）所有 submap ID 列表"""
+        return list(self._get_submaps(slam_map_id).keys())
+
+    def get_submap_info(self, submap_id: str, slam_map_id: str = None) -> Optional[Dict]:
+        """获取（指定 / 当前 SLAM 地图的）指定 submap 的信息"""
+        return self._get_submaps(slam_map_id).get(submap_id)
     
     def get_submap_map_file(self, submap_id: str) -> Optional[str]:
         """获取指定 submap 的地图文件名"""
