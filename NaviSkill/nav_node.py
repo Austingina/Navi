@@ -8,6 +8,7 @@ from rclpy.callback_groups import MutuallyExclusiveCallbackGroup  # 回调组（
 from geometry_msgs.msg import PoseStamped, Twist, TwistStamped  # 位姿消息类型和速度控制消息类型
 from nav_msgs.msg import OccupancyGrid, Odometry, Path  # 占据网格、里程计、全局路径
 from sensor_msgs.msg import CompressedImage  # 压缩图像（用于 VPR 引导）
+from sensor_msgs.msg import NavSatFix, NavSatStatus  # GNSS 定位（室外 GPS 导航）
 from std_msgs.msg import String, Bool  # 字符串消息类型 / 布尔消息类型
 from std_srvs.srv import SetBool  # 用于 elevator_mode 服务
 from action_msgs.msg import GoalStatus, GoalStatusArray  # Action状态消息
@@ -45,7 +46,28 @@ class NavNode(Node):
     GOAL_CHECK_PENDING = "pending"
     GOAL_CHECK_FAILED = "failed"
 
-    def __init__(self, camera_image_topic: str = "/hdas/camera_head/left_raw/image_raw_color/compressed"):
+    # 导航模式：室内点云 SLAM 定位导航 / 室外 GNSS(GPS) 导航
+    NAV_MODE_SLAM = "slam"
+    NAV_MODE_GPS = "gps"
+
+    # 参考 campus_nav（route_planner.launch.py / route_graph.ENU）的默认 ENU datum，
+    # 室外 GPS 目标点经纬度按此 datum 换算成 campus_map 平面坐标下发给路网规划器。
+    DEFAULT_GPS_DATUM_LAT = 22.574357630323675
+    DEFAULT_GPS_DATUM_LON = 113.93507078035577
+    _EARTH_R = 6378137.0  # WGS84 平均半径（m），与 campus_nav.route_graph 保持一致
+
+    def __init__(
+        self,
+        camera_image_topic: str = "/hdas/camera_head/left_raw/image_raw_color/compressed",
+        *,
+        gps_fix_topic: str = "/gps/fix",
+        odometry_gps_topic: str = "/odometry/gps",
+        campus_goal_topic: str = "campus_goal_pose",
+        campus_frame: str = "campus_map",
+        gps_datum_lat: float = DEFAULT_GPS_DATUM_LAT,
+        gps_datum_lon: float = DEFAULT_GPS_DATUM_LON,
+        initial_nav_mode: str = NAV_MODE_SLAM,
+    ):
         """初始化ROS节点和相关发布者/订阅者
 
         :param camera_image_topic: 用于 VPR 引导/重定位的相机 CompressedImage 话题，
@@ -55,6 +77,14 @@ class NavNode(Node):
                                     使用的 ``/camera_agent/img_left/compressed`` 不同；
                                     数据库本身只关心特征空间，不要求 live 话题与 bag
                                     话题同名，只要相机参数与去畸变配置一致即可。
+        :param gps_fix_topic: 室外 GNSS 定位的 NavSatFix 话题（默认 ``/gps/fix``，
+                              与 outdoor_localization_dammy.launch.py 的 navsat 输入一致）。
+        :param odometry_gps_topic: navsat_transform 输出的 GPS 里程 ``/odometry/gps``。
+        :param campus_goal_topic: campus_nav 路网规划器的目标点话题（PoseStamped）。
+        :param campus_frame: campus_nav 使用的 ENU 平面 TF（默认 ``campus_map``）。
+        :param gps_datum_lat/gps_datum_lon: 经纬度→campus_map 平面换算所用 ENU 原点，
+                              必须与 campus_nav 的 datum 一致（否则目标点会错位）。
+        :param initial_nav_mode: 初始导航模式 ``"slam"``（默认）或 ``"gps"``。
         """
         # 先确保rclpy已经初始化
         if not rclpy.ok():
@@ -221,7 +251,58 @@ class NavNode(Node):
                 10,
                 callback_group=self._cb_group_bulk,
             )
-            
+
+            # ── 导航模式（SLAM 室内点云定位 / GPS 室外 GNSS）与室外导航支撑 ──────
+            # 两种模式共用同一套 Nav2/TF 后端：
+            #   - SLAM：FAST-LIO 对先验 PCD 地图重定位，map→base_link 由点云配准维持，
+            #           目标点是地图语义点，走 publish_goal → navigate_to_pose。
+            #   - GPS ：室外无先验地图，navsat_transform + map_odom_from_gps 用 GNSS
+            #           融合出 map→odom→base_link；目标点是经纬度/路网点，交给
+            #           campus_nav 路网规划器（campus_goal_pose）做道路级规划后驱动 Nav2。
+            # nav_mode 只影响“定位是否就绪的判据”和“目标点如何下发”，不改变底层 Nav2。
+            mode = initial_nav_mode if initial_nav_mode in (
+                self.NAV_MODE_SLAM, self.NAV_MODE_GPS) else self.NAV_MODE_SLAM
+            self.nav_mode = mode
+            self._nav_mode_lock = threading.Lock()
+            # /nav_mode：向其它节点通告当前导航模式（切换时发布，便于联动）
+            self.nav_mode_pub = self.create_publisher(String, '/nav_mode', 10)
+            # GNSS 新鲜度门限（秒）：超过此时长未更新的 fix 视为不可用
+            self._gps_fresh_sec = 2.0
+
+            # GNSS fix（NavSatFix）：室外定位可用性判据。缓存最新一帧（含 mono 时间）。
+            self.gps_fix_topic = gps_fix_topic
+            self._gps_lock = threading.Lock()
+            self._latest_gps_fix: Optional[Dict[str, Any]] = None
+            self._latest_gps_odom: Optional[Tuple[float, float, float]] = None  # (x, y, mono)
+            self.gps_fix_sub = self.create_subscription(
+                NavSatFix,
+                gps_fix_topic,
+                self._gps_fix_callback,
+                10,
+                callback_group=self._cb_group_bulk,
+            )
+            # navsat_transform 输出的 GPS 里程（map/odom 系），可选，用于健康度参考
+            self.gps_odom_sub = self.create_subscription(
+                Odometry,
+                odometry_gps_topic,
+                self._gps_odom_callback,
+                10,
+                callback_group=self._cb_group_bulk,
+            )
+
+            # campus_nav 路网规划器目标点：室外 GPS 模式下把经纬度/平面点作为 goal
+            # 发到该话题，规划器会吸附到最近道路、A* 出道路级路线并分批喂 Nav2。
+            self.campus_frame = campus_frame
+            self.campus_goal_pub = self.create_publisher(
+                PoseStamped, campus_goal_topic, 10)
+            # 经纬度 ↔ campus_map 平面（等距圆柱投影，与 route_graph.ENU 完全一致）
+            self.gps_datum_lat = float(gps_datum_lat)
+            self.gps_datum_lon = float(gps_datum_lon)
+            self._gps_datum_cos0 = math.cos(math.radians(self.gps_datum_lat))
+            # 室外当前目标（campus_frame 下的 PoseStamped）及运行标志
+            self._outdoor_goal: Optional[PoseStamped] = None
+            self._outdoor_nav_active = False
+
             # 音频文件路径
             self.audio_dir = os.path.join(os.path.dirname(__file__), 'audio')
 
@@ -252,6 +333,10 @@ class NavNode(Node):
             self._lidar_seq: int = 0                       # viz 用来判断是否有新帧
             self._lidar_sub = None
             self._lidar_topic: Optional[str] = None
+
+            # 通告初始导航模式，便于其它节点（路网规划器/桥接等）联动
+            self._publish_nav_mode()
+            self.get_logger().info(f"当前导航模式: {self.nav_mode}")
         except Exception as e:
             self.get_logger().error(f"ROS节点初始化失败: {e}")
             raise
@@ -786,6 +871,253 @@ class NavNode(Node):
     def is_map_localized(self) -> bool:
         """map→base_link TF 连续可用且有位姿缓存（与 get_status 中 localized 含义一致）。"""
         return bool(self.tf_ready and self.current_pose is not None)
+
+    # ══════════════════════════════════════════════════════════════════════
+    # 导航模式（SLAM / GPS）与室外 GNSS 导航
+    # ══════════════════════════════════════════════════════════════════════
+    def _publish_nav_mode(self) -> None:
+        """把当前导航模式发布到 /nav_mode（供其它节点联动）。"""
+        try:
+            msg = String()
+            msg.data = self.nav_mode
+            self.nav_mode_pub.publish(msg)
+        except Exception as e:
+            self.get_logger().warning(f"发布 /nav_mode 失败: {e}")
+
+    def get_nav_mode(self) -> str:
+        """返回当前导航模式：``"slam"`` 或 ``"gps"``。"""
+        return self.nav_mode
+
+    def set_nav_mode(self, mode: str) -> Tuple[bool, str]:
+        """切换导航模式（SLAM 室内点云定位 ↔ GPS 室外 GNSS 导航）。
+
+        切换时统一做清场，避免旧模式的目标/精调残留把新模式带偏：
+          - 停车（发零速），关闭 PID 精调；
+          - 取消当前 Nav2 (navigate_to_pose) 目标；
+          - 清空室外目标与运行标志；
+          - 复位定位就绪判据（新模式的定位需要重新建立）；
+          - 向 /nav_mode 通告新模式。
+
+        :param mode: ``"slam"`` 或 ``"gps"``
+        :return: (success, message)
+        """
+        if mode not in (self.NAV_MODE_SLAM, self.NAV_MODE_GPS):
+            return False, f"未知导航模式: {mode}（可选 slam / gps）"
+        with self._nav_mode_lock:
+            if mode == self.nav_mode:
+                return True, f"已处于 {mode} 模式"
+            old = self.nav_mode
+            self._stop_all_navigation(reason=f"切换导航模式 {old} → {mode}")
+            self.nav_mode = mode
+            # 新模式下定位需重新建立：清掉 SLAM 侧的 tf 就绪标志与位姿缓存，
+            # 让上层等待新的 map→base_link / GNSS fix 稳定后再判定“已定位”。
+            self.tf_ready = False
+            self.tf_fail_count = 0
+            self.current_pose = None
+            self._publish_nav_mode()
+            self.get_logger().info(f"✓ 导航模式已切换: {old} → {mode}")
+        return True, f"已切换到 {mode} 模式"
+
+    def _stop_all_navigation(self, reason: str = "") -> None:
+        """切换/停止时的统一清场：停车、关精调、取消 Nav2 目标、清室外目标。
+
+        仅做“尽力而为”的本地清理：navigate_to_pose 目标会被取消；室外路网规划
+        （navigate_through_poses 由 campus_route_planner 持有）不在本节点句柄内，
+        这里通过清空室外目标 + 发零速降低风险，真正的接管由上层重新下发目标完成。
+        """
+        if reason:
+            self.get_logger().info(f"停止当前导航：{reason}")
+        try:
+            self.cmd_vel_pub.publish(Twist())
+        except Exception:
+            pass
+        self.cmd_vel_sent = None
+        self.stuck_count = 0
+        self.pid_control_active = False
+        # 取消进行中的 navigate_to_pose 目标（SLAM 侧）
+        if self.nav_goal_active and self.current_goal_handle is not None:
+            try:
+                self.current_goal_handle.cancel_goal_async()
+            except Exception as e:
+                self.get_logger().warning(f"取消当前 Nav2 目标失败: {e}")
+        self.nav_goal_active = False
+        self.nav_goal_reached = False
+        # 清室外目标与运行标志
+        self._outdoor_goal = None
+        self._outdoor_nav_active = False
+
+    # ── GNSS 定位监控 ─────────────────────────────────────────────────────
+    def _gps_fix_callback(self, msg: NavSatFix) -> None:
+        """缓存最新 NavSatFix：经纬高 + 定位状态 + 时间戳。"""
+        try:
+            stamp_sec = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+            fix = {
+                "lat": float(msg.latitude),
+                "lon": float(msg.longitude),
+                "alt": float(msg.altitude),
+                "status": int(msg.status.status),
+                "service": int(msg.status.service),
+                "position_covariance": list(msg.position_covariance),
+                "position_covariance_type": int(msg.position_covariance_type),
+                "stamp_sec": float(stamp_sec),
+                "mono": time.monotonic(),
+            }
+            with self._gps_lock:
+                self._latest_gps_fix = fix
+        except Exception as e:
+            self.get_logger().error(f"GNSS fix 回调出错: {e}")
+
+    def _gps_odom_callback(self, msg: Odometry) -> None:
+        """缓存 navsat_transform 输出的 GPS 里程 (x, y, mono)，仅作健康度参考。"""
+        self._latest_gps_odom = (
+            float(msg.pose.pose.position.x),
+            float(msg.pose.pose.position.y),
+            time.monotonic(),
+        )
+
+    def get_latest_gps_fix(self) -> Optional[Dict[str, Any]]:
+        """返回最新一帧 NavSatFix 的字段字典，或 None（还未收到）。"""
+        with self._gps_lock:
+            return dict(self._latest_gps_fix) if self._latest_gps_fix else None
+
+    def is_gps_available(self, max_age_sec: Optional[float] = None) -> bool:
+        """GNSS 是否可用：有定位解（status >= STATUS_FIX）且 fix 足够新鲜。
+
+        :param max_age_sec: 允许的最大 fix 年龄（秒），None 时用 ``_gps_fresh_sec``。
+        """
+        max_age = self._gps_fresh_sec if max_age_sec is None else max_age_sec
+        with self._gps_lock:
+            fix = self._latest_gps_fix
+        if not fix:
+            return False
+        if fix["status"] < NavSatStatus.STATUS_FIX:  # STATUS_NO_FIX = -1
+            return False
+        return (time.monotonic() - fix["mono"]) <= max_age
+
+    def is_gps_localized(self) -> bool:
+        """室外 GPS 定位是否就绪：GNSS fix 新鲜可用，且 map→base_link 位姿已建立。
+
+        与 SLAM 的 ``is_map_localized`` 对应——室外由 navsat_transform +
+        map_odom_from_gps 融合出 map→odom→base_link，故仍以 ``current_pose``
+        判断底盘位姿是否可用，再叠加 GNSS fix 健康度。
+        """
+        return bool(self.is_gps_available() and self.current_pose is not None)
+
+    def is_localized(self) -> bool:
+        """按当前导航模式返回定位是否就绪（SLAM 看点云 TF，GPS 看 GNSS fix）。"""
+        if self.nav_mode == self.NAV_MODE_GPS:
+            return self.is_gps_localized()
+        return self.is_map_localized()
+
+    # ── 室外目标下发（经 campus_nav 路网规划器）─────────────────────────────
+    def _lonlat_to_campus_xy(self, lon: float, lat: float) -> Tuple[float, float]:
+        """经纬度 → campus_map 平面 (east, north)，等距圆柱投影（同 route_graph.ENU）。"""
+        east = math.radians(lon - self.gps_datum_lon) * self._EARTH_R * self._gps_datum_cos0
+        north = math.radians(lat - self.gps_datum_lat) * self._EARTH_R
+        return east, north
+
+    def _campus_xy_to_lonlat(self, east: float, north: float) -> Tuple[float, float]:
+        """campus_map 平面 (east, north) → 经纬度，_lonlat_to_campus_xy 的逆变换。"""
+        lat = self.gps_datum_lat + math.degrees(north / self._EARTH_R)
+        lon = self.gps_datum_lon + math.degrees(east / (self._EARTH_R * self._gps_datum_cos0))
+        return lon, lat
+
+    def send_campus_goal(self, pose: PoseStamped) -> bool:
+        """把一个 campus_frame 下的 PoseStamped 目标发给路网规划器（campus_goal_pose）。
+
+        规划器会把该点吸附到最近道路、A* 出道路级路线并分批下发 Nav2。仅记录目标
+        与运行标志；实际道路规划/驱动 Nav2 由 campus_route_planner 完成。
+        """
+        try:
+            self.campus_goal_pub.publish(pose)
+            self._outdoor_goal = pose
+            self._outdoor_nav_active = True
+            self.get_logger().info(
+                f"已下发室外路网目标: frame={pose.header.frame_id}, "
+                f"x={pose.pose.position.x:.2f}, y={pose.pose.position.y:.2f}"
+            )
+            return True
+        except Exception as e:
+            self.get_logger().error(f"下发室外路网目标失败: {e}")
+            return False
+
+    def set_outdoor_goal_by_xy(
+        self, x: float, y: float, frame: Optional[str] = None
+    ) -> bool:
+        """以 campus_frame（默认）平面坐标下发室外目标。
+
+        :param x, y: 平面坐标（默认 campus_map 系，即 ENU east/north）
+        :param frame: 目标坐标系，None 时用 ``self.campus_frame``；规划器会 TF 到
+                      campus_map 后再吸附道路，故也可传 ``"map"`` 等可 TF 的系。
+        """
+        pose = PoseStamped()
+        pose.header.stamp = self.get_clock().now().to_msg()
+        pose.header.frame_id = frame or self.campus_frame
+        pose.pose.position.x = float(x)
+        pose.pose.position.y = float(y)
+        pose.pose.orientation.w = 1.0  # 朝向对路网规划无意义，规划器只用 xy 吸附道路
+        return self.send_campus_goal(pose)
+
+    def set_outdoor_goal_by_lonlat(self, lon: float, lat: float) -> bool:
+        """以经纬度下发室外目标：按 ENU datum 换算成 campus_map 平面点再下发。"""
+        east, north = self._lonlat_to_campus_xy(lon, lat)
+        self.get_logger().info(
+            f"室外目标经纬度→campus_map: ({lon:.7f},{lat:.7f}) -> "
+            f"({east:.2f},{north:.2f})"
+        )
+        return self.set_outdoor_goal_by_xy(east, north, frame=self.campus_frame)
+
+    def cancel_outdoor_goal(self) -> None:
+        """清除本地室外目标与运行标志，并发零速停车（尽力而为）。"""
+        self._outdoor_goal = None
+        self._outdoor_nav_active = False
+        try:
+            self.cmd_vel_pub.publish(Twist())
+        except Exception:
+            pass
+
+    def _transform_xy(
+        self, x: float, y: float, from_frame: str, to_frame: str
+    ) -> Optional[Tuple[float, float]]:
+        """把 from_frame 下的平面点 (x,y) 变换到 to_frame，失败返回 None。"""
+        if from_frame == to_frame:
+            return x, y
+        try:
+            tf = self.tf_buffer.lookup_transform(
+                to_frame, from_frame, rclpy.time.Time(),
+                timeout=rclpy.duration.Duration(seconds=0.2),
+            )
+        except TransformException:
+            return None
+        q = tf.transform.rotation
+        yaw = self.quaternion_to_euler(q.x, q.y, q.z, q.w)
+        cy, sy = math.cos(yaw), math.sin(yaw)
+        tx = tf.transform.translation.x
+        ty = tf.transform.translation.y
+        return tx + cy * x - sy * y, ty + sy * x + cy * y
+
+    def is_outdoor_goal_reached(self, tolerance: float = 3.0) -> bool:
+        """室外目标是否到达：把 campus_frame 目标变换到 map 后与当前位姿比距离。
+
+        campus_route_planner 不发布“路线完成”话题，这里用几何距离近似判定；
+        ``tolerance`` 默认与规划器的 ``nav2_reach_tol_m`` 相近（3m）。
+        """
+        if self._outdoor_goal is None or self.current_pose is None:
+            return False
+        goal = self._outdoor_goal
+        mapped = self._transform_xy(
+            goal.pose.position.x, goal.pose.position.y,
+            goal.header.frame_id or self.campus_frame, "map",
+        )
+        if mapped is None:
+            return False
+        gx, gy = mapped
+        dx = gx - self.current_pose.pose.position.x
+        dy = gy - self.current_pose.pose.position.y
+        if math.hypot(dx, dy) <= tolerance:
+            self._outdoor_nav_active = False
+            return True
+        return False
 
     def chassis_speed_callback(self, msg: TwistStamped):
         """
