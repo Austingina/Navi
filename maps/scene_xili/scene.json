@@ -26,7 +26,7 @@
         }
     },
     "scene": {
-        "build_no": 20260722095311,
+        "build_no": 20260727103159,
         "crs": "WGS84",
         "name": "xili",
         "origin": {
@@ -137,11 +137,11 @@
         "caihong": {
             "_comment": "多楼层地图配置文件 / Multi-floor map configuration",
             "geo_anchor": {
-                "heading_deg": -90,
+                "heading_deg": -89.37092195493852,
                 "origin": {
                     "alt": 0,
-                    "lat": 22.558114576985663,
-                    "lon": 113.93600953636465
+                    "lat": 22.558116042708093,
+                    "lon": 113.93600540388704
                 },
                 "scale": 1
             },
@@ -152,7 +152,7 @@
                 "version": "1.0.1"
             },
             "locked": true,
-            "name": "彩虹科技大厦",
+            "name": "彩虹",
             "ortho_visible": true,
             "pcd_base": "caihong",
             "routes": {
@@ -2183,6 +2183,102 @@
                 }
             }
         },
+        "zhichengA1": {
+            "_comment": "多楼层地图配置文件 / Multi-floor map configuration",
+            "geo_anchor": {
+                "heading_deg": -88.97359049722833,
+                "origin": {
+                    "alt": 0,
+                    "lat": 22.573763987526295,
+                    "lon": 113.93442315813049
+                },
+                "scale": 1
+            },
+            "global": {
+                "build_no": 20260727092408,
+                "default_route": "",
+                "default_submap": "",
+                "version": "1.0"
+            },
+            "locked": true,
+            "name": "智城A1",
+            "ortho_visible": true,
+            "pcd_base": "zhichengA1",
+            "routes": {
+            },
+            "submaps": {
+                "1f": {
+                    "description": "",
+                    "map_file": "A1.pcd",
+                    "name": "A1 1楼",
+                    "semantic_points": {
+                    },
+                    "submap_portals": [
+                    ],
+                    "transform": {
+                        "rotation": {
+                            "w": 1,
+                            "x": 0,
+                            "y": 0,
+                            "z": 0
+                        },
+                        "translation": {
+                            "x": 0,
+                            "y": 0,
+                            "z": 0
+                        }
+                    }
+                }
+            }
+        },
+        "zhichengA2": {
+            "_comment": "多楼层地图配置文件 / Multi-floor map configuration",
+            "geo_anchor": {
+                "heading_deg": 0,
+                "origin": {
+                    "alt": 0,
+                    "lat": 22.574366234396027,
+                    "lon": 113.93495561011834
+                },
+                "scale": 1
+            },
+            "global": {
+                "build_no": 20260727103159,
+                "default_route": "",
+                "default_submap": "",
+                "version": "1.0"
+            },
+            "locked": true,
+            "name": "智城A2",
+            "ortho_visible": true,
+            "pcd_base": "zhichengA2",
+            "routes": {
+            },
+            "submaps": {
+                "1f": {
+                    "description": "",
+                    "map_file": "A2.pcd",
+                    "name": "A2 1楼",
+                    "semantic_points": {
+                    },
+                    "submap_portals": [
+                    ],
+                    "transform": {
+                        "rotation": {
+                            "w": 1,
+                            "x": 0,
+                            "y": 0,
+                            "z": 0
+                        },
+                        "translation": {
+                            "x": 0,
+                            "y": 0,
+                            "z": 0
+                        }
+                    }
+                }
+            }
+        },
         "zhichengA2A3": {
             "_comment": "多楼层地图配置文件 / Multi-floor map configuration",
             "geo_anchor": {
@@ -2202,7 +2298,7 @@
             },
             "locked": true,
             "name": "智城A2A3",
-            "ortho_visible": true,
+            "ortho_visible": false,
             "pcd_base": "zhichengA2A3",
             "routes": {
                 "A2大堂": {
