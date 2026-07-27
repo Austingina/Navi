@@ -7,58 +7,239 @@ from typing import Dict, List, Optional, Tuple, Any
 
 class MapManager:
     """
-    多楼层地图管理器
-    
-    功能：
-    1. 加载多楼层地图配置文件 (multifloor.json 格式)
-    2. 管理多个 submap 的语义点位
-    3. 支持跨 submap 的 pose 查询
-    4. 提供 portal 导航接口
+    多模态 / 分层地图管理器
+
+    支持两类地图描述文件（详见
+    ``MapEditor/docs/multi-modal_navigation_mapdata_file-format.md`` 与
+    ``NaviSkill/docs/fsm_navigation_design.md``）：
+
+    1. **场景文件（scene）**：三层分层地图模型
+       ``Scene(OSM/WGS84 主干) → slam_map(geo_anchor 锚定) → submap``。
+       顶层含 ``scene``（OSM 底图、场景语义点位/区域/传送门）、``slam_maps``
+       （多张 SLAM 地图，各带 ``geo_anchor``、内部为标准多 submap 结构）与顶层
+       ``routes``（可跨地图的全局路线）。
+    2. **单张 SLAM 地图文件（multifloor.json）**：顶层直接是 ``global`` /
+       ``submaps`` / ``routes``。加载时会被包装成「只有一张 SLAM 地图的退化场景」，
+       老配置零改动继续工作。
+
+    对外接口分为三层：
+
+    - **submap 层**（``get_submap_*`` / ``get_pose_in_submap`` / ``get_route_by_name``
+      等）：作用于**当前 SLAM 地图**（``current_slam_map``），与旧版行为一致；
+    - **slam_map 层**（``get_slam_map_*`` / ``set_current_slam_map`` /
+      ``get_slam_map_geo_anchor`` 等）：在多张 SLAM 地图间选择与查询；
+    - **scene 层**（``get_scene_*`` / ``get_global_route_*`` / geo_anchor 换算）：
+      OSM 主干、场景语义点位与跨地图全局路线。
     """
-    
+
+    # 退化场景（旧 multifloor.json）里隐式 SLAM 地图的 id
+    DEFAULT_SLAM_MAP_ID = "default"
+
     def __init__(self, map_config_path: str = None):
         """
         初始化地图管理器
-        
-        :param map_config_path: 地图配置文件路径 (multifloor.json)
+
+        :param map_config_path: 地图配置文件路径（scene.json 或 multifloor.json）
         """
         self.config_path = map_config_path
-        self.config = {}
-        self.submaps = {}  # submap配置 {submap_id: submap_config}
+        self.config = {}          # 原始配置文件内容（完整）
+
+        # ---- 场景层 ----
+        self.scene: Dict = {}             # scene 段（无则为空）
+        self.slam_maps: Dict = {}         # {slam_map_id: 归一化后的 slam_map 配置}
+        self.global_routes: Dict = {}     # 顶层跨地图全局路线
+        self.default_slam_map = None      # 默认 SLAM 地图 id
+        self.current_slam_map = None      # 当前 SLAM 地图 id
+
+        # ---- submap 层（指向“当前 SLAM 地图”，保持与旧版兼容）----
+        self.submaps = {}          # 当前 SLAM 地图的 submap 配置
         self.current_submap = None  # 当前 submap ID
-        self.default_submap = None  # 默认 submap ID
-        self.default_route = None   # 默认路线名称
-        
+        self.default_submap = None  # 当前 SLAM 地图的默认 submap ID
+        self.default_route = None   # 当前 SLAM 地图的默认路线名称
+
         if map_config_path:
             self.load_config(map_config_path)
-    
+
+    # ==================== 加载 ====================
+
     def load_config(self, config_path: str):
         """
-        加载地图配置文件
-        
+        加载地图配置文件（自动识别 scene / 单图两种格式）
+
         :param config_path: 配置文件路径
         """
         if not os.path.exists(config_path):
             raise FileNotFoundError(f"地图配置文件不存在: {config_path}")
-        
+
+        self.config_path = config_path
         with open(config_path, 'r', encoding='utf-8') as f:
             self.config = json.load(f)
-        
-        # 解析全局配置
-        global_config = self.config.get('global', {})
-        self.default_submap = global_config.get('default_submap', None)
-        self.default_route = global_config.get('default_route', None)
-        
-        # 解析 submap 配置
-        self.submaps = self.config.get('submaps', {})
-        
-        # 设置当前 submap 为默认 submap
+
+        config_dir = os.path.dirname(os.path.abspath(config_path))
+        is_scene = ('scene' in self.config) or ('slam_maps' in self.config)
+
+        if is_scene:
+            self.scene = self.config.get('scene', {}) or {}
+            self.global_routes = self.config.get('routes', {}) or {}
+            self.slam_maps = {}
+            for sid, raw_cfg in (self.config.get('slam_maps', {}) or {}).items():
+                self.slam_maps[sid] = self._resolve_slam_map(raw_cfg, config_dir)
+        else:
+            # 退化场景：把整份单图配置包装成唯一的隐式 SLAM 地图
+            self.scene = {}
+            self.global_routes = {}
+            implicit = dict(self.config)
+            implicit.setdefault('global', self.config.get('global', {}) or {})
+            implicit.setdefault('submaps', self.config.get('submaps', {}) or {})
+            implicit.setdefault('routes', self.config.get('routes', {}) or {})
+            self.slam_maps = {self.DEFAULT_SLAM_MAP_ID: implicit}
+
+        self.default_slam_map = self._determine_default_slam_map()
+        if self.default_slam_map:
+            self._activate_slam_map(self.default_slam_map)
+
+        print(
+            f"MapManager: 已加载地图配置: {config_path}, "
+            f"场景={'是' if is_scene else '否(单图退化)'}, "
+            f"slam_map数: {len(self.slam_maps)}, 当前slam_map: {self.current_slam_map}, "
+            f"submap数: {len(self.submaps)}, 当前submap: {self.current_submap}"
+        )
+
+    def _resolve_slam_map(self, raw_cfg: Dict, config_dir: str) -> Dict:
+        """
+        归一化一条 ``slam_maps.<id>`` 配置。
+
+        - 若含 ``source``：读取外部单图 JSON（相对 scene 目录解析），把其
+          ``global`` / ``submaps`` / ``routes`` **就地展开**，scene 条目中显式写出的
+          字段优先覆盖；外部文件不得再含 ``scene`` / ``slam_maps``（防多层嵌套）。
+        - 记录 ``_source_dir`` 供 ``pcd_base`` 缺省时解析点云路径。
+        """
+        cfg = dict(raw_cfg)
+        source = cfg.pop('source', None)
+        if not source:
+            return cfg
+
+        ext_path = source if os.path.isabs(source) else os.path.join(config_dir, source)
+        if not os.path.exists(ext_path):
+            print(f"MapManager: slam_map source 文件不存在，忽略引用: {ext_path}")
+            return cfg
+        with open(ext_path, 'r', encoding='utf-8') as f:
+            ext = json.load(f)
+        if 'scene' in ext or 'slam_maps' in ext:
+            raise ValueError(
+                f"slam_map source 文件不应再包含 scene/slam_maps（禁止多层嵌套）: {ext_path}")
+
+        merged = dict(ext)
+        # scene 条目字段覆盖外部同名字段（global 做浅合并，便于场景级微调）
+        for k, v in cfg.items():
+            if k == 'global' and isinstance(v, dict) and isinstance(merged.get('global'), dict):
+                g = dict(merged.get('global', {}))
+                g.update(v)
+                merged['global'] = g
+            else:
+                merged[k] = v
+        merged['_source_dir'] = os.path.dirname(ext_path)
+        return merged
+
+    def _determine_default_slam_map(self) -> Optional[str]:
+        """选择默认 SLAM 地图：scene.default_slam_map > 第一张有 submap 的 > 第一张。"""
+        if not self.slam_maps:
+            return None
+        explicit = self.scene.get('default_slam_map') if self.scene else None
+        if explicit and explicit in self.slam_maps:
+            return explicit
+        for sid, cfg in self.slam_maps.items():
+            if cfg.get('submaps'):
+                return sid
+        return next(iter(self.slam_maps))
+
+    def _activate_slam_map(self, slam_map_id: str):
+        """把某张 SLAM 地图设为“当前”，并同步 submap 层的兼容属性。"""
+        cfg = self.slam_maps.get(slam_map_id, {})
+        self.current_slam_map = slam_map_id
+
+        g = cfg.get('global', {}) or {}
+        self.default_submap = g.get('default_submap') or None
+        self.default_route = g.get('default_route') or None
+        self.submaps = cfg.get('submaps', {}) or {}
+
         if self.default_submap and self.default_submap in self.submaps:
             self.current_submap = self.default_submap
         elif self.submaps:
             self.current_submap = list(self.submaps.keys())[0]
-        
-        print(f"MapManager: 已加载地图配置: {config_path}, submap数: {len(self.submaps)}, 当前submap: {self.current_submap}")
+        else:
+            self.current_submap = None
+
+    # ---- 内部：按 slam_map 取子结构 ----
+
+    def _get_submaps(self, slam_map_id: str = None) -> Dict:
+        """取指定（默认当前）SLAM 地图的 submap 集合。"""
+        if slam_map_id is None or slam_map_id == self.current_slam_map:
+            return self.submaps
+        cfg = self.slam_maps.get(slam_map_id)
+        return (cfg.get('submaps', {}) or {}) if cfg else {}
+
+    def _get_slam_routes(self, slam_map_id: str = None) -> Dict:
+        """取指定（默认当前）SLAM 地图的内部路线集合。"""
+        if slam_map_id is None or slam_map_id == self.current_slam_map:
+            slam_map_id = self.current_slam_map
+        cfg = self.slam_maps.get(slam_map_id)
+        return (cfg.get('routes', {}) or {}) if cfg else {}
+
+    def _current_slam_routes(self) -> Dict:
+        return self._get_slam_routes(self.current_slam_map)
+
+    def _default_submap_of(self, slam_map_id: str) -> Optional[str]:
+        """指定 SLAM 地图的默认 submap（无显式配置则取第一张）。"""
+        cfg = self.slam_maps.get(slam_map_id)
+        if not cfg:
+            return None
+        submaps = cfg.get('submaps', {}) or {}
+        default = (cfg.get('global', {}) or {}).get('default_submap') or None
+        if default and default in submaps:
+            return default
+        return next(iter(submaps)) if submaps else None
+
+    # ==================== SLAM 地图（slam_map）层 ====================
+
+    def has_scene(self) -> bool:
+        """是否为场景文件（含 OSM 主干 / 多张 SLAM 地图）。"""
+        return bool(self.scene) or len(self.slam_maps) > 1 or (
+            len(self.slam_maps) == 1 and self.DEFAULT_SLAM_MAP_ID not in self.slam_maps)
+
+    def get_slam_map_list(self) -> List[str]:
+        """所有 SLAM 地图 id 列表。"""
+        return list(self.slam_maps.keys())
+
+    def get_slam_map_info(self, slam_map_id: str = None) -> Optional[Dict]:
+        """指定（默认当前）SLAM 地图的配置。"""
+        slam_map_id = slam_map_id or self.current_slam_map
+        return self.slam_maps.get(slam_map_id)
+
+    def get_current_slam_map(self) -> Optional[str]:
+        """当前 SLAM 地图 id。"""
+        return self.current_slam_map
+
+    def get_default_slam_map(self) -> Optional[str]:
+        """默认 SLAM 地图 id。"""
+        return self.default_slam_map
+
+    def set_current_slam_map(self, slam_map_id: str) -> bool:
+        """
+        切换当前 SLAM 地图（同时把 submap 层复位到该地图的默认 submap）。
+        """
+        if slam_map_id in self.slam_maps:
+            self._activate_slam_map(slam_map_id)
+            print(f"MapManager: 当前slam_map已切换为: {slam_map_id}, submap: {self.current_submap}")
+            return True
+        print(f"MapManager: slam_map不存在: {slam_map_id}")
+        return False
+
+    def get_slam_map_pcd_base(self, slam_map_id: str = None) -> Optional[str]:
+        """指定 SLAM 地图的 ``pcd_base``（解析各 submap map_file 的基准目录）。"""
+        slam_map_id = slam_map_id or self.current_slam_map
+        cfg = self.slam_maps.get(slam_map_id)
+        return cfg.get('pcd_base') if cfg else None
     
     def get_submap_list(self) -> List[str]:
         """获取所有 submap ID 列表"""
@@ -75,29 +256,52 @@ class MapManager:
             return submap.get('map_file')
         return None
     
-    def get_submap_full_map_path(self, submap_id: str) -> Optional[str]:
+    def _pcd_base_dir(self, slam_map_id: str = None) -> Optional[str]:
         """
-        获取指定 submap 的完整地图文件路径
-        
-        如果 multifloor.json 中的 map_file 是相对路径，
-        则根据 multifloor.json 所在目录自动补齐成完整路径
-        
+        解析某张 SLAM 地图点云文件（``map_file``）所在的基准目录。
+
+        优先级：显式 ``pcd_base``（相对 scene 目录 / source 目录，或绝对路径）
+        > ``source`` 外部文件所在目录 > 配置文件所在目录（旧单图行为）。
+        """
+        slam_map_id = slam_map_id or self.current_slam_map
+        config_dir = (os.path.dirname(os.path.abspath(self.config_path))
+                      if self.config_path else None)
+        cfg = self.slam_maps.get(slam_map_id, {}) or {}
+        pcd_base = cfg.get('pcd_base')
+        src_dir = cfg.get('_source_dir')
+        if pcd_base:
+            if os.path.isabs(pcd_base):
+                return pcd_base
+            base_dir = src_dir or config_dir
+            return os.path.join(base_dir, pcd_base) if base_dir else pcd_base
+        if src_dir:
+            return src_dir
+        return config_dir
+
+    def get_submap_full_map_path(self, submap_id: str, slam_map_id: str = None) -> Optional[str]:
+        """
+        获取指定 submap 的完整地图（点云）文件路径。
+
+        相对 ``map_file`` 会依次基于 SLAM 地图的 ``pcd_base`` / ``source`` 目录 /
+        配置文件目录补齐（见 ``_pcd_base_dir``）。
+
         :param submap_id: submap ID
+        :param slam_map_id: SLAM 地图 id，默认当前 SLAM 地图
         :return: 完整的地图文件路径，如果 submap 不存在返回 None
         """
-        map_file = self.get_submap_map_file(submap_id)
+        submaps = self._get_submaps(slam_map_id)
+        submap = submaps.get(submap_id)
+        map_file = submap.get('map_file') if submap else None
         if not map_file:
             return None
-        
+
         # 如果已经是绝对路径，直接返回
         if os.path.isabs(map_file):
             return map_file
-        
-        # 相对路径：根据配置文件所在目录补齐
-        if self.config_path:
-            config_dir = os.path.dirname(os.path.abspath(self.config_path))
-            return os.path.join(config_dir, map_file)
-        
+
+        base_dir = self._pcd_base_dir(slam_map_id)
+        if base_dir:
+            return os.path.join(base_dir, map_file)
         return map_file
     
     def set_current_submap(self, submap_id: str) -> bool:
@@ -113,19 +317,26 @@ class MapManager:
         """获取当前 submap ID"""
         return self.current_submap
     
-    def get_semantic_points_in_submap(self, submap_id: str = None) -> Dict:
-        """获取指定 submap 的所有语义点位"""
-        submap_id = submap_id or self.current_submap
-        if not submap_id or submap_id not in self.submaps:
+    def get_semantic_points_in_submap(self, submap_id: str = None, slam_map_id: str = None) -> Dict:
+        """获取指定 submap 的所有语义点位（默认当前 SLAM 地图 / 当前 submap）"""
+        submaps = self._get_submaps(slam_map_id)
+        if submap_id is None:
+            if slam_map_id is None or slam_map_id == self.current_slam_map:
+                submap_id = self.current_submap
+            else:
+                submap_id = self._default_submap_of(slam_map_id)
+        if not submap_id or submap_id not in submaps:
             return {}
-        return self.submaps[submap_id].get('semantic_points', {})
+        return submaps[submap_id].get('semantic_points', {})
     
-    def get_pose_in_submap(self, pose_name: str, submap_id: str = None) -> Optional[Dict]:
+    def get_pose_in_submap(self, pose_name: str, submap_id: str = None,
+                           slam_map_id: str = None) -> Optional[Dict]:
         """
         获取指定名称的点位信息（返回整个 point_info）
         
         :param pose_name: 点位名称
         :param submap_id: submap ID，默认为当前 submap
+        :param slam_map_id: SLAM 地图 id，默认为当前 SLAM 地图
         :return: point_info 字典（包含 `type`, `pose` 等），找不到返回 None
 
         point_info 中 `type` 字段说明：
@@ -135,8 +346,7 @@ class MapManager:
         - "elevator_wait": 电梯等待点；机器人到达该点后应等待外部 agent 确认电梯已到达且车门已打开。
         - "elevator_in": 进梯后/新楼层落位点；`wait_goal_reached` 在到达后轮询 map 定位（`get_status.localized`），就绪即继续。
         """
-        submap_id = submap_id or self.current_submap
-        semantic_points = self.get_semantic_points_in_submap(submap_id)
+        semantic_points = self.get_semantic_points_in_submap(submap_id, slam_map_id)
         point_info = semantic_points.get(pose_name)
         if point_info:
             return point_info
@@ -350,15 +560,15 @@ class MapManager:
         """
         return self.get_semantic_points_in_submap(self.current_submap)
     
-    # ========== 路线管理接口 ==========
+    # ========== 路线管理接口（当前 SLAM 地图的内部路线） ==========
     
-    def get_route_list(self) -> List[Dict[str, str]]:
+    def get_route_list(self, slam_map_id: str = None) -> List[Dict[str, str]]:
         """
-        获取所有路线列表
+        获取（指定 / 当前 SLAM 地图的）所有内部路线列表
         
         :return: 路线列表，每个元素包含 {name, description}
         """
-        routes = self.config.get('routes', {})
+        routes = self._get_slam_routes(slam_map_id)
         result = []
         for route_name, route_config in routes.items():
             result.append({
@@ -367,7 +577,8 @@ class MapManager:
             })
         return result
     
-    def _flatten_waypoints(self, waypoints: List[Dict], visited: set) -> List[Dict]:
+    def _flatten_waypoints(self, waypoints: List[Dict], visited: set,
+                           routes: Dict = None) -> List[Dict]:
         """
         递归展开嵌套路线引用，返回扁平的 waypoint 列表。
 
@@ -377,9 +588,11 @@ class MapManager:
 
         :param waypoints: 原始 waypoint 列表（可能包含嵌套引用）
         :param visited: 已访问的路线名集合（用于防止循环引用）
+        :param routes: 供解析嵌套引用的路线集合，默认当前 SLAM 地图的内部路线
         :return: 展开后的 [{submap, semantic_point}, ...] 列表
         """
-        routes = self.config.get('routes', {})
+        if routes is None:
+            routes = self._current_slam_routes()
         flat = []
         for wp in waypoints:
             if 'route' in wp:
@@ -392,28 +605,30 @@ class MapManager:
                     print(f"MapManager: 嵌套路线不存在，跳过: {ref_name}")
                     continue
                 visited.add(ref_name)
-                flat.extend(self._flatten_waypoints(ref_config.get('waypoints', []), visited))
+                flat.extend(self._flatten_waypoints(ref_config.get('waypoints', []), visited, routes))
                 visited.discard(ref_name)
             else:
                 flat.append(wp)
         return flat
 
-    def get_route_by_name(self, route_name: str) -> Optional[Dict]:
+    def get_route_by_name(self, route_name: str, slam_map_id: str = None) -> Optional[Dict]:
         """
-        根据路线名称获取路线详细信息（自动展开嵌套路线引用）
+        根据路线名称获取（指定 / 当前 SLAM 地图的）内部路线详细信息
+        （自动展开嵌套路线引用）
         
         :param route_name: 路线名称
+        :param slam_map_id: SLAM 地图 id，默认当前 SLAM 地图
         :return: 路线配置，包含 description 和 waypoints
                  waypoints 格式: [{submap, semantic_point}, ...]
                  嵌套路线引用会被递归展开为扁平列表
                  如果路线不存在返回 None
         """
-        routes = self.config.get('routes', {})
+        routes = self._get_slam_routes(slam_map_id)
         route_config = routes.get(route_name)
         if not route_config:
             return None
         raw_waypoints = route_config.get('waypoints', [])
-        flat_waypoints = self._flatten_waypoints(raw_waypoints, {route_name})
+        flat_waypoints = self._flatten_waypoints(raw_waypoints, {route_name}, routes)
         return {
             'name': route_name,
             'description': route_config.get('description', ''),
@@ -421,16 +636,16 @@ class MapManager:
         }
     
     def get_default_route(self) -> Optional[str]:
-        """获取默认路线名称"""
+        """获取当前 SLAM 地图的默认路线名称"""
         return self.default_route
 
-    def get_route_names(self) -> List[str]:
+    def get_route_names(self, slam_map_id: str = None) -> List[str]:
         """
-        获取所有路线名称
+        获取（指定 / 当前 SLAM 地图的）所有内部路线名称
         
         :return: 路线名称列表
         """
-        return list(self.config.get('routes', {}).keys())
+        return list(self._get_slam_routes(slam_map_id).keys())
 
     def get_submap_id_by_map_file(self, map_file_path: str) -> Optional[str]:
         """
@@ -453,27 +668,30 @@ class MapManager:
                 return submap_id
         return None
 
-    def get_submap_local_transform(self, submap_id: str) -> Optional[Dict]:
+    def get_submap_local_transform(self, submap_id: str, slam_map_id: str = None) -> Optional[Dict]:
         """
         获取指定 submap 相对于其父 submap 的局部坐标变换
 
         :param submap_id: submap ID
+        :param slam_map_id: SLAM 地图 id，默认当前 SLAM 地图
         :return: transform 字典 {translation: {x, y, z}, rotation: {x, y, z, w}}
         """
-        submap = self.submaps.get(submap_id)
+        submap = self._get_submaps(slam_map_id).get(submap_id)
         if submap:
             return submap.get('transform')
         return None
 
-    def get_submap_transform(self, submap_id: str) -> Optional[Dict]:
+    def get_submap_transform(self, submap_id: str, slam_map_id: str = None) -> Optional[Dict]:
         """
         获取指定 submap 到根节点 (default_submap) 的级联坐标变换。
 
         沿 parent_submap 链逐级左乘变换：T_root = T_parent_chain * ... * T_local
         
         :param submap_id: submap ID
+        :param slam_map_id: SLAM 地图 id，默认当前 SLAM 地图
         :return: transform 字典 {translation: {x, y, z}, rotation: {x, y, z, w}}
         """
+        submaps = self._get_submaps(slam_map_id)
         identity_t = {'x': 0.0, 'y': 0.0, 'z': 0.0}
         identity_r = {'x': 0.0, 'y': 0.0, 'z': 0.0, 'w': 1.0}
 
@@ -486,7 +704,7 @@ class MapManager:
             if cur in visited:
                 break  # cycle guard
             visited.add(cur)
-            submap_cfg = self.submaps.get(cur)
+            submap_cfg = submaps.get(cur)
             if not submap_cfg:
                 break
             local_tf = submap_cfg.get('transform')
@@ -669,4 +887,342 @@ class MapManager:
         return {
             'position': target_pos,
             'orientation': target_ori
+        }
+
+    # ==================== 场景（Scene / OSM 主干）层 ====================
+
+    def get_scene_info(self) -> Dict:
+        """场景级元信息（name / crs / origin / build_no 等，不含大块 osm 数据）。"""
+        if not self.scene:
+            return {}
+        return {
+            'name': self.scene.get('name'),
+            'crs': self.scene.get('crs'),
+            'origin': self.scene.get('origin'),
+            'build_no': self.scene.get('build_no'),
+        }
+
+    def get_scene_origin(self) -> Optional[Dict]:
+        """场景本地 ENU 换算基准经纬度 {lon, lat}；未设置时回退 OSM 边界中心。"""
+        if not self.scene:
+            return None
+        origin = self.scene.get('origin')
+        if origin and origin.get('lon') is not None and origin.get('lat') is not None:
+            return origin
+        bounds = (self.scene.get('osm', {}) or {}).get('bounds')
+        if bounds and bounds.get('min') and bounds.get('max'):
+            return {
+                'lon': (bounds['min']['lon'] + bounds['max']['lon']) / 2.0,
+                'lat': (bounds['min']['lat'] + bounds['max']['lat']) / 2.0,
+            }
+        return None
+
+    def get_osm_info(self) -> Optional[Dict]:
+        """OSM 底图信息 {source, bounds}。"""
+        if not self.scene:
+            return None
+        return self.scene.get('osm')
+
+    def get_osm_full_path(self) -> Optional[str]:
+        """OSM 数据源（.osm / .osm.pbf）的完整路径（相对 scene 目录补齐）。"""
+        osm = self.get_osm_info() or {}
+        src = osm.get('source')
+        if not src:
+            return None
+        if os.path.isabs(src):
+            return src
+        if self.config_path:
+            config_dir = os.path.dirname(os.path.abspath(self.config_path))
+            return os.path.join(config_dir, src)
+        return src
+
+    def get_scene_semantic_points(self) -> Dict:
+        """场景语义点位（经纬度 + 航向角，标注在 OSM 底图上）。"""
+        if not self.scene:
+            return {}
+        return self.scene.get('semantic_points', {}) or {}
+
+    def get_scene_point(self, name: str) -> Optional[Dict]:
+        """获取指定名称的场景语义点位（含 lon/lat/heading_deg/type/area 等）。"""
+        return self.get_scene_semantic_points().get(name)
+
+    def get_scene_point_areas(self) -> List[str]:
+        """场景语义点位的区域（分组）清单。"""
+        if not self.scene:
+            return []
+        return list(self.scene.get('semantic_point_areas', []) or [])
+
+    def get_scene_points_in_area(self, area: str) -> Dict:
+        """按区域筛选场景语义点位。"""
+        return {
+            name: pt for name, pt in self.get_scene_semantic_points().items()
+            if pt.get('area') == area
+        }
+
+    def get_scene_portals(self) -> Dict:
+        """场景传送门 {场景语义点位名: {target_slam_map: ...}}。"""
+        if not self.scene:
+            return {}
+        return self.scene.get('portals', {}) or {}
+
+    def get_scene_portal_target(self, scene_point: str) -> Optional[str]:
+        """某场景语义点位（作为传送门）指向的 SLAM 地图 id。"""
+        portal = self.get_scene_portals().get(scene_point)
+        if not portal:
+            return None
+        return portal.get('target_slam_map')
+
+    def find_scene_portals_to_slam_map(self, slam_map_id: str) -> List[str]:
+        """返回所有通往指定 SLAM 地图的场景传送门（场景语义点位名）列表。"""
+        return [
+            name for name, portal in self.get_scene_portals().items()
+            if (portal or {}).get('target_slam_map') == slam_map_id
+        ]
+
+    # ==================== 全局路线（跨地图，顶层 routes） ====================
+
+    def get_global_route_list(self) -> List[Dict[str, str]]:
+        """顶层全局路线列表（每项 {name, description}）。"""
+        result = []
+        for name, cfg in self.global_routes.items():
+            result.append({'name': name, 'description': cfg.get('description', '')})
+        return result
+
+    def get_global_route_names(self) -> List[str]:
+        """顶层全局路线名称列表。"""
+        return list(self.global_routes.keys())
+
+    @staticmethod
+    def classify_waypoint(wp: Dict) -> str:
+        """
+        为一个 waypoint 标注类型（供 FSM 的 ModeRouter 逐 waypoint 路由）：
+
+        - ``instruction``：``{instruction: "..."}`` → VLN
+        - ``scene_point``：``{scene_point: "..."}`` → 场景语义点位（进入对应 SLAM 地图 / 定位锚点）
+        - ``gps``：``{lon, lat}`` → GNSS
+        - ``map``：``{(slam_map,) submap, semantic_point}`` 或 ``{x, y}`` → SLAM
+        - ``unknown``：无法识别
+        """
+        if 'instruction' in wp:
+            return 'instruction'
+        if 'scene_point' in wp:
+            return 'scene_point'
+        if 'lon' in wp and 'lat' in wp:
+            return 'gps'
+        if 'semantic_point' in wp or ('x' in wp and 'y' in wp):
+            return 'map'
+        return 'unknown'
+
+    def _expand_global_waypoints(self, waypoints: List[Dict], visited: set) -> List[Dict]:
+        """
+        展开全局路线的异构 waypoint 序列，为每个 waypoint 标注 ``type``：
+
+        - ``{slam_map, route}``：把该 SLAM 地图的一条内部路线整体展开为若干
+          ``{slam_map, submap, semantic_point, type=map}``；
+        - ``{route}``（无 slam_map）：递归展开另一条**全局路线**；
+        - ``{scene_point}`` / ``{lon,lat}`` / ``{instruction}`` /
+          ``{(slam_map,) submap, semantic_point}`` / ``{x,y}``：原样透传并标注类型，
+          尽力附带解析出的坐标（scene_point 附 lon/lat，map 语义点附 pose）。
+        """
+        flat: List[Dict] = []
+        for wp in waypoints:
+            # 1) SLAM 地图内部路线整体引用
+            if 'route' in wp and 'slam_map' in wp:
+                sid = wp['slam_map']
+                sub = self.get_route_by_name(wp['route'], slam_map_id=sid)
+                if not sub:
+                    print(f"MapManager: 全局路线引用的内部路线不存在，跳过: {sid}/{wp['route']}")
+                    continue
+                for sw in sub['waypoints']:
+                    item = dict(sw)
+                    item['slam_map'] = sid
+                    item['type'] = 'map'
+                    self._attach_map_pose(item)
+                    flat.append(item)
+                continue
+            # 2) 嵌套全局路线引用
+            if 'route' in wp and 'slam_map' not in wp:
+                ref = wp['route']
+                if ref in visited:
+                    print(f"MapManager: 检测到全局路线循环引用，跳过: {ref}")
+                    continue
+                ref_cfg = self.global_routes.get(ref)
+                if not ref_cfg:
+                    print(f"MapManager: 嵌套全局路线不存在，跳过: {ref}")
+                    continue
+                visited.add(ref)
+                flat.extend(self._expand_global_waypoints(ref_cfg.get('waypoints', []), visited))
+                visited.discard(ref)
+                continue
+            # 3) 普通异构 waypoint：标注类型 + 尽力补充坐标
+            item = dict(wp)
+            wtype = self.classify_waypoint(wp)
+            item['type'] = wtype
+            if wtype == 'scene_point':
+                pt = self.get_scene_point(wp['scene_point'])
+                if pt:
+                    item.setdefault('lon', pt.get('lon'))
+                    item.setdefault('lat', pt.get('lat'))
+                    item.setdefault('heading_deg', pt.get('heading_deg'))
+                    target = self.get_scene_portal_target(wp['scene_point'])
+                    if target:
+                        item['target_slam_map'] = target
+            elif wtype == 'map':
+                self._attach_map_pose(item)
+            flat.append(item)
+        return flat
+
+    def _attach_map_pose(self, item: Dict):
+        """为 map 型 waypoint（引用语义点）尽力附带解析出的 pose（best-effort）。"""
+        if item.get('semantic_point') and 'pose' not in item:
+            pi = self.get_pose_in_submap(
+                item['semantic_point'], item.get('submap'), item.get('slam_map'))
+            if pi and pi.get('pose'):
+                item['pose'] = pi['pose']
+
+    def get_global_route_by_name(self, route_name: str) -> Optional[Dict]:
+        """
+        根据名称获取顶层全局路线，返回展开并标注类型后的异构 waypoint 序列。
+
+        :return: {name, description, waypoints:[{..., type: map|gps|instruction|scene_point}]}
+                 路线不存在返回 None
+        """
+        cfg = self.global_routes.get(route_name)
+        if not cfg:
+            return None
+        flat = self._expand_global_waypoints(cfg.get('waypoints', []), {route_name})
+        return {
+            'name': route_name,
+            'description': cfg.get('description', ''),
+            'waypoints': flat,
+        }
+
+    # ==================== geo_anchor：SLAM 地图 ↔ WGS84 换算 ====================
+
+    def get_slam_map_geo_anchor(self, slam_map_id: str = None) -> Optional[Dict]:
+        """指定（默认当前）SLAM 地图的 geo_anchor（其 map 原点在 WGS84 的位姿）。"""
+        slam_map_id = slam_map_id or self.current_slam_map
+        cfg = self.slam_maps.get(slam_map_id)
+        return cfg.get('geo_anchor') if cfg else None
+
+    @staticmethod
+    def _enu_to_lonlat(e: float, n: float, origin_lon: float, origin_lat: float) -> Tuple[float, float]:
+        """局部 ENU 平面 (e 东, n 北, 米) → 经纬度（小范围球面近似，与 wgs84.py 一致）。"""
+        R = 6378137.0
+        lat = origin_lat + (n / R) * 180.0 / math.pi
+        lon = origin_lon + (e / (R * math.cos(math.radians(origin_lat)))) * 180.0 / math.pi
+        return lon, lat
+
+    @staticmethod
+    def _lonlat_to_enu(lon: float, lat: float, origin_lon: float, origin_lat: float) -> Tuple[float, float]:
+        """经纬度 → 局部 ENU 平面 (e 东, n 北, 米)。"""
+        R = 6378137.0
+        e = math.radians(lon - origin_lon) * math.cos(math.radians(origin_lat)) * R
+        n = math.radians(lat - origin_lat) * R
+        return e, n
+
+    @staticmethod
+    def _yaw_to_quat(yaw: float) -> Dict:
+        """绕 Z 轴的偏航角（弧度）→ 四元数 {x, y, z, w}。"""
+        return {'x': 0.0, 'y': 0.0, 'z': math.sin(yaw / 2.0), 'w': math.cos(yaw / 2.0)}
+
+    def slam_root_xy_to_lonlat(self, x: float, y: float,
+                               slam_map_id: str = None) -> Optional[Tuple[float, float]]:
+        """
+        某 SLAM 地图**根系（default_submap）** map 坐标 (x, y) → 经纬度 (lon, lat)。
+
+        (e, n) = scale · R(heading) · (x, y)，再按 anchor.origin 换算到经纬度。
+        无 geo_anchor 时返回 None。
+        """
+        anchor = self.get_slam_map_geo_anchor(slam_map_id)
+        if not anchor:
+            return None
+        origin = anchor.get('origin', {}) or {}
+        olon, olat = origin.get('lon'), origin.get('lat')
+        if olon is None or olat is None:
+            return None
+        h = math.radians(anchor.get('heading_deg', 0.0) or 0.0)
+        scale = anchor.get('scale', 1.0) or 1.0
+        e = (x * math.cos(h) - y * math.sin(h)) * scale
+        n = (x * math.sin(h) + y * math.cos(h)) * scale
+        return self._enu_to_lonlat(e, n, olon, olat)
+
+    def lonlat_to_slam_root_xy(self, lon: float, lat: float,
+                               slam_map_id: str = None) -> Optional[Tuple[float, float]]:
+        """经纬度 (lon, lat) → 某 SLAM 地图**根系** map 坐标 (x, y)。无 geo_anchor 返回 None。"""
+        anchor = self.get_slam_map_geo_anchor(slam_map_id)
+        if not anchor:
+            return None
+        origin = anchor.get('origin', {}) or {}
+        olon, olat = origin.get('lon'), origin.get('lat')
+        if olon is None or olat is None:
+            return None
+        h = math.radians(anchor.get('heading_deg', 0.0) or 0.0)
+        scale = anchor.get('scale', 1.0) or 1.0
+        e, n = self._lonlat_to_enu(lon, lat, olon, olat)
+        e /= scale
+        n /= scale
+        x = e * math.cos(h) + n * math.sin(h)
+        y = -e * math.sin(h) + n * math.cos(h)
+        return x, y
+
+    def slam_point_to_lonlat(self, submap_id: str, x: float, y: float, z: float = 0.0,
+                             slam_map_id: str = None) -> Optional[Tuple[float, float]]:
+        """
+        某 submap **局部坐标** (x, y) → 经纬度。
+
+        链路 = submap→根系（``transform`` 级联）叠加 根系→WGS84（``geo_anchor``）。
+        """
+        slam_map_id = slam_map_id or self.current_slam_map
+        tf = self.get_submap_transform(submap_id, slam_map_id)
+        if not tf:
+            return None
+        root = self._apply_transform(
+            {'x': x, 'y': y, 'z': z}, tf['translation'], tf['rotation'])
+        return self.slam_root_xy_to_lonlat(root['x'], root['y'], slam_map_id)
+
+    def lonlat_to_slam_root_pose(self, lon: float, lat: float, heading_deg: float = None,
+                                 slam_map_id: str = None) -> Optional[Dict]:
+        """
+        经纬度（可选场景航向角）→ 某 SLAM 地图**根系**的初始位姿。
+
+        用于 GNSS/OSM 段进入 SLAM 段时反算 map 系初始定位（配合 ``/pose_in_target``）。
+        ``heading_deg`` 采用场景约定（与正北夹角、顺时针为正，0=北 90=东）；
+        转换为 map 系偏航角：``map_yaw = (90° - heading_deg) - anchor.heading_deg``。
+
+        :return: {position:{x,y,z}, orientation:{x,y,z,w}}，无 geo_anchor 返回 None
+        """
+        xy = self.lonlat_to_slam_root_xy(lon, lat, slam_map_id)
+        if xy is None:
+            return None
+        x, y = xy
+        ori = {'x': 0.0, 'y': 0.0, 'z': 0.0, 'w': 1.0}
+        if heading_deg is not None:
+            anchor = self.get_slam_map_geo_anchor(slam_map_id) or {}
+            anchor_h = anchor.get('heading_deg', 0.0) or 0.0
+            yaw_enu = math.radians(90.0 - heading_deg)          # 场景航向 → ENU 偏航(ccw from East)
+            map_yaw = yaw_enu - math.radians(anchor_h)          # → SLAM 地图根系偏航
+            ori = self._yaw_to_quat(map_yaw)
+        return {'position': {'x': x, 'y': y, 'z': 0.0}, 'orientation': ori}
+
+    def get_slam_entry_pose_from_scene_point(self, scene_point: str) -> Optional[Dict]:
+        """
+        由某场景语义点位（通常为场景传送门）计算进入对应 SLAM 地图的根系初始位姿。
+
+        :return: {slam_map, lon, lat, pose}；场景点不存在返回 None，
+                 非传送门（无 target_slam_map）或缺 geo_anchor 时 pose 为 None。
+        """
+        pt = self.get_scene_point(scene_point)
+        if not pt:
+            return None
+        target = self.get_scene_portal_target(scene_point)
+        pose = None
+        if target:
+            pose = self.lonlat_to_slam_root_pose(
+                pt.get('lon'), pt.get('lat'), pt.get('heading_deg'), target)
+        return {
+            'slam_map': target,
+            'lon': pt.get('lon'),
+            'lat': pt.get('lat'),
+            'pose': pose,
         }
