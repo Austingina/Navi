@@ -1,0 +1,278 @@
+{
+  "map_id": "scene_xili",
+  "version": "xili",
+  "build_no": 20260727103159,
+  "generated_at": "2026-07-27T08:48:43Z",
+  "files": [
+    {
+      "path": "caihong/1f.pcd",
+      "size": 342648202,
+      "sha256": "67f6eabe70feea621d41376df471dfed118489dfa12f4766fb01705c09f76099",
+      "mtime": 1784704630.5281622
+    },
+    {
+      "path": "caihong/2f-231.pcd",
+      "size": 46493888,
+      "sha256": "48eaffb5f844ac0c8d94361e5d98304c4ebe70047929176e41d4e9274a897d92",
+      "mtime": 1784704630.5611622
+    },
+    {
+      "path": "caihong/2f.pcd",
+      "size": 55721096,
+      "sha256": "1a208f32bca95ec7edf39dea58af54ce29a09b9268d6e5d8c7bd09ec4a3d1099",
+      "mtime": 1784704630.5451622
+    },
+    {
+      "path": "caihong/5f.pcd",
+      "size": 52553852,
+      "sha256": "79264c8eb2f1225381e5d9767f3397e10f030b167340e384c1b732c1deddc8c8",
+      "mtime": 1784704630.5771623
+    },
+    {
+      "path": "caihong/6f.pcd",
+      "size": 55661804,
+      "sha256": "7b7a954d6db092610ef323d161285db1691a16f932480e37664747bd26c8bf2c",
+      "mtime": 1784704630.5951622
+    },
+    {
+      "path": "caihong/vpr/1f/database_build_info.json",
+      "size": 1579,
+      "sha256": "10e14e01985894ecd0b9961b060bbb82bb4738d003c8b3095d95c2893369a46b",
+      "mtime": 1784704630.596162
+    },
+    {
+      "path": "caihong/vpr/1f/database_descriptors.npy",
+      "size": 74207360,
+      "sha256": "34f3f96619054b5ab7dee1fdcd955c0b16938239fdf3d36c8425dd35e2875036",
+      "mtime": 1784704630.616162
+    },
+    {
+      "path": "caihong/vpr/1f/database_image_paths.txt",
+      "size": 173941,
+      "sha256": "fc48ad9f02853033a40363d728a7d124187412dc884544c258275ee4087a2e9c",
+      "mtime": 1784704630.616162
+    },
+    {
+      "path": "caihong/vpr/1f/database_meta.npz",
+      "size": 1098,
+      "sha256": "0a93b109d3afe9b4f125b3e0009aae27259a1069545f4ef40af59fac643031ac",
+      "mtime": 1784704630.616162
+    },
+    {
+      "path": "caihong/vpr/1f/database_poses.npy",
+      "size": 70400,
+      "sha256": "1b5c463c0702182f154c686be2baf1aa4d9393a7ad9cc8374aa27e71f6f83a2b",
+      "mtime": 1784704630.616162
+    },
+    {
+      "path": "caihong/vpr/1f/low_texture_filter_report.csv",
+      "size": 365034,
+      "sha256": "188e9473c4ae0322c8b9bc0b4bb85d62da089f38f8e997b9d9adce4f771f8c7f",
+      "mtime": 1784704630.616162
+    },
+    {
+      "path": "caihong/vpr/1f/vpr_preprocess.log",
+      "size": 29145,
+      "sha256": "ef674b73f04a86319984accaec0e3c11b8724d039fff5b23599dffe11a770a56",
+      "mtime": 1784704630.616162
+    },
+    {
+      "path": "caihong/vpr/2f/database_build_info.json",
+      "size": 1963,
+      "sha256": "701104bda87cc3948903f3db2e44263b6d9fea93e2d7f35983743212d604dbb8",
+      "mtime": 1784704630.616162
+    },
+    {
+      "path": "caihong/vpr/2f/database_descriptors.npy",
+      "size": 58291328,
+      "sha256": "935d47bbd073608b53655e3604c696108216755dbaaa12b2b605e4cf38ab2fe3",
+      "mtime": 1784704630.631162
+    },
+    {
+      "path": "caihong/vpr/2f/database_image_paths.txt",
+      "size": 134134,
+      "sha256": "118ac0e3d6dc769c01559068b21ea9333cdadcdffec531ec4ffef8540bbe95f3",
+      "mtime": 1784704630.632162
+    },
+    {
+      "path": "caihong/vpr/2f/database_meta.npz",
+      "size": 1098,
+      "sha256": "5040950e6c59e2d58691cf9f7232dd6c33661ac97dca9bf4761beda1cd274345",
+      "mtime": 1784704630.632162
+    },
+    {
+      "path": "caihong/vpr/2f/database_poses.npy",
+      "size": 55328,
+      "sha256": "abe69d3f4e43050f514f4322f2336e2b55f56263108fbbf2780795b6a5a984d0",
+      "mtime": 1784704630.632162
+    },
+    {
+      "path": "caihong/vpr/2f/low_texture_filter_report.csv",
+      "size": 167166,
+      "sha256": "6a5127c36c35c44cb1d9c19bbb0a1b9ef9b64f27b55a3d4c84fa8ff3541c105a",
+      "mtime": 1784704630.632162
+    },
+    {
+      "path": "caihong/vpr/2f/vpr_preprocess.log",
+      "size": 56467,
+      "sha256": "dc9599e991c537e0538b198c2c234fc787c748d99550fbad599b9dae6c4d93f9",
+      "mtime": 1784704630.632162
+    },
+    {
+      "path": "caihong/vpr/2f231/database_build_info.json",
+      "size": 1524,
+      "sha256": "1133baf1e510a40797c29f8db21b9b4d6fff25b1d7354e0dafed7c5128f2319d",
+      "mtime": 1784704630.632162
+    },
+    {
+      "path": "caihong/vpr/2f231/database_descriptors.npy",
+      "size": 7062656,
+      "sha256": "1677897cec940d6533f6915cae323259ef57324ca73ddf5a6e0447b2d4a0c822",
+      "mtime": 1784704630.634162
+    },
+    {
+      "path": "caihong/vpr/2f231/database_image_paths.txt",
+      "size": 17100,
+      "sha256": "dc8dcd8a83f6a9840a22e55f90b7e5ebfb7a99b77a5c5f8fb81a459e6ff13e43",
+      "mtime": 1784704630.634162
+    },
+    {
+      "path": "caihong/vpr/2f231/database_meta.npz",
+      "size": 1098,
+      "sha256": "52c6dc55fa71c25dba5255de3adeee711a59b8dac4802294703a0dff33805c80",
+      "mtime": 1784704630.634162
+    },
+    {
+      "path": "caihong/vpr/2f231/database_poses.npy",
+      "size": 6816,
+      "sha256": "4472cd161ed6d5f5efb1e19577d9110481a93ac969ee1776c15c6c9fa3902343",
+      "mtime": 1784704630.634162
+    },
+    {
+      "path": "caihong/vpr/2f231/low_texture_filter_report.csv",
+      "size": 77340,
+      "sha256": "11e669c20e41c763b8ec839d10dd1d9414ff8d9c47129f22a710d92ac1237133",
+      "mtime": 1784704630.634162
+    },
+    {
+      "path": "caihong/vpr/2f231/vpr_preprocess.log",
+      "size": 46122,
+      "sha256": "3b8cf4bca00bb629f95f12215a45e3614c1fa613a7f785da41188bf97c53c786",
+      "mtime": 1784704630.634162
+    },
+    {
+      "path": "caihong/vpr/5f/database_build_info.json",
+      "size": 1439,
+      "sha256": "48722eebc2a1780ca375821aad1b4b273b2c0d56bab3a53821f9eb95579751c0",
+      "mtime": 1784704630.634162
+    },
+    {
+      "path": "caihong/vpr/5f/database_descriptors.npy",
+      "size": 8211584,
+      "sha256": "b459c866bdd6ce8124fba2f68a0c3a4b55a0494e92b3cc035f59bfa12ca97f5a",
+      "mtime": 1784704630.636162
+    },
+    {
+      "path": "caihong/vpr/5f/database_image_paths.txt",
+      "size": 18808,
+      "sha256": "dce207921387ea2e1d36326f828f2ea30c23b2aebf7285398367e177775868ae",
+      "mtime": 1784704630.636162
+    },
+    {
+      "path": "caihong/vpr/5f/database_meta.npz",
+      "size": 1098,
+      "sha256": "77a4b9b43637697f8994312cfa815b00ab438c5218ffa07c632adfb29ffbac48",
+      "mtime": 1784704630.636162
+    },
+    {
+      "path": "caihong/vpr/5f/database_poses.npy",
+      "size": 7904,
+      "sha256": "8cf59b336ca07c679f458453fd5295e875e7e2dc1344c31e60cea46cca4da9e4",
+      "mtime": 1784704630.636162
+    },
+    {
+      "path": "caihong/vpr/5f/low_texture_filter_report.csv",
+      "size": 60630,
+      "sha256": "517c8af261c5f0ee02297e8ffd33296e0f7b18f51df9ac96b95f383932f5e110",
+      "mtime": 1784704630.636162
+    },
+    {
+      "path": "caihong/vpr/5f/vpr_preprocess.log",
+      "size": 12684,
+      "sha256": "55aa387148918c5d7994c8fd9f49825986cb74822fabb62569670dcd39aa9785",
+      "mtime": 1784704630.636162
+    },
+    {
+      "path": "caihong/vpr/6f/database_build_info.json",
+      "size": 2757,
+      "sha256": "1948001ea364f4adb99236bdc54775d1aed794994d57cb1b2f9243aa01ec38ec",
+      "mtime": 1784704630.636162
+    },
+    {
+      "path": "caihong/vpr/6f/database_descriptors.npy",
+      "size": 7265408,
+      "sha256": "42a4b9e021301a6f7eaa107345755646abb7ea4ac4bddb58dcbc6190063eb1b6",
+      "mtime": 1784704630.638162
+    },
+    {
+      "path": "caihong/vpr/6f/database_image_paths.txt",
+      "size": 16485,
+      "sha256": "73823d679b2afadfe7317c4635d8d62fdc7d315c68eda69c032b4db427780549",
+      "mtime": 1784704630.638162
+    },
+    {
+      "path": "caihong/vpr/6f/database_meta.npz",
+      "size": 1098,
+      "sha256": "598a419cd4165de3e8f2d05a46db9d3318e247822753ed3fabe7674218a3667f",
+      "mtime": 1784704630.638162
+    },
+    {
+      "path": "caihong/vpr/6f/database_poses.npy",
+      "size": 7008,
+      "sha256": "98a08a81653c308632cd0e15521a70956d4a9689880add3908d5d3ffe47a3168",
+      "mtime": 1784704630.638162
+    },
+    {
+      "path": "caihong/vpr/6f/low_texture_filter_report.csv",
+      "size": 54445,
+      "sha256": "514e2e7964916b2260c9afb2d247db273af5bbd273a10e94c311be59469acac0",
+      "mtime": 1784704630.639162
+    },
+    {
+      "path": "caihong/vpr/6f/vpr_preprocess.log",
+      "size": 7228,
+      "sha256": "98b52e54bdbae890d507da716c91f49b3407adb32f92cbbcbcc7deb6a6bc785c",
+      "mtime": 1784704630.639162
+    },
+    {
+      "path": "osm/xili_5km_merged.osm.pbf",
+      "size": 1296793,
+      "sha256": "794619821d5a9ef331b16604b168a700a32f236848c4c021ac391b6ea5710c2e",
+      "mtime": 1784604792.8915377
+    },
+    {
+      "path": "scene.json",
+      "size": 99436,
+      "sha256": "4362dd15aa1d0b35044040cf21ba4761d25e351e30ad84728d62b13f83e7728f",
+      "mtime": 1785119519.3796737
+    },
+    {
+      "path": "zhichengA1/A1.pcd",
+      "size": 119897400,
+      "sha256": "1c95009c6a4f912f36413b0dec0a646bd82be2d3b68f493ed08961a24e3ae75c",
+      "mtime": 1785119298.1793225
+    },
+    {
+      "path": "zhichengA2/A2.pcd",
+      "size": 161215246,
+      "sha256": "fd42b495df879d231d7f7c5981ff69d0f05c8e0a42ddaf9784ebc80198ad074f",
+      "mtime": 1785119519.0126748
+    },
+    {
+      "path": "zhichengA2A3/zhichengA.pcd",
+      "size": 72836468,
+      "sha256": "c273832b56a66e192027dc9fdd70f87a6e617e40f43aa938455b935c6efc4c11",
+      "mtime": 1784637793.028145
+    }
+  ]
+}

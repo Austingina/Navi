@@ -29,5 +29,5 @@ mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/localization_$(date +%Y%m%d_%H%M%S).log"
 echo "logging to $LOG_FILE"
 
-ros2 launch fast_lio odometry_lslidar.launch.py rviz:=$RVIZ_USE use_sim_time:=$USE_SIM_TIME map_file_path:=$NAVI_ROOT_DIR/maps/zhichengA.pcd 2>&1 \
+ros2 launch fast_lio odometry_lslidar.launch.py rviz:=$RVIZ_USE use_sim_time:=$USE_SIM_TIME map_file_path:=$NAVI_ROOT_DIR/maps/A2.pcd 2>&1 \
     | stdbuf -oL -eL tee -a "$LOG_FILE"

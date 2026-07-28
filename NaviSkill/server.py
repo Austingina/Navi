@@ -632,167 +632,6 @@ class NavigationToolManager:
             info["switched_submap"] = True
         return info
 
-    def _auto_switch_nav_mode_for_waypoint(self, wp: Dict[str, Any]) -> Dict[str, Any]:
-        """混合路线核心：进入一个 waypoint 前，按其类型自动切换导航模式。
-
-        - 目标模式与当前不同（如 SLAM 地图 ↔ 室外）→ 调 ``NavNode.set_nav_mode``；
-        - 目标为 SLAM → 再对齐目标 ``slam_map`` / ``submap``（跨图播种初始位姿）；
-        - instruction/未知 → 保持当前模式（VLN 段不在本切换范围内）。
-        """
-        result: Dict[str, Any] = {"mode_switched": False}
-        target_mode = self._waypoint_nav_mode(wp)
-        cur_mode = self.ros_node.get_nav_mode()
-        result["from_mode"] = cur_mode
-        if target_mode is None:
-            result["to_mode"] = cur_mode
-            return result
-        result["to_mode"] = target_mode
-        if target_mode != cur_mode:
-            ok, msg = self.ros_node.set_nav_mode(target_mode)
-            result["mode_switched"] = ok
-            result["mode_switch_msg"] = msg
-            logging.info(
-                f"[route] waypoint 触发导航模式切换 {cur_mode} → {target_mode}: {msg}")
-        if target_mode == NavNode.NAV_MODE_SLAM:
-            result["slam_context"] = self._ensure_slam_context_for_waypoint(wp)
-        return result
-
-    def _build_waypoint_goal_pose(self, wp: Dict[str, Any]) -> Optional[PoseStamped]:
-        """为 map 型 waypoint 构造 navigate_to_pose 目标（frame 与 set_goal_by_name 一致）。"""
-        pose_info = wp.get('pose')
-        if not pose_info and wp.get('semantic_point'):
-            pi = self.map_manager.get_pose_in_submap(
-                wp.get('semantic_point'), wp.get('submap'), wp.get('slam_map'))
-            pose_info = pi.get('pose') if pi else None
-        pose = PoseStamped()
-        pose.header.frame_id = "odom"
-        if pose_info:
-            pos = pose_info.get('position', {})
-            ori = pose_info.get('orientation', {})
-            pose.pose.position.x = float(pos.get('x', 0.0))
-            pose.pose.position.y = float(pos.get('y', 0.0))
-            pose.pose.position.z = float(pos.get('z', 0.0))
-            pose.pose.orientation.x = float(ori.get('x', 0.0))
-            pose.pose.orientation.y = float(ori.get('y', 0.0))
-            pose.pose.orientation.z = float(ori.get('z', 0.0))
-            pose.pose.orientation.w = float(ori.get('w', 1.0))
-            return pose
-        # 直接 map 坐标 {x, y, (yaw)}
-        if 'x' in wp and 'y' in wp:
-            pose.pose.position.x = float(wp['x'])
-            pose.pose.position.y = float(wp['y'])
-            yaw = float(wp.get('yaw', 0.0))
-            pose.pose.orientation.z = float(np.sin(yaw / 2.0))
-            pose.pose.orientation.w = float(np.cos(yaw / 2.0))
-            return pose
-        return None
-
-    def _dispatch_waypoint_goal(self, wp: Dict[str, Any], label: str) -> Dict[str, Any]:
-        """按当前模式下发 waypoint 目标：
-
-        - ``gps`` → ``NavNode.set_outdoor_goal_by_lonlat``（交 campus_nav 路网规划器）；
-        - ``map`` → ``NavNode.publish_goal``（navigate_to_pose）；
-        - ``scene_point`` / ``instruction`` → 无独立目标（切换/衔接已在 auto-switch 处理，
-          VLN 段暂不在本执行器范围内），标记 ``skipped``。
-        """
-        wtype = wp.get('type') or MapManager.classify_waypoint(wp)
-        try:
-            if wtype == 'gps':
-                ok = self.ros_node.set_outdoor_goal_by_lonlat(
-                    float(wp['lon']), float(wp['lat']))
-                return {"success": ok, "kind": "gps"}
-            if wtype == 'map':
-                pose = self._build_waypoint_goal_pose(wp)
-                if pose is None:
-                    return {"success": False, "kind": "map",
-                            "msg": "waypoint 缺少可用 pose"}
-                self.ros_node.publish_goal(pose, label)
-                return {"success": True, "kind": "map"}
-            # scene_point / instruction
-            return {"success": True, "kind": wtype, "skipped": True}
-        except Exception as e:
-            return {"success": False, "kind": wtype, "msg": str(e)}
-
-    async def _wait_waypoint_reached(
-        self, wp: Dict[str, Any], timeout: float,
-        xy_tolerance: float, yaw_tolerance: float, gps_reach_tol: float,
-    ) -> Dict[str, Any]:
-        """等待单个 waypoint 到达：gps 段用室外距离近似判定，map 段复用 check_goal_reached。"""
-        wtype = wp.get('type') or MapManager.classify_waypoint(wp)
-        start = time.time()
-        if wtype == 'gps':
-            while time.time() - start < timeout:
-                await asyncio.sleep(0.1)
-                if self.ros_node.is_outdoor_goal_reached(gps_reach_tol):
-                    return {"reached": True, "msg": "室外 GPS 目标到达(近似)"}
-            return {"reached": False, "msg": "GPS 段等待超时"}
-        # map 段
-        while time.time() - start < timeout:
-            await asyncio.sleep(0.05)
-            status, fail = self.ros_node.check_goal_reached(xy_tolerance, yaw_tolerance)
-            if status == self.ros_node.GOAL_CHECK_REACHED:
-                return {"reached": True, "msg": "到达"}
-            if status == self.ros_node.GOAL_CHECK_FAILED:
-                return {"reached": False, "msg": fail or "导航失败", "nav_failed": True}
-        return {"reached": False, "msg": "等待超时"}
-
-    async def _follow_route_impl(
-        self, route_name: str, per_waypoint_timeout: float = 120.0,
-        xy_tolerance: float = 0.5, yaw_tolerance: float = 0.2,
-        gps_reach_tol: float = 3.0,
-    ) -> Dict[str, Any]:
-        """按序执行一条（可跨 SLAM 地图 / 室外的混合）路线，段间自动切换导航模式。"""
-        plan = self.get_route_mode_plan(route_name)
-        if not plan.get("success"):
-            return plan
-        waypoints = plan["waypoints"]
-        if not waypoints:
-            return {"success": False, "msg": f"路线 {route_name} 无 waypoint"}
-        if self.viz is not None:
-            try:
-                self.viz.set_active_route(route_name)
-            except Exception:
-                pass
-
-        results = []
-        for i, wp in enumerate(waypoints):
-            switch = self._auto_switch_nav_mode_for_waypoint(wp)
-            dispatch = self._dispatch_waypoint_goal(wp, f"{route_name}#wp{i}")
-            wp_res: Dict[str, Any] = {
-                "index": i,
-                "type": wp.get('type'),
-                "nav_mode": wp.get('nav_mode'),
-                "switch": switch,
-                "dispatch": dispatch,
-            }
-            if dispatch.get("skipped"):
-                wp_res["reached"] = True
-                results.append(wp_res)
-                continue
-            if not dispatch.get("success"):
-                wp_res["reached"] = False
-                results.append(wp_res)
-                return {
-                    "success": False, "route_name": route_name,
-                    "msg": f"waypoint {i} 目标下发失败: {dispatch.get('msg')}",
-                    "failed_index": i, "results": results,
-                }
-            reached = await self._wait_waypoint_reached(
-                wp, per_waypoint_timeout, xy_tolerance, yaw_tolerance, gps_reach_tol)
-            wp_res.update(reached)
-            results.append(wp_res)
-            if not reached.get("reached"):
-                return {
-                    "success": False, "route_name": route_name,
-                    "msg": f"waypoint {i} 未到达: {reached.get('msg')}",
-                    "failed_index": i, "results": results,
-                }
-        return {
-            "success": True, "route_name": route_name,
-            "waypoint_count": len(waypoints),
-            "segments": plan["segments"], "results": results,
-        }
-
     def _ensure_nav_mode(self, target_mode: str) -> Dict[str, Any]:
         """确保 NavNode 处于目标导航模式；已在目标模式则空操作。
 
@@ -1895,38 +1734,15 @@ class NavigationToolManager:
                 return {"success": False, "msg": f"切换导航模式失败: {str(e)}"}
 
         def get_route_plan(route_name: str) -> Dict[str, Any]:
-            """返回一条路线逐 waypoint 的导航模式标注与段计划（SLAM/GPS 段边界即切换点）。"""
+            """返回一条路线逐 waypoint 的导航模式标注与段计划（SLAM/GPS 段边界即切换点）。
+
+            仅供调用方组织路线用（只读，不执行）：调用方据此按序对每个 waypoint
+            选用相应的单点导航接口（``set_goal_by_*`` / ``set_nav_mode``）并等待到达。
+            """
             try:
                 return self.get_route_mode_plan(route_name)
             except Exception as e:
                 return {"success": False, "msg": f"生成路线模式计划失败: {str(e)}"}
-
-        async def follow_route(
-            route_name: str,
-            per_waypoint_timeout: float = 120.0,
-            xy_tolerance: float = 0.5,
-            yaw_tolerance: float = 0.2,
-            gps_reach_tol: float = 3.0,
-        ) -> Dict[str, Any]:
-            """执行一条（可跨 SLAM 地图 / 室外的混合）路线。
-
-            逐 waypoint 推进：当 waypoint 从某张 SLAM 地图跨到室外、或从室外跨回
-            SLAM 地图时，自动切换导航模式（SLAM ↔ GPS）并对齐目标 slam_map/submap，
-            再下发对应后端目标并等待到达。返回逐点结果与段计划，便于排障。
-
-            参数:
-            route_name: 路线名（场景全局路线或旧单图内部路线）
-            per_waypoint_timeout: 每个 waypoint 的到达超时（秒）
-            xy_tolerance / yaw_tolerance: SLAM 段到达容差
-            gps_reach_tol: 室外 GPS 段到达距离容差（米）
-            """
-            try:
-                return await self._follow_route_impl(
-                    route_name, per_waypoint_timeout,
-                    xy_tolerance, yaw_tolerance, gps_reach_tol)
-            except Exception as e:
-                logging.error(f"follow_route 失败: {e}", exc_info=True)
-                return {"success": False, "msg": f"follow_route 异常: {str(e)}"}
 
         self._handlers = {
             "set_goal_by_name": set_goal_by_name,
@@ -1959,7 +1775,6 @@ class NavigationToolManager:
             "get_nav_mode": get_nav_mode,
             "set_nav_mode": set_nav_mode,
             "get_route_plan": get_route_plan,
-            "follow_route": follow_route,
         }
 
     async def call_method(self, method: str, params: Dict[str, Any]) -> Any:
