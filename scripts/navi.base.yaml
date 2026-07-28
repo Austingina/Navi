@@ -1,0 +1,20 @@
+session_name: navi
+start_directory: /home/nvidia/Navi/scripts
+
+# 共享常驻栈（session=navi）：雷达驱动 + NaviSkill。
+# 这两者与「定位/Nav2 模式」无关，SLAM(session=slam) 与 室外(session=outdoor) 切换时
+# 保持常驻、不重启——NavNode 的 /gps/fix、navigate_to_pose client 会自动连到当前在跑
+# 的那套栈。用 start_navi.sh 加载本文件。
+#
+# 仿真环境（start_navi.sh -s）会置 $NAVI_SIM_ARG 非空：此时雷达 pane 跳过 start_lidar，
+# 直接用仿真环境中已有的雷达信号；真实环境（$NAVI_SIM_ARG 为空）才启动实体激光雷达。
+windows:
+  - window_name: navi_base
+    layout: tiled
+    panes:
+      - shell_command:
+          - sleep 0
+          - '[ -n "$NAVI_SIM_ARG" ] && echo "[sim] 使用仿真环境已有的雷达信号，跳过 start_lidar" || bash $NAVI_SCRIPT_DIR/start_lidar.bash'
+      - shell_command:
+          - sleep 10
+          - bash $NAVI_SCRIPT_DIR/start_mcp.sh -m http://10.239.18.181:8080/mapserver/scene_xili

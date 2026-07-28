@@ -1,0 +1,27 @@
+#! /bin/bash
+# 启动室外 GPS 栈 session=outdoor（navi.outdoor.yaml）：
+# outdoor_bringup_heading_align（定位 heading-align + Nav2 + campus_nav 路网）。
+# 与 SLAM 室内栈互斥（二者都会发布 map->odom TF，不能同时跑），故先杀 slam 会话。
+# 雷达 / NaviSkill（session=navi）不受影响，需另用 start_navi.sh 常驻。
+#
+# 用法:
+#   ./start_outdoor.sh       # 真实环境
+#   ./start_outdoor.sh -s    # 仿真环境（use_sim_time:=true）
+source "$(dirname "$0")/common.sh"
+
+SIM_ARG=""
+for arg in "$@"; do
+    case "$arg" in
+        -s|--simulated) SIM_ARG="--simulated" ;;
+    esac
+done
+
+# 互斥：切到室外前先停 SLAM 会话；再重启 outdoor 会话本身。
+tmux kill-session -t slam 2>/dev/null
+tmux kill-session -t outdoor 2>/dev/null
+
+tmux set-environment -g NAVI_SCRIPT_DIR "$NAVI_SCRIPT_DIR"
+tmux set-environment -g NAVI_ROOT_DIR "$NAVI_ROOT_DIR"
+tmux set-environment -g NAVI_SIM_ARG "$SIM_ARG"
+
+tmuxp load -d "$NAVI_SCRIPT_DIR/navi.outdoor.yaml"

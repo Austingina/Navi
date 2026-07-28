@@ -1,19 +1,20 @@
-session_name: navi
-start_directory: /home/nvidia/work/Navi/scripts
+session_name: slam
+start_directory: /home/nvidia/Navi/scripts
 
+# SLAM 室内点云定位栈（session=slam）：FAST-LIO 定位 + r1pro Nav2。
+# 不含 NaviSkill(start_mcp)/雷达——它们在 session=navi（navi.base.yaml）常驻。
+# 用 start_slam.sh 加载本文件（会先杀 outdoor 会话，二者互斥）。
+# $NAVI_SIM_ARG 由 start_slam.sh 注入：-s 时为 "--simulated"（use_sim_time:=true），否则为空。
 windows:
-  - window_name: navi_services
+  - window_name: slam_services
     layout: tiled
     panes:
       - shell_command:
-          - sleep 5
-          - bash $NAVI_SCRIPT_DIR/start_localization.bash --simulated
+          - sleep 0
+          - bash $NAVI_SCRIPT_DIR/start_localization.bash $NAVI_SIM_ARG
       - shell_command:
-          - sleep 10
-          - bash $NAVI_SCRIPT_DIR/start_mcp.sh -m http://10.239.18.181:8080/mapserver/408
-      - shell_command:
-          - sleep 15
-          - bash $NAVI_SCRIPT_DIR/start_navigation.bash --simulated
+          - sleep 8
+          - bash $NAVI_SCRIPT_DIR/start_navigation.bash $NAVI_SIM_ARG
 
   - window_name: monitoring
     panes:
