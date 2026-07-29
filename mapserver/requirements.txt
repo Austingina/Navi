@@ -1,6 +1,7 @@
 # mapserver 运行依赖（固定版本 / pinned）
-# 由 mapserver/.venv 冻结生成（python 3.10.12），已排除 ROS2 系统包
-# （rclpy / *-msgs 等来自 /opt/ros/humble，不在 PyPI，运行时由系统提供）。
+# 由 mapserver/.venv 冻结生成（python 3.12，与 Ubuntu 24.04 系统 python 一致），
+# 已排除 ROS2 系统包（rclpy / *-msgs 等来自 /opt/ros/jazzy，不在 PyPI，
+# 运行时由系统提供）。
 #
 # 顶层依赖：fastapi（mapserver/server.py 的 HTTP 服务）、uvicorn（ASGI 运行器）。
 # 其余为其传递依赖，一并锁定以保证可复现安装。

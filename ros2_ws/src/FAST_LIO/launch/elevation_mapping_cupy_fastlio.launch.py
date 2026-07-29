@@ -1,3 +1,4 @@
+import glob
 import os
 
 from ament_index_python.packages import get_package_share_directory
@@ -17,13 +18,24 @@ def generate_launch_description():
     # elevation_mapping 专用虚拟环境（与 vpr 解耦）。节点用系统 python3 跑，
     # 这里只把该 venv 的 site-packages 前置到 PYTHONPATH 提供 torch（cupy/numpy
     # 等系统/用户 site 已有）。重建见 envs/elevation_mapping/install.sh。
-    # 允许用环境变量 ELEVATION_VENV_SITE_PACKAGES 覆盖路径。
-    elevation_site_packages = os.environ.get(
-        'ELEVATION_VENV_SITE_PACKAGES',
-        '/home/nvidia/Navi/envs/elevation_mapping/.venv/lib/python3.10/site-packages')
+    # 路径按 NAVI_ROOT 推导并 glob python 小版本，避免写死 /home/nvidia 与
+    # python3.10；ELEVATION_VENV_SITE_PACKAGES 可直接覆盖。
+    elevation_site_packages = os.environ.get('ELEVATION_VENV_SITE_PACKAGES', '')
+    if not elevation_site_packages:
+        navi_root = os.environ.get(
+            'NAVI_ROOT', os.path.join(os.path.expanduser('~'), 'Navi'))
+        candidates = sorted(glob.glob(os.path.join(
+            navi_root, 'envs', 'elevation_mapping', '.venv', 'lib',
+            'python3.*', 'site-packages')))
+        if candidates:
+            elevation_site_packages = candidates[-1]
+
     python_path = elevation_site_packages
     if os.environ.get('PYTHONPATH'):
-        python_path += os.pathsep + os.environ['PYTHONPATH']
+        if python_path:
+            python_path += os.pathsep + os.environ['PYTHONPATH']
+        else:
+            python_path = os.environ['PYTHONPATH']
 
     use_sim_time = LaunchConfiguration('use_sim_time')
 

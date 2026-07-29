@@ -21,8 +21,9 @@
     <depend>image_transport</depend>
     <depend>ros2_numpy</depend>
     <depend>python3-scipy</depend>
-    <!-- Numpy version needs to be <2.0.0 -->
-    <depend>numpy_lessthan_2</depend>
+    <!-- Was pinned to numpy<2.0.0 upstream. Ubuntu 24.04 / Python 3.12 ships
+         numpy 2.x, and nothing here uses the aliases numpy 2.0 removed. -->
+    <depend>python3-numpy</depend>
     <depend>tf2_ros</depend>
     <depend>cv_bridge</depend>
     <depend>ament_index_python</depend>
@@ -34,15 +35,17 @@
     <!-- <depend>gazebo_ros</depend> -->
     <depend>robot_state_publisher</depend>
     <depend>python3-opencv</depend>
-    <depend>cupy-cuda12x</depend>
+    <!-- CUDA 13 on JetPack 7 / Thor. Installed by hand, not via rosdep. -->
+    <depend>cupy-cuda13x</depend>
     <depend>rosbag2_py</depend>
     <depend>simple-parsing</depend>
     <depend>python3-shapely</depend>
     <depend>python3-ruamel.yaml</depend>
     <depend>python3-transforms3d</depend>
 
-    <!-- For turtlebot3 simulation -->
-    <depend>gazebo_ros_pkgs</depend>
+    <!-- For turtlebot3 simulation. gazebo_ros_pkgs is Gazebo Classic, which
+         reached EOL and is not released for Jazzy (the successor is ros_gz).
+         Only the turtlesim_init demo launch used it, so it is dropped. -->
     <depend>turtlebot3_msgs</depend>
     <depend>turtlebot3_teleop</depend>
     <depend>camera_info_manager</depend>

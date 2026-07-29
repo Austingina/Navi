@@ -3,10 +3,12 @@
 # For LightGlue: pip install git+https://github.com/cvg/LightGlue.git
 
 # --- Core pipeline ---
-torch>=2.1.0
-torchvision>=0.16.0
-numpy>=1.24.0
-faiss-cpu>=1.7.4
+# Kept in sync with pyproject.toml: numpy 2.x (Ubuntu 24.04 / Python 3.12),
+# with torch / faiss lower bounds raised to the first numpy-2-compatible ones.
+torch>=2.3.0
+torchvision>=0.18.0
+numpy>=2.0,<3
+faiss-cpu>=1.8.0
 Pillow>=10.0.0
 scikit-learn>=1.3.0
 tqdm>=4.65.0
@@ -20,4 +22,4 @@ safetensors>=0.4.0
 
 # --- Database construction (build_database.py) ---
 rosbags>=0.11.0          # ROS1 bag reading (pip-installable, no ROS install needed)
-# rosbag2_py             # ROS2 bag reading (requires ROS2 Humble system install, not pip)
+# rosbag2_py             # ROS2 bag reading (requires ROS 2 Jazzy system install, not pip)
