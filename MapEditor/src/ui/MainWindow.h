@@ -59,6 +59,7 @@ private slots:
     void onRenameSlamMap(const QString& slamMapId, const QString& newName,
                          const QString& newCode);
     void onExportSlamMap(const QString& slamMapId);
+    void onExportActiveSlamMap();   ///< 文件菜单：导出当前激活的 SLAM 地图
     void onAlignSlamMap(const QString& slamMapId);
     void onOrthoVisibilityChanged(const QString& slamMapId, bool visible);
     void onLeftTabChanged(int index);

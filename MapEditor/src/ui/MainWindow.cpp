@@ -209,6 +209,7 @@ void MainWindow::setupMenuBar() {
     fileMenu->addAction("打开单张地图（替换场景）...", this, &MainWindow::onOpen);
     fileMenu->addAction("导入 OSM/PBF 底图...", this, &MainWindow::onImportOsm);
     fileMenu->addAction("导入 SLAM 地图...", this, &MainWindow::onImportSlamMap);
+    fileMenu->addAction("导出当前 SLAM 地图...", this, &MainWindow::onExportActiveSlamMap);
     fileMenu->addSeparator();
     fileMenu->addAction("修改版本号...", this, &MainWindow::onEditVersion);
     fileMenu->addSeparator();
@@ -934,6 +935,16 @@ void MainWindow::onRenameSlamMap(const QString& slamMapId, const QString& newNam
     refreshScenePanels();               // 刷新场景树 + 总览足迹标签
     statusLabel_->setText(QString("已重命名地图: %1 (%2)")
                               .arg(e ? e->name : nn, e ? e->id : code));
+}
+
+void MainWindow::onExportActiveSlamMap() {
+    const QString id = activeMapId();
+    if (id.isEmpty()) {
+        QMessageBox::information(this, "导出 SLAM 地图",
+            "当前没有激活的 SLAM 地图。\n请先在「SLAM地图」标签中激活/打开一张地图。");
+        return;
+    }
+    onExportSlamMap(id);
 }
 
 void MainWindow::onExportSlamMap(const QString& slamMapId) {
