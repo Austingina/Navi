@@ -955,7 +955,8 @@ void MainWindow::onExportSlamMap(const QString& slamMapId) {
         return;
     }
     auto* e = scene_.mapById(slamMapId);
-    const QString suggest = e ? (e->name.isEmpty() ? e->id : e->name) : slamMapId;
+    // 按 SLAM 地图的 code（即 id）命名导出目录 / <目录名>.json，不使用 name 字段
+    const QString suggest = e ? e->id : slamMapId;
 
     QString parentDir = QFileDialog::getExistingDirectory(
         this, QString("选择导出「%1」的目标目录（将写入 <目录名>.json 与 PCD）").arg(suggest),
