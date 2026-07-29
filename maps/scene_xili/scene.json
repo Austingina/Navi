@@ -26,7 +26,7 @@
         }
     },
     "scene": {
-        "build_no": 20260727103159,
+        "build_no": 20260729151836,
         "crs": "WGS84",
         "name": "xili",
         "origin": {
@@ -2243,7 +2243,7 @@
                 "scale": 1
             },
             "global": {
-                "build_no": 20260727103159,
+                "build_no": 20260729151836,
                 "default_route": "",
                 "default_submap": "",
                 "version": "1.0"
@@ -2260,6 +2260,63 @@
                     "map_file": "A2.pcd",
                     "name": "A2 1楼",
                     "semantic_points": {
+                    },
+                    "submap_portals": [
+                    ],
+                    "transform": {
+                        "rotation": {
+                            "w": 1,
+                            "x": 0,
+                            "y": 0,
+                            "z": 0
+                        },
+                        "translation": {
+                            "x": 0,
+                            "y": 0,
+                            "z": 0
+                        }
+                    }
+                },
+                "2416": {
+                    "description": "",
+                    "map_file": "2026-07-28_10-14-48_PointCloud_uncolorized.pcd",
+                    "name": "",
+                    "parent_submap": "1f",
+                    "semantic_points": {
+                        "door": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 1,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0
+                                },
+                                "position": {
+                                    "x": 7.146,
+                                    "y": -0.0054,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "elevator": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0.7071067811865476,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": -0.7071067811865476
+                                },
+                                "position": {
+                                    "x": 6.9862,
+                                    "y": -2.2614,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        }
                     },
                     "submap_portals": [
                     ],
