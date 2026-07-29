@@ -17,14 +17,14 @@
  *  - 错误路径返回非 0 退出码，便于脚本/systemd 判断。
  *
  * 编译（在本目录下）：
- *   make demo
+ *   make
  * 或手工：
- *   gcc -std=c99 -Wall -Wextra -I../include demo.c -L../library \
- *       -ltpservice -lpthread -lm -lssl -lcrypto -o demo
+ *   gcc -std=c99 -Wall -Wextra -I../include rtk.c -L../library \
+ *       -ltpservice -lpthread -lm -lssl -lcrypto -o rtk
  *
  * 运行前需在工作目录准备好 tpservice.conf（或用 -c 指定路径）：
- *   ./demo -d /dev/ttyUSB0   # 接真实接收机，从串口读 GGA、把 RTCM 写回去
- *   ./demo -m                # 用内置示例 GGA 验证账号与链路，不碰串口
+ *   ./rtk -d /dev/ttyUSB0   # 接真实接收机，从串口读 GGA、把 RTCM 写回去
+ *   ./rtk -m                # 用内置示例 GGA 验证账号与链路，不碰串口
  */
 
 /* _POSIX_C_SOURCE 与 SDK 其它示例一致（clock_nanosleep 等）；
@@ -233,14 +233,41 @@ static int tty_write_all(int fd, const unsigned char * buf, int len)
 }
 
 /**
+ * GGA 第 6 个字段是定位质量：0 或空表示无效解。接收机未定位时输出的是
+ * "$GNGGA,,,,,,0,,,,,,,,*78"（24 字节），能通过 SDK 的 20~200 字节长度检查，
+ * 上报后服务端拿不到位置、给不出可用改正数，只会在日志里刷失败，容易被误判
+ * 成账号或网络故障。因此这里提前挡掉。
+ */
+static int gga_has_fix(const char * line)
+{
+  const char * p = strstr(line, "GGA,");
+  if (p == NULL) {
+    return 0;
+  }
+  p += 4;   /* 落到 field 1（UTC 时间）开头 */
+  /* field 1 -> field 6 需跨过 5 个逗号 */
+  for (int field = 1; field < 6; field++) {
+    p = strchr(p, ',');
+    if (p == NULL) {
+      return 0;
+    }
+    p++;
+  }
+  return (*p >= '1' && *p <= '8');
+}
+
+/**
  * 从串口取一条完整 GGA。跨调用累积半行数据，一次调用内把缓冲里所有完整行读干，
- * 只保留最后一条 GGA（位置最新）。返回长度，超时无数据返回 0，出错返回 -1。
+ * 只保留最后一条**有效解**的 GGA（位置最新）。返回长度，超时无数据、或只收到
+ * 无定位的 GGA 时返回 0，出错返回 -1。
  */
 static int read_gga(int fd, char * out, size_t out_size, int timeout_ms)
 {
   static char acc[GGA_ACC_SIZE];
   static size_t acc_len = 0;
+  static unsigned long long last_nofix_log_ms = 0;
   int found = 0;
+  int nofix = 0;
 
   struct pollfd pfd;
   pfd.fd = fd;
@@ -280,8 +307,12 @@ static int read_gga(int fd, char * out, size_t out_size, int timeout_ms)
       memcpy(line, acc + start, copy_len);
       line[copy_len] = '\0';
       if (strstr(line, "GGA,") != NULL) {
-        memcpy(out, line, copy_len + 1);
-        found = (int)copy_len;
+        if (gga_has_fix(line)) {
+          memcpy(out, line, copy_len + 1);
+          found = (int)copy_len;
+        } else {
+          nofix = 1;
+        }
       }
     }
     start = i + 1;
@@ -293,6 +324,16 @@ static int read_gga(int fd, char * out, size_t out_size, int timeout_ms)
     acc_len -= start;
   } else if (acc_len == sizeof(acc)) {
     acc_len = 0;
+  }
+
+  /* 全是无定位的 GGA 时限频提示一次，否则这段时间完全没有输出，
+   * 看起来像程序挂了或者串口配错了。 */
+  if (found == 0 && nofix) {
+    unsigned long long now = now_ms();
+    if (now - last_nofix_log_ms >= 10000ULL) {
+      last_nofix_log_ms = now;
+      printf("[gga] 接收机尚无定位解（GGA 质量位为 0），等待其自行定位后再上报\n");
+    }
   }
   return found;
 }

@@ -3,9 +3,9 @@
 *.o
 *.d
 
-# 可执行文件（无扩展名，只能逐个列）：demo 是我们的最小示例，
+# 可执行文件（无扩展名，只能逐个列）：rtk 是我们的最小示例，
 # edge_app 是 SDK 原示例的产物（源码已删，防止旧产物残留入库）。
-Edge_SDK_*/example/demo
+Edge_SDK_*/example/rtk
 Edge_SDK_*/example/edge_app
 
 # 注意：*.a 不要忽略 —— library/libtpservice.a 是厂商静态库，需要入库。
@@ -16,5 +16,5 @@ __pycache__/
 
 # ── 凭据 ────────────────────────────────────────────────────
 # tpservice.conf 仅作模板（account=xxx）；填了真实账号密码的副本
-# 命名为 *.local.conf，用 demo -c 指定，避免误提交。
+# 命名为 *.local.conf，用 rtk -c 指定，避免误提交。
 *.local.conf
