@@ -25,24 +25,43 @@ make
 sudo make install
 ```
 
-## 4 编译安装g2o
+## 4 安装 g2o
+
+`teb_local_planner` 需要 g2o。Jazzy 的发行版里有现成的包，用它即可，不必再编
+`3rdparty/g2o`（那份源码留作 apt 不可用时的退路）：
+
 ```bash
-cd ~/Navi/ros2_ws/src/3rdparty/g2o
-mkdir build && cd build && cmake ..
-make
-sudo make install
+sudo apt install ros-jazzy-libg2o
 ```
 
 ## 5. 编译 ROS2 包
 
 包括 fastlio、cloud_to_laserscan、slope_behavior、livox_ros_driver2、grid_map_pcl(重写了grid_map_pcl) 等。
 
-先补齐 rosdep 能解析的依赖（首次编译或改过 package.xml 后执行）：
+`elevation_mapping_cupy` 的节点 `import ros2_numpy`，而这个包任何 ROS 发行版都没有
+apt 包，只能从源码拉。首次编译前执行一次：
 
 ```bash
 cd ~/Navi/ros2_ws
-rosdep install --from-paths src --ignore-src -y
+vcs import src < src/elevation_mapping_cupy/docker/src.repos
 ```
+
+再补齐 rosdep 能解析的依赖（首次编译或改过 package.xml 后执行）。`rosdep` 首次
+使用需要初始化：
+
+```bash
+sudo rosdep init          # 只需一次
+rosdep update
+
+cd ~/Navi/ros2_ws
+# cupy-cuda13x 与 simple-parsing 是 elevation_mapping_cupy 自定义的 rosdep key
+# （定义在它的 docker/extra_rosdeps.yaml 里，未注册到系统），由 pip / venv 提供。
+rosdep install --from-paths src --ignore-src -y \
+  --skip-keys "cupy-cuda13x simple-parsing"
+```
+
+> 若这台机器上装过 conda，`rosdep` 可能把系统识别成 `conda` 而报
+> `Unsupported OS [conda]`。此时加 `ROS_OS_OVERRIDE=ubuntu:noble:noble`。
 
 ### 在本机编译
 ```bash
@@ -115,12 +134,19 @@ nav2 与 grid_map 都**不要再按版本号 pin**。原先 pin 到 `1.1.20` / `
   sudo apt install ros-jazzy-navigation2 ros-jazzy-nav2-bringup ros-jazzy-nav2-dwb-controller
   ```
 - **grid_map**：只装本仓库真正依赖的子包。**不要装 `ros-jazzy-grid-map` 元包**，
-  因为它会带进 `grid-map-pcl` 与 `grid-map-filters-rsl`，而这两个在本仓库里是
-  带本地扩展的源码版（坡度层、可通行性层等），装了会造成同名包重复。
+  因为它会带进 `grid-map-pcl`，而这个在本仓库里是带本地扩展的源码版（坡度层、
+  可通行性层等），装了会造成同名包重复。
   ```bash
-  sudo apt install ros-jazzy-grid-map-core ros-jazzy-grid-map-msgs \
-                   ros-jazzy-grid-map-ros ros-jazzy-grid-map-cv \
-                   ros-jazzy-grid-map-cmake-helpers
+  sudo apt install ros-jazzy-grid-map-cmake-helpers ros-jazzy-grid-map-core \
+                   ros-jazzy-grid-map-msgs ros-jazzy-grid-map-ros \
+                   ros-jazzy-grid-map-cv ros-jazzy-grid-map-filters \
+                   ros-jazzy-grid-map-loader ros-jazzy-grid-map-octomap \
+                   ros-jazzy-grid-map-costmap-2d ros-jazzy-grid-map-sdf \
+                   ros-jazzy-grid-map-rviz-plugin ros-jazzy-grid-map-visualization
+  ```
+- **CGAL**：`convex_plane_decomposition` 需要。
+  ```bash
+  sudo apt install libcgal-dev libgmp-dev libmpfr-dev
   ```
 - **其余 ROS 依赖**统一交给 rosdep（见第 5 节）。
 

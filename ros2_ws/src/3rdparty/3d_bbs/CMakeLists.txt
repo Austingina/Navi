@@ -25,17 +25,23 @@ endif()
 option(BUILD_CUDA "Build GPU ver" ON)
 if (BUILD_CUDA)
   # Has to be set before enable_language(CUDA), which otherwise leaves nvcc on
-  # its built-in default (sm_52) -- wrong for every board this runs on.
+  # its built-in default (sm_52) -- wrong for every GPU this runs on.
   #
-  # "native" is deliberately not the default: nvcc resolves it by querying the
-  # driver and silently falls back to sm_52 when there is none, which is exactly
-  # the situation inside a build container. So Thor's arch is named explicitly.
-  # On an Orin (CUDA 12, sm_87) pass -DCMAKE_CUDA_ARCHITECTURES=87.
+  # "native" is deliberately avoided. It asks nvcc to resolve the arch off the
+  # local driver, which fails in both directions: with no driver visible (the
+  # normal state inside a build container) nvcc silently falls back to sm_52,
+  # and when the GPU is newer than the toolkit it errors out instead -- e.g. a
+  # dev box here pairs an RTX 5090 (sm_120) with CUDA 12.0, whose nvcc only
+  # knows up to compute_90.
+  #
+  # So: name real archs for the boards, plus one -virtual entry that ships PTX
+  # for anything newer to JIT from. On an Orin pass
+  # -DCMAKE_CUDA_ARCHITECTURES=87.
   if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
       set(CMAKE_CUDA_ARCHITECTURES 110)  # Jetson Thor, Blackwell
     else()
-      set(CMAKE_CUDA_ARCHITECTURES native)  # x86 dev boxes, GPU varies
+      set(CMAKE_CUDA_ARCHITECTURES 75-real 86-real 90-virtual)  # x86 dev boxes
     endif()
   endif()
   message(STATUS "CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")

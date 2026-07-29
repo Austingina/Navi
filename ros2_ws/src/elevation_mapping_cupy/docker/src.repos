@@ -3,13 +3,20 @@ repositories:
   #   type: git
   #   url: https://github.com/jwag/elevation_mapping_cupy.git
   #   version: ros2_humble
-  # ros2_numpy needed by elevation_mapping_cupy
+  # ros2_numpy needed by elevation_mapping_cupy (elevation_mapping_node.py
+  # imports it as rnp). Not released to apt for any distro, so it has to be
+  # built from source; deployment/navi_build.sh imports this file.
   ros2_numpy:
     type: git
     url: https://github.com/Box-Robotics/ros2_numpy.git
-    version: humble
+    version: jazzy
   # added for testing elevation_mapping_cupy
-  turtlebot3_simulations:
-    type: git
-    url: https://github.com/jwag/turtlebot3_simulations.git
-    version: humble_realsense_depth
+  #
+  # Left out on Jazzy: this is a fork whose only branch is humble-based, and it
+  # pairs with the Gazebo Classic packages that were dropped from
+  # elevation_mapping_cupy's manifest. Nothing outside the turtlesim demo used
+  # it.
+  # turtlebot3_simulations:
+  #   type: git
+  #   url: https://github.com/jwag/turtlebot3_simulations.git
+  #   version: humble_realsense_depth

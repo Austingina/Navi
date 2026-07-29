@@ -6,14 +6,16 @@ cmake_minimum_required(VERSION 3.24)
 project(MapEditor VERSION 1.0.0 LANGUAGES CXX)
 
 # Without this, enabling the CUDA language leaves nvcc on its built-in default
-# (sm_52). "native" is not used on the boards because nvcc resolves it against
-# the driver and silently falls back to that default when there is none, e.g. in
-# a build container. On an Orin pass -DCMAKE_CUDA_ARCHITECTURES=87.
+# (sm_52). "native" is not used because nvcc resolves it off the local driver,
+# which silently falls back to that default when no driver is visible and errors
+# out when the GPU is newer than the toolkit. See the same block in
+# ros2_ws/src/3rdparty/3d_bbs/CMakeLists.txt. On an Orin pass
+# -DCMAKE_CUDA_ARCHITECTURES=87.
 if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
   if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
     set(CMAKE_CUDA_ARCHITECTURES 110)  # Jetson Thor, Blackwell
   else()
-    set(CMAKE_CUDA_ARCHITECTURES native)  # x86 dev boxes, GPU varies
+    set(CMAKE_CUDA_ARCHITECTURES 75-real 86-real 90-virtual)  # x86 dev boxes
   endif()
 endif()
 message(STATUS "CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")

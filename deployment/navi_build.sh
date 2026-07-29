@@ -90,9 +90,23 @@ else
   echo "[navi_build] WARNING: /opt/ros/${NAVI_ROS_DISTRO}/setup.bash not found. Make sure ROS 2 ${NAVI_ROS_DISTRO} is installed and sourced."
 fi
 
+echo "[navi_build] Importing source-only dependencies (ros2_numpy)"
+# ros2_numpy is imported by elevation_mapping_cupy's node but is not released to
+# apt on any distro, so it has to come from git. The manifest lives with
+# elevation_mapping_cupy because that is the only consumer.
+if [[ ! -d src/ros2_numpy ]]; then
+  vcs import src < src/elevation_mapping_cupy/docker/src.repos
+else
+  echo "[navi_build] src/ros2_numpy already present, skipping import."
+fi
+
 echo "[navi_build] Resolving ROS dependencies with rosdep"
 set +u
-rosdep install --from-paths src --ignore-src -y
+# cupy-cuda13x and simple-parsing are local keys from
+# elevation_mapping_cupy/docker/extra_rosdeps.yaml, which is not registered with
+# rosdep here; both come from the requirements files / venv instead.
+rosdep install --from-paths src --ignore-src -y \
+  --skip-keys "cupy-cuda13x simple-parsing"
 set -u
 
 colcon build \

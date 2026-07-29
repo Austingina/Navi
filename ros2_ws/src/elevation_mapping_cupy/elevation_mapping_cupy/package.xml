@@ -35,10 +35,15 @@
     <!-- <depend>gazebo_ros</depend> -->
     <depend>robot_state_publisher</depend>
     <depend>python3-opencv</depend>
-    <!-- CUDA 13 on JetPack 7 / Thor. Installed by hand, not via rosdep. -->
+    <!-- These two are not upstream rosdep keys; they are defined locally in
+         docker/extra_rosdeps.yaml and resolve to pip. Unless that file has been
+         registered under /etc/ros/rosdep/sources.list.d, rosdep cannot see them,
+         so deployment/navi_build.sh puts them in its rosdep skip list and they
+         get installed from the requirements files instead. cupy has to match the
+         CUDA major version: 13 on JetPack 7 / Thor. -->
     <depend>cupy-cuda13x</depend>
-    <depend>rosbag2_py</depend>
     <depend>simple-parsing</depend>
+    <depend>rosbag2_py</depend>
     <depend>python3-shapely</depend>
     <depend>python3-ruamel.yaml</depend>
     <depend>python3-transforms3d</depend>
