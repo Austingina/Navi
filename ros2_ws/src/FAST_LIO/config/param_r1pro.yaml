@@ -138,6 +138,7 @@ controller_server:
       stateful: True # 是否有状态
       critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "HeadingAlign", "PathDist", "GoalDist"] # 评价器插件列表
       BaseObstacle.scale: 0.02 # 障碍物评价器权重
+      HeadingAlign.class: heading_align_critic::HeadingAlignCritic # 由 heading_align_critic 包提供，不在 dwb_critics 默认命名空间下
       HeadingAlign.scale: 32.0 # 航向对齐评价器权重
       HeadingAlign.forward_point_distance: 0.5 # 航向对齐前向
       GoalAlign.scale: 24.0 # 目标对齐评价器权重
@@ -428,7 +429,9 @@ local_costmap:
         cost_scaling_factor: 3.0                   #成本缩放因子，决定障碍物成本随距离的递减速度。
         inflation_radius: 0.7                     #膨胀半径
       obstacle_layer:
-        plugin: "nav2_costmap_2d::ObstacleLayer"
+        # 上游 ObstacleLayer 的派生版本，多一个 /observation_pcd 调试发布开关
+        # (pub_lidar_observation)；由 terrain_costmap_layer 包提供。
+        plugin: "terrain_costmap_layer::ObservationPublishingObstacleLayer"
         enabled: True
         observation_sources: lidar_scan 
         footprint_clearing_enabled: True

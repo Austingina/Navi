@@ -10,6 +10,7 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_lifecycle REQUIRED)
 find_package(nav2_costmap_2d REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(sensor_msgs REQUIRED)
@@ -20,6 +21,7 @@ find_package(tf2_sensor_msgs REQUIRED)
 
 set(dependencies
   rclcpp
+  rclcpp_lifecycle
   nav2_costmap_2d
   pluginlib
   sensor_msgs
@@ -31,6 +33,7 @@ set(dependencies
 
 add_library(terrain_costmap_layer SHARED
   src/terrain_layer.cpp
+  src/observation_publishing_obstacle_layer.cpp
 )
 target_include_directories(terrain_costmap_layer PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"

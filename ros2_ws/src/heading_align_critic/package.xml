@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>heading_align_critic</name>
+  <version>0.1.0</version>
+  <description>
+    DWB trajectory critic that penalizes trajectories whose end heading differs
+    from the global path direction, and penalizes fast linear motion while
+    turning. Useful for omnidirectional bases that should not drive sideways or
+    backwards along a route.
+
+    Shipped as a standalone package so the stack can depend on the upstream
+    (binary) dwb_critics instead of vendoring a patched copy of it.
+  </description>
+  <maintainer email="dev@navi.local">navi</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>angles</depend>
+  <depend>dwb_core</depend>
+  <depend>dwb_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav2_costmap_2d</depend>
+  <depend>nav_2d_msgs</depend>
+  <depend>nav_2d_utils</depend>
+  <depend>pluginlib</depend>
+  <depend>rclcpp</depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

@@ -1,0 +1,10 @@
+<class_libraries>
+  <library path="heading_align_critic">
+    <class type="heading_align_critic::HeadingAlignCritic" base_class_type="dwb_core::TrajectoryCritic">
+      <description>
+        Penalizes trajectories whose end heading differs from the global path
+        direction, and penalizes fast linear motion while turning.
+      </description>
+    </class>
+  </library>
+</class_libraries>

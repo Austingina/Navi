@@ -7,5 +7,13 @@
         accumulates over the rolling window so it persists as the robot moves.
       </description>
     </class>
+    <class type="terrain_costmap_layer::ObservationPublishingObstacleLayer"
+           base_class_type="nav2_costmap_2d::Layer">
+      <description>
+        Upstream nav2 ObstacleLayer plus an optional debug publisher that
+        republishes the marking observations it consumes as a merged cloud on
+        /observation_pcd. Enable with pub_lidar_observation: true.
+      </description>
+    </class>
   </library>
 </class_libraries>

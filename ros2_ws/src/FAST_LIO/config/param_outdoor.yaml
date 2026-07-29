@@ -129,6 +129,7 @@ controller_server:
       stateful: True
       critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "HeadingAlign", "PathDist", "GoalDist"]
       BaseObstacle.scale: 10.0
+      HeadingAlign.class: heading_align_critic::HeadingAlignCritic
       HeadingAlign.scale: 32.0
       HeadingAlign.forward_point_distance: 0.5
       GoalAlign.scale: 24.0
