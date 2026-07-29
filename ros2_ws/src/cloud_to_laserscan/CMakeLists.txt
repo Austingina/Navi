@@ -17,6 +17,7 @@ find_package(nav_msgs REQUIRED)
 find_package(grid_map_msgs REQUIRED)
 find_package(grid_map_ros REQUIRED)
 find_package(tf2_ros REQUIRED)
+find_package(tf2_sensor_msgs REQUIRED)
 find_package(pcl_conversions REQUIRED)
 find_package(PCL REQUIRED)
 
@@ -34,6 +35,7 @@ ament_target_dependencies(cloud_to_2d_laserscan
   grid_map_msgs
   grid_map_ros
   tf2_ros
+  tf2_sensor_msgs
   pcl_conversions
 )
 
@@ -48,6 +50,7 @@ ament_target_dependencies(terrain_scan
   grid_map_msgs
   grid_map_ros
   tf2_ros
+  tf2_sensor_msgs
   pcl_conversions
 )
 
