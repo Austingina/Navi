@@ -81,8 +81,6 @@ tmux attach -t navi     # 进入，Ctrl+b 再按数字/方向键切 pane
 # Ctrl+b d 脱离（服务继续在后台运行）
 ```
 
-> `-c` 选项：`bash scripts/start_navi.sh -c` 会改用 `navi.caihong.yaml`（另一套机器/地图配置）。
-
 **停止全部服务：**
 
 ```bash

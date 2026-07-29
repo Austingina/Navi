@@ -1897,6 +1897,49 @@ class NavigationToolManager:
             logging.error(f"清理资源失败: {e}")
 
 # 异步主函数
+def _launch_nav_stack(args, map_manager) -> None:
+    """
+    依据 -s/--submap 决定导航模式并拉起对应导航栈（仅负责"首次拉起"）：
+
+      * 指定 -s slam_map_id/submap_id → SLAM 室内栈：
+        解析该 submap 的 pcd 路径后 ``start_slam.sh -m <pcd>``；
+      * 未指定 -s → 室外 GPS 栈：``start_outdoor.sh``。
+
+    仿真时钟：读环境变量 ``$NAVI_SIM_ARG``，非空则给启动脚本追加 ``-s``（--simulated）。
+    server.py 运行在 tmux pane 内，子进程需 unset ``$TMUX`` 才能让脚本里的 tmuxp 正常新建会话。
+    """
+    import subprocess
+    scripts_dir = _REPO_ROOT / "scripts"
+    child_env = os.environ.copy()
+    # 去掉 TMUX，避免脚本里的 tmuxp 因"嵌套在当前会话内"而拒绝新建会话。
+    child_env.pop('TMUX', None)
+    child_env.pop('TMUX_PANE', None)
+    sim = child_env.get('NAVI_SIM_ARG', '').strip()
+    sim_args = ['-s'] if sim else []
+
+    if args.submap:
+        slam_map_id, submap_id = args.submap.split('/', 1)
+        if map_manager is None:
+            logging.error("指定了 -s %s 但地图未加载成功，无法拉起 SLAM 栈", args.submap)
+            return
+        pcd = map_manager.get_submap_full_map_path(submap_id, slam_map_id)
+        if not pcd:
+            logging.error("无法解析 slam_map/submap %s/%s 的 pcd 路径，跳过拉起 SLAM 栈",
+                          slam_map_id, submap_id)
+            return
+        cmd = ['bash', str(scripts_dir / 'start_slam.sh'), '-m', pcd] + sim_args
+        logging.warning("导航模式=SLAM，拉起: %s", ' '.join(cmd))
+    else:
+        cmd = ['bash', str(scripts_dir / 'start_outdoor.sh')] + sim_args
+        logging.warning("导航模式=室外GPS，拉起: %s", ' '.join(cmd))
+
+    try:
+        # 启动脚本内部用 ``tmuxp load -d`` 建会话后即返回，这里非阻塞拉起即可。
+        subprocess.Popen(cmd, env=child_env)
+    except Exception as e:
+        logging.error("拉起导航栈失败: %s", e)
+
+
 async def main():
     """
     异步主函数
@@ -1914,7 +1957,10 @@ async def main():
                              '（首次启动会下载到 <repo>/maps/<map_id>/，之后做增量同步；'
                              '网络失败但本地有缓存时降级到本地）')
     parser.add_argument('-s', '--submap', type=str, default=None,
-                        help='初始 submap ID；省略则使用 VPR 自动识别，VPR 不可用时回退到 default_submap')
+                        help='初始定位目标，格式严格为 slam_map_id/submap_id（例如 caihong/2f；'
+                             '单文件地图的 slam_map_id 为 default，如 default/2f）。'
+                             '给出 -s 即进入 SLAM 室内模式：server.py 会解析该 submap 的 pcd 并'
+                             '拉起 start_slam.sh -m <pcd>；不给 -s 则进入室外 GPS 模式，拉起 start_outdoor.sh')
     parser.add_argument('--image_topic', type=str, default=None,
                         help='VPR 引导/重定位使用的相机 CompressedImage 话题；'
                              '省略则使用 NavNode 默认 '
@@ -1945,6 +1991,10 @@ async def main():
                         help='(已废弃，等价于 --viz_mode serve) 不 spawn viewer，仅起 TCP server')
     args = parser.parse_args()
 
+    # -s 严格要求 slam_map_id/submap_id 形式（区分"哪张 SLAM 地图的哪个 submap"）。
+    if args.submap is not None and '/' not in args.submap:
+        parser.error("-s/--submap 需为 slam_map_id/submap_id 格式（例如 caihong/2f 或 default/2f）")
+
     # 兼容旧参数
     if args.viz_no_spawn and args.viz_mode == 'spawn':
         args.viz_mode = 'serve'
@@ -1963,12 +2013,20 @@ async def main():
             map_manager = MapManager(str(map_json_path))
             logging.info(f"已加载多楼层地图: {map_json_path}  (来源: {args.map})")
             if args.submap:
-                if map_manager.set_current_submap(args.submap):
-                    logging.info(f"已指定初始 submap: {args.submap}")
+                # 已在 parse 阶段校验含 '/'；先切 slam_map（会把 submap 复位到该图默认），
+                # 再切到目标 submap。
+                slam_map_id, submap_id = args.submap.split('/', 1)
+                if not map_manager.set_current_slam_map(slam_map_id):
+                    logging.error(f"指定的 slam_map '{slam_map_id}' 不存在，可用: {map_manager.get_slam_map_list()}")
+                elif not map_manager.set_current_submap(submap_id):
+                    logging.error(f"指定的 submap '{submap_id}' 不存在，可用: {map_manager.get_submap_list(slam_map_id)}")
                 else:
-                    logging.error(f"指定的 submap '{args.submap}' 不存在，可用: {map_manager.get_submap_list()}")
+                    logging.info(f"已指定初始 slam_map/submap: {slam_map_id}/{submap_id}")
         except Exception as e:
             logging.error(f"加载地图配置失败: {e}")
+
+    # 依据 -s 决定导航模式并拉起对应导航栈（"首次拉起"统一由 server.py 负责）。
+    _launch_nav_stack(args, map_manager)
 
     mgr = None
     viz = None

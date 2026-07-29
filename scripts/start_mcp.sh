@@ -10,7 +10,12 @@ cd $NAVI_ROOT_DIR/NaviSkill
 #                                   * mapserver URL，如 http://10.239.18.181:8080/mapserver/408
 #                                     （首次会下载到 $NAVI_ROOT_DIR/maps/<id>/，之后增量同步；
 #                                     网络失败但本地已有缓存时自动降级使用本地版本）
-#   -s, --submap <id>             初始 submap ID
+#   -s, --submap <slam_map_id/submap_id>
+#                                 初始定位目标，严格 slam_map_id/submap_id 形式（如 caihong/2f、
+#                                 单文件地图用 default/2f）。给出 -s 即进入 SLAM 室内模式：server.py
+#                                 解析该 submap 的 pcd 并自动调起 start_slam.sh -m <pcd>；
+#                                 不给 -s 则进入室外 GPS 模式，自动调起 start_outdoor.sh。
+#                                 （仿真时钟经 $NAVI_SIM_ARG 透传给被调起的启动脚本）
 #       --image_topic <topic>     VPR 使用的 CompressedImage 话题
 #       --vpr_device <cuda|cpu>   VPR 子进程使用的设备
 #

@@ -15,6 +15,10 @@ windows:
       - shell_command:
           - sleep 0
           - '[ -n "$NAVI_SIM_ARG" ] && echo "[sim] 使用仿真环境已有的雷达信号，跳过 start_lidar" || bash $NAVI_SCRIPT_DIR/start_lidar.bash'
+      # start_mcp.sh 拉起 server.py，由它依据 -s 决定并"首次拉起"导航栈：
+      #   * 不带 -s              → 室外 GPS 模式（自动调起 start_outdoor.sh）；scene_xili 为室外场景，故默认如此。
+      #   * -s slam_map_id/submap_id → SLAM 室内模式（server.py 解析 pcd 后自动调起 start_slam.sh -m <pcd>）。
+      #     例：... start_mcp.sh -m <map> -s caihong/2f
       - shell_command:
           - sleep 10
           - bash $NAVI_SCRIPT_DIR/start_mcp.sh -m http://10.229.18.83:8080/mapserver/scene_xili
