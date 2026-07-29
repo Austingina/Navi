@@ -26,7 +26,7 @@ for arg in "$@"; do
             ;;
     esac
 done
-
+echo "NAVI_SIM_ARG: $NAVI_SIM_ARG"
 LOG_DIR="$NAVI_ROOT_DIR/logs"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/outdoor_$(date +%Y%m%d_%H%M%S).log"

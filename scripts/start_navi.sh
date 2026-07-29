@@ -21,6 +21,11 @@ done
 tmux kill-session -t navi 2>/dev/null
 
 # 将关键环境变量注入 tmux 全局环境，确保所有 pane 都能继承（yaml 里用 $NAVI_SCRIPT_DIR）。
+# 注意：set-environment -g 需要 tmux server 已在运行，否则静默失败。此处 server 常还
+# 不存在，真正让变量进入 pane 的是：tmuxp load 拉起 server 时会继承本进程已 export 的
+# 变量。NAVI_SCRIPT_DIR/NAVI_ROOT_DIR 由 common.sh export，故必须同样 export
+# NAVI_SIM_ARG，否则它只靠(失败的)set-environment，在 pane 里会是空的。
+export NAVI_SIM_ARG="$SIM_ARG"
 tmux set-environment -g NAVI_SCRIPT_DIR "$NAVI_SCRIPT_DIR"
 tmux set-environment -g NAVI_ROOT_DIR "$NAVI_ROOT_DIR"
 tmux set-environment -g NAVI_SIM_ARG "$SIM_ARG"
