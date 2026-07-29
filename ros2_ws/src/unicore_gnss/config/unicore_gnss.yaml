@@ -1,0 +1,20 @@
+unicore_gnss:
+  ros__parameters:
+    port: "/dev/ttyUSB0"
+    baudrate: 115200
+    frame_id: "gps"
+    fix_topic: "/gps/fix"
+    vel_topic: "/gps/vel"
+    raw_topic: "/unicore/bestnava"
+    info_topic: "/unicore/bestnava_info"
+    check_crc: true
+    reconnect_period_s: 2.0
+    read_timeout_s: 0.2
+    # 和芯手册 abbreviated ASCII：
+    #   BESTNAVA 1  —— §7.3.26，当前端口 1Hz 输出
+    #   UNLOG       —— §8.1，停掉当前端口全部输出（可选）
+    # 空列表 = 启动时不发任何配置（你已手动开过输出时用这个）
+    config_commands:
+      - "UNLOG"
+      - "BESTNAVA 0.1"
+    config_command_delay_s: 0.1

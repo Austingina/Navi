@@ -1,0 +1,1 @@
+3f506bab16b74a85ee75a1a5f39da89e  ./release/library/libtpservice.a
