@@ -36,7 +36,7 @@ from campus_nav.route_graph import (
 )
 
 # visualization_msgs is optional: only needed for the vector MarkerArray map.
-# Install with: sudo apt-get install -y ros-humble-visualization-msgs
+# Install with: sudo apt-get install -y ros-jazzy-visualization-msgs
 try:
     from geometry_msgs.msg import Point
     from std_msgs.msg import ColorRGBA
@@ -667,7 +667,7 @@ class RoutePlanner(Node):
             if not HAVE_MARKERS:
                 self.get_logger().warn(
                     "publish_network=True but visualization_msgs missing; "
-                    "install ros-humble-visualization-msgs to see the vector map."
+                    "install ros-jazzy-visualization-msgs to see the vector map."
                 )
                 return
             self.net_pub = self.create_publisher(

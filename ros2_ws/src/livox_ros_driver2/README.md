@@ -70,8 +70,8 @@ source /opt/ros/foxy/setup.sh
 
 #### For ROS2 Humble:
 ```shell
-source /opt/ros/humble/setup.sh
-./build.sh humble
+source /opt/ros/jazzy/setup.sh
+./build.sh ROS2
 ```
 
 ### 2.4 Run Livox ROS Driver 2:

@@ -43,7 +43,7 @@ fi
 cd "${NAVI_WORKSPACE_DIR}"
 
 echo "[navi_build] Step 2: build & install 3D BBS"
-cd "${NAVI_WORKSPACE_DIR:?}/ros2_ws/src/3d_bbs"
+cd "${NAVI_WORKSPACE_DIR:?}/ros2_ws/src/3rdparty/3d_bbs"
 mkdir -p build
 cd build
 cmake ..
@@ -56,10 +56,10 @@ else
   echo "[navi_build] Skipping 'make install' for 3D BBS because NAVI_SKIP_INSTALL=1"
 fi
 
-echo "[navi_build] Step 3: init & build Livox-SDK2"
-cd "${NAVI_WORKSPACE_DIR}/ros2_ws/src"
-git submodule update --init --recursive
-cd Livox-SDK2
+echo "[navi_build] Step 3: build Livox-SDK2"
+# Vendored in-tree under 3rdparty/; the old ros2_ws/src/Livox-SDK2 submodule
+# path no longer exists.
+cd "${NAVI_WORKSPACE_DIR}/ros2_ws/src/3rdparty/Livox-SDK2"
 mkdir -p build
 cd build
 cmake ..
@@ -75,21 +75,28 @@ fi
 echo "[navi_build] Step 4: colcon build (编译机, no --symlink-install)"
 cd "${NAVI_WORKSPACE_DIR}/ros2_ws"
 
-if [[ -f /opt/ros/humble/setup.bash ]]; then
+NAVI_ROS_DISTRO="${NAVI_ROS_DISTRO:-jazzy}"
+
+if [[ -f "/opt/ros/${NAVI_ROS_DISTRO}/setup.bash" ]]; then
   # Load ROS 2 environment if available.
-  # 注意：/opt/ros/humble/setup.bash 里会访问一些可能未定义的环境变量
+  # 注意：/opt/ros/<distro>/setup.bash 里会访问一些可能未定义的环境变量
   #（例如 AMENT_TRACE_SETUP_FILES），在 set -u 下会报“unbound variable”，
   #所以这里临时关闭 -u，再恢复。
   set +u
   # shellcheck disable=SC1091
-  source /opt/ros/humble/setup.bash
+  source "/opt/ros/${NAVI_ROS_DISTRO}/setup.bash"
   set -u
 else
-  echo "[navi_build] WARNING: /opt/ros/humble/setup.bash not found. Make sure ROS 2 Humble is installed and sourced."
+  echo "[navi_build] WARNING: /opt/ros/${NAVI_ROS_DISTRO}/setup.bash not found. Make sure ROS 2 ${NAVI_ROS_DISTRO} is installed and sourced."
 fi
 
+echo "[navi_build] Resolving ROS dependencies with rosdep"
+set +u
+rosdep install --from-paths src --ignore-src -y
+set -u
+
 colcon build \
-  --cmake-args -DROS_EDITION=ROS2 -DHUMBLE_ROS=humble -DCMAKE_MESSAGE_LOG_LEVEL=VERBOSE \
+  --cmake-args -DROS_EDITION=ROS2 -DCMAKE_MESSAGE_LOG_LEVEL=VERBOSE \
   --event-handlers console_direct+
 
 echo "[navi_build] Build finished."

@@ -3,7 +3,7 @@
 set -e
 
 # Ros build
-source "/opt/ros/humble/setup.bash"
+source "/opt/ros/${ROS_DISTRO:-jazzy}/setup.bash"
 
 echo "==============FAST-LIO ROS2 Docker Env Ready================"
 

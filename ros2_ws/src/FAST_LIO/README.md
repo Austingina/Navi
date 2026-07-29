@@ -67,7 +67,7 @@
 
 The **default from apt** PCL and Eigen is enough for FAST-LIO to work normally.
 
-ROS >= Foxy (Recommend to use ROS-Humble). [ROS Installation](https://docs.ros.org/en/humble/Installation.html)
+ROS >= Humble (Recommend to use ROS-Jazzy). [ROS Installation](https://docs.ros.org/en/jazzy/Installation.html)
 
 ### 1.2. **PCL && Eigen**
 PCL    >= 1.8,   Follow [PCL Installation](https://pointclouds.org/downloads/#linux).
