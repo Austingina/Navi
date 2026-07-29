@@ -1,7 +1,7 @@
 #!/bin/bash
 # 一键切换导航模式（tmux 会话 + 软状态一体）。
 #
-# 切换以 tmux 会话为单位：slam 会话（navi.yaml）↔ outdoor 会话（navi.outdoor.yaml）
+# 切换以 tmux 会话为单位：slam 会话（navi.slam.yaml）↔ outdoor 会话（navi.outdoor.yaml）
 # 互斥切换，session=navi（雷达 + NaviSkill）常驻不动。本脚本在会话切换之外，额外
 # 先给 NaviSkill 打一个 set_nav_mode（干净交接：停车、取消旧目标、复位定位判据），
 # 切完再轮询 get_status().localized 等目标栈定位就绪。

@@ -17,4 +17,4 @@ windows:
           - '[ -n "$NAVI_SIM_ARG" ] && echo "[sim] 使用仿真环境已有的雷达信号，跳过 start_lidar" || bash $NAVI_SCRIPT_DIR/start_lidar.bash'
       - shell_command:
           - sleep 10
-          - bash $NAVI_SCRIPT_DIR/start_mcp.sh -m http://10.239.18.181:8080/mapserver/scene_xili
+          - bash $NAVI_SCRIPT_DIR/start_mcp.sh -m http://10.229.18.83:8080/mapserver/scene_xili
