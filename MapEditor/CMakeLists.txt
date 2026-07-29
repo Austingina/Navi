@@ -1,5 +1,23 @@
-cmake_minimum_required(VERSION 3.18)
-project(MapEditor VERSION 1.0.0 LANGUAGES CXX CUDA)
+# 3.24 for CMAKE_CUDA_ARCHITECTURES=native. Ubuntu 24.04 ships 3.28.
+cmake_minimum_required(VERSION 3.24)
+
+# CUDA is enabled below rather than here, because the architecture has to be
+# chosen from CMAKE_SYSTEM_PROCESSOR, which project() is what defines.
+project(MapEditor VERSION 1.0.0 LANGUAGES CXX)
+
+# Without this, enabling the CUDA language leaves nvcc on its built-in default
+# (sm_52). "native" is not used on the boards because nvcc resolves it against
+# the driver and silently falls back to that default when there is none, e.g. in
+# a build container. On an Orin pass -DCMAKE_CUDA_ARCHITECTURES=87.
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+    set(CMAKE_CUDA_ARCHITECTURES 110)  # Jetson Thor, Blackwell
+  else()
+    set(CMAKE_CUDA_ARCHITECTURES native)  # x86 dev boxes, GPU varies
+  endif()
+endif()
+message(STATUS "CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
+enable_language(CUDA)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

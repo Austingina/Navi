@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.18)
 project(ros2_test_rviz2)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_LIST_DIR}/cmake")
@@ -11,9 +11,8 @@ find_package(ament_cmake_auto REQUIRED)
 ament_auto_find_build_dependencies()
 
 if (BUILD_CUDA)
-  find_package(CUDA REQUIRED)
-  include_directories(${CUDA_INCLUDE_DIRS})
-  link_directories(${CUDA_LIBRARY_DIRS})
+  # Only the gpu_bbs3d headers are consumed, no .cu is compiled here.
+  find_package(CUDAToolkit REQUIRED)
 endif()
 
 # CUDA
@@ -34,6 +33,7 @@ if(BUILD_CUDA)
     yaml-cpp
     ${gpu_bbs3d_LIBRARY}
     ${Iridescence_LIBRARIES}
+    CUDA::cudart
   )
 
   if(BUILD_TESTING)

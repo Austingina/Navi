@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.18)
 project(test)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_LIST_DIR}/cmake")
@@ -15,9 +15,9 @@ endif()
 
 if (BUILD_CUDA)
   find_package(gpu_bbs3d REQUIRED)
-  find_package(CUDA REQUIRED)
-  include_directories(${CUDA_INCLUDE_DIRS})
-  link_directories(${CUDA_LIBRARY_DIRS})
+  # No .cu here, only the gpu_bbs3d headers, so the toolkit include/link dirs
+  # are all that is needed -- no enable_language(CUDA).
+  find_package(CUDAToolkit REQUIRED)
 endif()
 
 
@@ -64,5 +64,6 @@ if(BUILD_CUDA)
   target_link_libraries(gpu_test
     ${COMMON_LIBRARIES}
     ${gpu_bbs3d_LIBRARY}
+    CUDA::cudart
   )
 endif()

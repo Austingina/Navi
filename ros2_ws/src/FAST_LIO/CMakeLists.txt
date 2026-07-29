@@ -85,10 +85,11 @@ find_package(Eigen3 REQUIRED)
 find_package(PCL REQUIRED COMPONENTS common io)
 #find_package(teaserpp REQUIRED)
 find_package(gpu_bbs3d REQUIRED)
-find_package(CUDA REQUIRED)
-include_directories(${CUDA_INCLUDE_DIRS})
+# FindCUDA was removed in CMake 4. Nothing here is a .cu -- gpu_bbs3d's headers
+# just pull in the CUDA runtime API -- so CUDA::cudart alone is enough and there
+# is no CUDA language to enable.
+find_package(CUDAToolkit REQUIRED)
 include_directories(${gpu_bbs3d_INCLUDE_DIRS})
-link_directories(${CUDA_LIBRARY_DIRS})
 
 message(Eigen: ${EIGEN3_INCLUDE_DIR})
 message(STATUS "PCL: ${PCL_INCLUDE_DIRS}")
@@ -117,7 +118,7 @@ target_include_directories(fastlio_odometry PUBLIC
   $<INSTALL_INTERFACE:include>
   ${PCL_INCLUDE_DIRS}
 )
-target_link_libraries(fastlio_odometry ${PCL_LIBRARIES} Python3::Python Eigen3::Eigen ${gpu_bbs3d_LIBRARY})
+target_link_libraries(fastlio_odometry ${PCL_LIBRARIES} Python3::Python Eigen3::Eigen ${gpu_bbs3d_LIBRARY} CUDA::cudart)
 #teaserpp::teaser_registration teaserpp::teaser_features teaserpp::teaser_io)
 
 # Lightweight standalone EKF node (chassis dead-reckoning + LIO fusion) — runs

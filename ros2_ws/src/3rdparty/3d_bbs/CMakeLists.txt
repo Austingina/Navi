@@ -1,4 +1,6 @@
-cmake_minimum_required(VERSION 3.5)
+# 3.24 for CMAKE_CUDA_ARCHITECTURES=native, used below in place of the removed
+# FindCUDA/cuda_add_library pair. Ubuntu 24.04 ships 3.28.
+cmake_minimum_required(VERSION 3.24)
 project(bbs3d)
 
 ## find thirdparty/Eigen or Eigen3 package
@@ -22,9 +24,23 @@ endif()
 ## find CUDA
 option(BUILD_CUDA "Build GPU ver" ON)
 if (BUILD_CUDA)
-  find_package(CUDA REQUIRED)
-  include_directories(${CUDA_INCLUDE_DIRS})
-  link_directories(${CUDA_LIBRARY_DIRS})
+  # Has to be set before enable_language(CUDA), which otherwise leaves nvcc on
+  # its built-in default (sm_52) -- wrong for every board this runs on.
+  #
+  # "native" is deliberately not the default: nvcc resolves it by querying the
+  # driver and silently falls back to sm_52 when there is none, which is exactly
+  # the situation inside a build container. So Thor's arch is named explicitly.
+  # On an Orin (CUDA 12, sm_87) pass -DCMAKE_CUDA_ARCHITECTURES=87.
+  if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+      set(CMAKE_CUDA_ARCHITECTURES 110)  # Jetson Thor, Blackwell
+    else()
+      set(CMAKE_CUDA_ARCHITECTURES native)  # x86 dev boxes, GPU varies
+    endif()
+  endif()
+  message(STATUS "CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
+  enable_language(CUDA)
+  find_package(CUDAToolkit REQUIRED)
 endif()
 
 # Common include directories
@@ -52,14 +68,19 @@ add_library(cpu_bbs3d
 install(TARGETS cpu_bbs3d DESTINATION lib)
 
 if(BUILD_CUDA)
-  cuda_add_library(gpu_bbs3d
-    SHARED 
+  add_library(gpu_bbs3d
+    SHARED
     bbs3d/src/gpu_bbs3d/bbs3d.cu
     bbs3d/src/gpu_bbs3d/calc_score.cu
     bbs3d/src/gpu_bbs3d/voxelmaps.cu
     bbs3d/src/gpu_bbs3d/stream_manager/check_error.cu
     bbs3d/src/gpu_bbs3d/voxelmaps_io.cu
   )
+
+  # nvcc's default standard has moved over releases (CUDA 13 no longer accepts
+  # anything below 17); pin it so the Eigen headers see the same one everywhere.
+  set_target_properties(gpu_bbs3d PROPERTIES CUDA_STANDARD 17 CUDA_STANDARD_REQUIRED ON)
+  target_link_libraries(gpu_bbs3d PUBLIC CUDA::cudart)
 
   install(TARGETS gpu_bbs3d DESTINATION lib)
 endif()
