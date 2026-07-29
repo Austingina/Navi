@@ -148,10 +148,10 @@ IsSlopeAhead 检测前方坡度
 
 ## 依赖
 
-- ROS2 Humble
+- ROS2 Jazzy
 - nav2_core
 - nav2_util
-- behaviortree_cpp_v3
+- behaviortree_cpp
 - grid_map_ros
 - grid_map_msgs
 - sensor_msgs

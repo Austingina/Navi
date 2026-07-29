@@ -1,5 +1,5 @@
 #pragma once
-#include "behaviortree_cpp_v3/condition_node.h"
+#include "behaviortree_cpp/condition_node.h"
 #include <any>
 
 namespace slope_behavior

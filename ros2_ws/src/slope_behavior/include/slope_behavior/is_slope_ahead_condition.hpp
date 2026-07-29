@@ -6,7 +6,7 @@
 #include <mutex>
 
 #include "rclcpp/rclcpp.hpp"
-#include "behaviortree_cpp_v3/condition_node.h"
+#include "behaviortree_cpp/condition_node.h"
 #include "nav_msgs/msg/path.hpp"
 #include "grid_map_msgs/msg/grid_map.hpp"
 #include "grid_map_ros/grid_map_ros.hpp"

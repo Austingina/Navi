@@ -9,7 +9,7 @@
  * 确保符号正确导出供 BehaviorTree.CPP 动态加载。
  */
 
-#include "behaviortree_cpp_v3/bt_factory.h"
+#include "behaviortree_cpp/bt_factory.h"
 #include "slope_behavior/is_slope_ahead_condition.hpp"
 #include "slope_behavior/is_gravity_lowered_condition.hpp"
 #include "slope_behavior/gravity_control_action.hpp"

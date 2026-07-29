@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "rclcpp/rclcpp.hpp"
-#include "behaviortree_cpp_v3/action_node.h"
+#include "behaviortree_cpp/action_node.h"
 #include "sensor_msgs/msg/joint_state.hpp"
 #include "geometry_msgs/msg/twist_stamped.hpp"
 #include "std_msgs/msg/bool.hpp"

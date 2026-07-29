@@ -4,7 +4,7 @@
 #ifndef SLOPE_BEHAVIOR__IS_GRAVITY_LOWERED_CONDITION_HPP_
 #define SLOPE_BEHAVIOR__IS_GRAVITY_LOWERED_CONDITION_HPP_
 
-#include "behaviortree_cpp_v3/condition_node.h"
+#include "behaviortree_cpp/condition_node.h"
 #include "rclcpp/rclcpp.hpp"
 
 #include "sensor_msgs/msg/joint_state.hpp"

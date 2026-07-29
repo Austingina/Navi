@@ -27,7 +27,7 @@ find_package(grid_map_msgs REQUIRED)
 find_package(grid_map_ros REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(pluginlib REQUIRED)
-find_package(behaviortree_cpp_v3 REQUIRED)
+find_package(behaviortree_cpp REQUIRED)
 
 set(dependencies
   rclcpp
@@ -45,7 +45,7 @@ set(dependencies
   grid_map_ros
   tf2_ros
   pluginlib
-  behaviortree_cpp_v3
+  behaviortree_cpp
 )
 
 include_directories(include)
