@@ -1,3 +1,8 @@
+<!-- Layers here must derive from nav2_costmap_2d::Layer/CostmapLayer (which live in
+     libnav2_costmap_2d_core.so), never from a built-in layer such as ObstacleLayer:
+     those live in liblayers.so, which is itself a pluginlib library. Linking it as a
+     plain dependency makes it load implicitly, so its factories get attributed to
+     this library and every other costmap instance then fails to find them. -->
 <class_libraries>
   <library path="terrain_costmap_layer">
     <class type="terrain_costmap_layer::TerrainLayer" base_class_type="nav2_costmap_2d::Layer">
@@ -5,14 +10,6 @@
         Persistent graded terrain (slope) cost layer. Writes graded cost for
         gentle terrain and LETHAL for steep terrain / curb drop-offs, and
         accumulates over the rolling window so it persists as the robot moves.
-      </description>
-    </class>
-    <class type="terrain_costmap_layer::ObservationPublishingObstacleLayer"
-           base_class_type="nav2_costmap_2d::Layer">
-      <description>
-        Upstream nav2 ObstacleLayer plus an optional debug publisher that
-        republishes the marking observations it consumes as a merged cloud on
-        /observation_pcd. Enable with pub_lidar_observation: true.
       </description>
     </class>
   </library>
