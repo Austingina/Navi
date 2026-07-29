@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.0)
+cmake_minimum_required(VERSION 3.5)
 
 project(livox_sdk2)
 
@@ -14,6 +14,8 @@ endif()
 
 if (UNIX)
 	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread")
+	# GCC >= 13 no longer pulls in <cstdint> transitively
+	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -include cstdint")
 endif(UNIX)
 
 add_subdirectory(sdk_core)

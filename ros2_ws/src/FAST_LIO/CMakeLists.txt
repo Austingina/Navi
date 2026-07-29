@@ -46,7 +46,9 @@ find_package(OpenMP QUIET)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}   ${OpenMP_C_FLAGS}")
 
-find_package(PythonLibs REQUIRED)
+# matplotlibcpp.h embeds CPython. FindPythonLibs was removed from CMake 4, so
+# use the FindPython3 target, which also carries the include dirs.
+find_package(Python3 REQUIRED COMPONENTS Development)
 find_path(MATPLOTLIB_CPP_INCLUDE_DIRS "matplotlibcpp.h")
 
 # ROS dependencies
@@ -106,8 +108,7 @@ target_include_directories(fastlio_mapping PUBLIC
   $<INSTALL_INTERFACE:include>
   ${PCL_INCLUDE_DIRS}
 )
-target_link_libraries(fastlio_mapping ${PCL_LIBRARIES} ${PYTHON_LIBRARIES} Eigen3::Eigen)
-target_include_directories(fastlio_mapping PRIVATE ${PYTHON_INCLUDE_DIRS})
+target_link_libraries(fastlio_mapping ${PCL_LIBRARIES} Python3::Python Eigen3::Eigen)
 
 #add_executable(fastlio_odometry src/laserOdometry.cpp include/ikd-Tree/ikd_Tree.cpp src/preprocess.cpp)
 add_executable(fastlio_odometry src/laserOdometry3dbbs.cpp include/ikd-Tree/ikd_Tree.cpp src/preprocess.cpp)
@@ -116,9 +117,8 @@ target_include_directories(fastlio_odometry PUBLIC
   $<INSTALL_INTERFACE:include>
   ${PCL_INCLUDE_DIRS}
 )
-target_link_libraries(fastlio_odometry ${PCL_LIBRARIES} ${PYTHON_LIBRARIES} Eigen3::Eigen ${gpu_bbs3d_LIBRARY})
+target_link_libraries(fastlio_odometry ${PCL_LIBRARIES} Python3::Python Eigen3::Eigen ${gpu_bbs3d_LIBRARY})
 #teaserpp::teaser_registration teaserpp::teaser_features teaserpp::teaser_io)
-target_include_directories(fastlio_odometry PRIVATE ${PYTHON_INCLUDE_DIRS})
 
 # Lightweight standalone EKF node (chassis dead-reckoning + LIO fusion) — runs
 # in its own process so it doesn't share the laser_mapping callback group.

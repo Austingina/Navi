@@ -92,11 +92,11 @@ public:
   //! Update internal parameters
   void updateParameters(const cv::SimpleBlobDetector::Params& parameters);
 
-  //! Override pure virtual function from cv::SimpleBlobDetector
-  virtual void setParams(const cv::SimpleBlobDetector::Params& params) override;
+  //! Accessors for the blob parameters. Not overrides: cv::SimpleBlobDetector
+  //! exposes no virtual setParams/getParams in OpenCV 4.x.
+  virtual void setParams(const cv::SimpleBlobDetector::Params& params);
 
-  //! Override pure virtual function from cv::SimpleBlobDetector
-  virtual cv::SimpleBlobDetector::Params getParams() const override;
+  virtual cv::SimpleBlobDetector::Params getParams() const;
 
 protected:
   struct Center
