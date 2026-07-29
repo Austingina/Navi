@@ -311,7 +311,7 @@ planner_server: #规划器服务器参数
     use_sim_time: False
     planner_plugins: ["GridBased"] #规划器插件类型，需要与BT Tree文件匹配
     GridBased:
-      plugin: "nav2_smac_planner/SmacPlannerHybrid"
+      plugin: "nav2_smac_planner::SmacPlannerHybrid"
       tolerance: 0.25                     # tolerance for planning if unable to reach exact pose, in meters, for 2D node
       downsample_costmap: false           # whether or not to downsample the map
       downsampling_factor: 1              # multiplier for the resolution of the costmap layer (e.g. 2 on a 5cm costmap would be 10cm)
@@ -361,13 +361,13 @@ smoother_server:
 #     cycle_frequency: 10.0 #运行行为插件的频率。
 #     behavior_plugins: ["spin", "backup", "drive_on_heading", "wait"] #插件包括：{“旋转”、“后退”、“前进”、“等待”}
 #     spin:
-#       plugin: "nav2_behaviors/Spin"
+#       plugin: "nav2_behaviors::Spin"
 #     backup:
-#       plugin: "nav2_behaviors/BackUp"
+#       plugin: "nav2_behaviors::BackUp"
 #     drive_on_heading:
-#       plugin: "nav2_behaviors/DriveOnHeading"
+#       plugin: "nav2_behaviors::DriveOnHeading"
 #     wait:
-#       plugin: "nav2_behaviors/Wait"
+#       plugin: "nav2_behaviors::Wait"
 #     global_frame: odom_combined
 #     robot_base_frame: base_footprint
 #     transform_tolerance: 0.1 #TF 变换容差
