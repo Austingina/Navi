@@ -101,63 +101,6 @@ class KeyboardHandler:
         return ""
 
 
-class SubmapClient:
-    """封装子地图（submap）查询与切换操作。"""
-
-    def __init__(self, ws_client: WsNavClient):
-        self._client = ws_client
-
-    async def get_current_submap(self) -> Optional[str]:
-        """获取当前加载的子地图 ID，失败返回 None。"""
-        data = await self._client.call("get_current_map_id")
-        if data.get("success"):
-            return data.get("map_id")
-        logger.warning("获取当前子地图失败: %s", data.get("msg"))
-        return None
-
-    async def get_submap_list(self) -> List[str]:
-        """获取服务器已配置的所有子地图 ID 列表。"""
-        data = await self._client.call("get_submap_list")
-        if data.get("success"):
-            return list(data.get("submaps") or [])
-        logger.warning("获取子地图列表失败: %s", data.get("msg"))
-        return []
-
-    async def ensure_submap(self, target_submap: str, timeout: float = 60.0) -> bool:
-        """
-        确保当前子地图为 *target_submap*。
-
-        如果已在目标子地图则立即返回 True；
-        否则调用 change_map 切换，成功返回 True，失败返回 False。
-        """
-        current = await self.get_current_submap()
-        if current == target_submap:
-            logger.info("🗺️  当前已在目标子地图: %s", target_submap)
-            return True
-
-        available = await self.get_submap_list()
-        
-        if target_submap not in available:
-            logger.error(
-                "❌ 目标子地图 %r 不存在，可用: %s", target_submap, available
-            )
-            return False
-
-        logger.info("🔁 切换子地图: %s → %s", current, target_submap)
-        data = await self._client.call(
-            "change_map", {"map_id": target_submap, "timeout": timeout}
-        )
-        if data.get("success"):
-            logger.info("✅ 子地图切换成功: %s", target_submap)
-            init_pose = data.get("init_pose")
-            if init_pose:
-                logger.info("📍 切换后初始位姿: %s", init_pose)
-            return True
-
-        logger.error("❌ 子地图切换失败: %s", data.get("msg"))
-        return False
-
-
 class SimplePatrolClient:
     def __init__(
         self,
@@ -292,12 +235,18 @@ class SimplePatrolClient:
 
             logger.info("🔍 检查服务器连接和机器人状态...")
             status_data = await client.call("get_status")
-            if not status_data.get("success"):
-                logger.error("❌ 无法获取机器人状态")
-                return False
-
-            current_pos = status_data["position"]
-            logger.info(f"📍 当前位置: x={current_pos['x']:.3f}, y={current_pos['y']:.3f}")
+            current_pos = None
+            if status_data.get("success"):
+                current_pos = status_data["position"]
+                logger.info(f"📍 当前位置: x={current_pos['x']:.3f}, y={current_pos['y']:.3f}")
+            else:
+                # 无实时位姿并非致命：新架构下定位/导航栈可能按需（首个目标触发
+                # _ensure_nav_mode）才拉起，此时尚无 map→base_link。继续下发目标即可。
+                logger.warning(
+                    "⚠️  暂无机器人实时位姿（%s）；定位/导航栈可能尚未就绪，"
+                    "仍继续下发目标（服务端会按需切换/拉起对应导航栈）",
+                    status_data.get("msg"),
+                )
 
             nearest_data = await client.call("get_nearest_point")
             if nearest_data.get("success"):
@@ -306,7 +255,7 @@ class SimplePatrolClient:
                     f"(距离: {nearest_data['distance']}m)"
                 )
 
-            if self.continue_tolerance >= 0 and len(self.patrol_sequence) > 1:
+            if self.continue_tolerance >= 0 and current_pos and len(self.patrol_sequence) > 1:
                 tol = self.continue_tolerance
                 cur_x = current_pos['x']
                 cur_y = current_pos['y']
@@ -345,9 +294,67 @@ class SimplePatrolClient:
                 logger.info(f"📍 测试点位 {i + 1}/{len(self.patrol_sequence)}: {waypoint}")
 
                 is_route_dict = isinstance(waypoint, dict)
+
+                # 判定 waypoint 类型（服务端展开全局路线时已标 type，缺失时据字段推断）：
+                #   instruction → VLN；scene_point → 场景传送/锚点（室外经纬度）；
+                #   gps → {lon,lat}（室外）；map → SLAM 语义点/坐标。
+                wp_type = waypoint.get("type") if is_route_dict else "map"
+                if is_route_dict and not wp_type:
+                    if "scene_point" in waypoint:
+                        wp_type = "scene_point"
+                    elif "lon" in waypoint and "lat" in waypoint:
+                        wp_type = "gps"
+                    elif "instruction" in waypoint:
+                        wp_type = "instruction"
+                    else:
+                        wp_type = "map"
+
+                start_time = time.time()
+
+                # ── VLN 指令：SimplePatrolClient 不支持，跳过 ──
+                if wp_type == "instruction":
+                    logger.warning(
+                        "⏭️  跳过 instruction(VLN) 途经点（简单巡检客户端不支持）: %s",
+                        waypoint,
+                    )
+                    continue
+
+                # ── 室外 GPS / 场景语义点：走 set_goal_by_outdoor ──
+                if wp_type in ("scene_point", "gps"):
+                    if wp_type == "scene_point":
+                        gname = waypoint.get("scene_point") or waypoint.get("name")
+                        outdoor_params = {"target": gname}
+                    else:
+                        gname = waypoint.get("name") or "tmp"
+                        outdoor_params = {
+                            "target": "tmp",
+                            "lon": waypoint.get("lon"),
+                            "lat": waypoint.get("lat"),
+                        }
+                    logger.info("🌍 室外目标(%s): %s -> set_goal_by_outdoor", wp_type, gname)
+                    goal_data = await client.call("set_goal_by_outdoor", outdoor_params)
+                    if not goal_data.get("success"):
+                        logger.error("❌ 下发室外目标失败: %s", goal_data.get("msg"))
+                        continue
+                    logger.info("✅ 室外目标下发成功: %s", goal_data.get("msg"))
+                    logger.info("⏳ 等待到达室外目标 (超时: 600秒)... [按空格键暂停/恢复]")
+                    wait_data = await self.wait_goal_with_pause(
+                        client, outdoor_params["target"], timeout=600.0
+                    )
+                    duration = time.time() - start_time
+                    if wait_data.get("success"):
+                        logger.info("🎉 成功到达 %s (耗时: %.2f秒)", gname, duration)
+                        success_count += 1
+                        total_time += duration
+                    else:
+                        logger.error("❌ 未能到达 %s: %s", gname, wait_data.get("msg"))
+                    if i < len(self.patrol_sequence) - 1:
+                        await asyncio.sleep(2)
+                    continue
+
+                # ── SLAM（map 类型 / 裸字符串点名）：解析目标点与所在 submap ──
                 target_name = None
                 target_submap = None
-
                 if is_route_dict:
                     target_submap = waypoint.get("submap")
                     target_name = (
@@ -365,66 +372,14 @@ class SimplePatrolClient:
                     logger.error(f"❌ 点位 {target_name} 不存在于服务器点位列表中")
                     continue
 
-                start_time = time.time()
-
                 pre_status_data = await client.call("get_status")
                 if pre_status_data.get("success"):
                     pre_pos = pre_status_data["position"]
                     logger.info(f"📍 下发前位置: x={pre_pos['x']:.3f}, y={pre_pos['y']:.3f}")
 
-                if is_route_dict and target_submap:
-                    cur_map_data = await client.call("get_current_map_id")
-                    current_map_id = cur_map_data.get("map_id")
-
-                    if current_map_id != target_submap:
-                        logger.info(
-                            f"🔁 目标 {target_name} 在子地图 {target_submap}, "
-                            f"当前子地图为 {current_map_id}, 需要切换"
-                        )
-                        portal_data = await client.call(
-                            "get_portal_to_submap", {"target_submap": target_submap}
-                        )
-                        if portal_data.get("success") and portal_data.get("portal_pose"):
-                            portal_pose = portal_data["portal_pose"]
-                            px = portal_pose["position"]["x"]
-                            py = portal_pose["position"]["y"]
-                            logger.info(
-                                f"🚪 导航到传送门 {portal_data.get('portal')} at x={px}, y={py}"
-                            )
-                            goal_data = await client.call(
-                                "set_goal_by_xy", {"x": px, "y": py}
-                            )
-                            if not goal_data.get("success"):
-                                logger.error(f"❌ 前往传送门失败: {goal_data.get('msg')}")
-                                continue
-
-                            logger.info("⏳ 等待到达传送门...")
-                            wait_portal = await self.wait_goal_with_pause(
-                                client, f"portal_{i}", timeout=120.0
-                            )
-                            if not wait_portal.get("success"):
-                                logger.error("❌ 到达传送门超时或失败，跳过此目标")
-                                continue
-
-                            change_data = await client.call(
-                                "change_map", {"map_id": target_submap}
-                            )
-                            if not change_data.get("success"):
-                                logger.error(f"❌ 切换地图失败: {change_data.get('msg')}")
-                                continue
-                            logger.info(f"✅ 切换地图成功: {target_submap}")
-                            
-                            init_pose = change_data.get("init_pose")
-                            if init_pose:
-                                logger.info(f"📍 切换后初始位姿: {init_pose}")
-                            logger.info("⏳ 切换地图后等待 3s...")
-                            await asyncio.sleep(3.0)
-                        else:
-                            logger.error(
-                                f"❌ 未找到从 {current_map_id} 到 {target_submap} 的传送门: "
-                                f"{portal_data.get('msg')}"
-                            )
-                            continue
+                # 跨子图切换完全由服务端处理：只要下发 set_goal_by_slam 时带上目标
+                # submap，服务端内部（_ensure_submap）会先导航到当前→目标 submap 的
+                # 传送门、到达后换图，客户端无需自行判断/取传送门/换图。
 
                 point_meta = await client.call("get_pose_in_submap", {"pose_name": target_name})
                 pt_type = point_meta.get("point_info", {}).get("type") if point_meta.get("success") else None
@@ -476,7 +431,11 @@ class SimplePatrolClient:
                     logger.info(
                         f"🎯 下发目标点: {target_name}, type: {pt_type} (无 pose 坐标)"
                     )
-                goal_data = await client.call("set_goal_by_name", {"target": target_name})
+                goal_params = {"target": target_name}
+                if is_route_dict and target_submap:
+                    # 携带目标 submap：若与当前不一致，服务端会在下发前自动换图。
+                    goal_params["submap"] = target_submap
+                goal_data = await client.call("set_goal_by_slam", goal_params)
 
                 if not goal_data.get("success"):
                     logger.error(f"❌ 下发目标失败: {goal_data.get('msg')}")
@@ -678,36 +637,22 @@ async def main() -> int:
         help="自动确认所有电梯相关提示（elevator_wait/elevator_in/elevator_out），不再等待用户输入",
     )
     parser.add_argument(
-        "-s",
-        "--submap",
-        default=None,
-        metavar="ID",
-        help="目标子地图 ID；若当前不在该子地图则先切换",
-    )
-    parser.add_argument(
         "--set-xy",
         nargs=2,
         type=float,
         metavar=("X", "Y"),
-        help="测试 set_goal_by_xy: 提供 X Y 坐标",
+        help="测试 set_goal_by_slam(target=tmp): 提供 X Y 坐标",
     )
     args = parser.parse_args()
 
     try:
-        # --submap: 先切换到目标子地图（适用于所有后续操作）
-        if args.submap:
-            async with WsNavClient(args.ws) as client:
-                sc = SubmapClient(client)
-                if not await sc.ensure_submap(args.submap):
-                    return 1
-
-        # If --set-xy provided, run a minimal test for set_goal_by_xy + get_navigation_plan
+        # If --set-xy provided, run a minimal test for set_goal_by_slam(tmp) + get_navigation_plan
         if args.set_xy:
             x, y = args.set_xy
-            logger.info(f"🔬 Running set_goal_by_xy test to x={x}, y={y} on {args.ws}")
+            logger.info(f"🔬 Running set_goal_by_slam(target=tmp) test to x={x}, y={y} on {args.ws}")
             async with WsNavClient(args.ws) as client:
-                res = await client.call("set_goal_by_xy", {"x": float(x), "y": float(y), "distance": 0.05})
-                logger.info(f"set_goal_by_xy response: {res}")
+                res = await client.call("set_goal_by_slam", {"target": "tmp", "x": float(x), "y": float(y), "distance": 0.05})
+                logger.info(f"set_goal_by_slam response: {res}")
                 if not res.get("success", True):
                     return 1
 
