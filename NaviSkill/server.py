@@ -89,10 +89,15 @@ class NavigationToolManager:
         # 初始化ROS
         try:
             # # 创建导航节点实例
+            # 仿真时钟：按 NAVI_SIM_ARG（即启动脚本的 -s）打开 use_sim_time，
+            # 否则仿真下节点用墙上时钟、TF 用 /clock 仿真时间戳，两者相差几十年会导致
+            # TF 新鲜度恒定超标、current_pose 永远刷不出。
+            use_sim_time = bool(os.environ.get('NAVI_SIM_ARG', '').strip())
             if camera_image_topic:
-                self.ros_node = NavNode(camera_image_topic=camera_image_topic)
+                self.ros_node = NavNode(camera_image_topic=camera_image_topic,
+                                        use_sim_time=use_sim_time)
             else:
-                self.ros_node = NavNode()
+                self.ros_node = NavNode(use_sim_time=use_sim_time)
             # 创建多线程执行器：3 个线程分别服务 TF 心跳 / 重量级消息 / call-queue 三个回调组
             self.executor = MultiThreadedExecutor(num_threads=3)
             # 将节点添加到执行器

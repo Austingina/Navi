@@ -4,6 +4,7 @@ from rclpy.node import Node  # ROS节点基类
 from rcl_interfaces.srv import GetParameters, SetParameters  # 参数服务
 from rcl_interfaces.msg import Parameter as ParameterMsg, ParameterValue, ParameterType
 from rclpy.executors import SingleThreadedExecutor  # 单线程执行器
+from rclpy.parameter import Parameter  # 节点参数（用于 use_sim_time 仿真时钟）
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup  # 回调组（MultiThreadedExecutor 并行调度）
 from geometry_msgs.msg import PoseStamped, Twist, TwistStamped  # 位姿消息类型和速度控制消息类型
 from nav_msgs.msg import OccupancyGrid, Odometry, Path  # 占据网格、里程计、全局路径
@@ -67,6 +68,7 @@ class NavNode(Node):
         gps_datum_lat: float = DEFAULT_GPS_DATUM_LAT,
         gps_datum_lon: float = DEFAULT_GPS_DATUM_LON,
         initial_nav_mode: str = NAV_MODE_SLAM,
+        use_sim_time: Optional[bool] = None,
     ):
         """初始化ROS节点和相关发布者/订阅者
 
@@ -85,13 +87,28 @@ class NavNode(Node):
         :param gps_datum_lat/gps_datum_lon: 经纬度→campus_map 平面换算所用 ENU 原点，
                               必须与 campus_nav 的 datum 一致（否则目标点会错位）。
         :param initial_nav_mode: 初始导航模式 ``"slam"``（默认）或 ``"gps"``。
+        :param use_sim_time: 是否使用仿真时钟（订阅 ``/clock``）。``None`` 时按环境变量
+            ``NAVI_SIM_ARG`` 自动判定（非空即为仿真）。仿真下必须为 True，否则本节点用
+            墙上时钟、而 TF 盖的是仿真时间戳，两者相差几十年会导致 TF 新鲜度恒定“超标”，
+            进而 ``current_pose`` 永远刷不出、定位一直判为丢失。
         """
         # 先确保rclpy已经初始化
         if not rclpy.ok():
             rclpy.init()
-        
-        # 调用父类构造函数，设置节点名称
-        super().__init__('nav_node')
+
+        # 解析仿真时钟：未显式指定时按 NAVI_SIM_ARG 环境变量自动判定
+        if use_sim_time is None:
+            use_sim_time = bool(os.environ.get('NAVI_SIM_ARG', '').strip())
+
+        # 调用父类构造函数，设置节点名称；仿真下通过 parameter_overrides 打开 use_sim_time，
+        # 使 get_clock() 走 /clock 仿真时钟，与 TF 时间戳一致。
+        super().__init__(
+            'nav_node',
+            parameter_overrides=[
+                Parameter('use_sim_time', Parameter.Type.BOOL, bool(use_sim_time)),
+            ],
+        )
+        self.get_logger().info(f"nav_node use_sim_time={bool(use_sim_time)}")
 
         # ── 回调组：与 MultiThreadedExecutor(num_threads=3) 配合使用，
         # 使 TF 心跳 / 重量级消息 / call-queue 三组并行执行，互不阻塞。
