@@ -374,6 +374,23 @@ def parse_mapserver_url(url: str) -> Tuple[str, str]:
     return base_url, map_id
 
 
+def _resolve_main_json(local_dir: Path, map_id: str) -> Optional[Path]:
+    """返回本地主地图 json 的实际路径（不存在返回 None）。
+
+    主 json 有两种命名约定（与 manifest 版本解析一致）：
+
+    * **场景地图（scene map）** → ``scene.json``（顶层无 ``global``，内联 OSM/多张 SLAM 地图），优先；
+    * **单张 SLAM 地图工程** → ``<map_id>.json``（``multifloor.json`` 风格）。
+    """
+    scene_json = local_dir / "scene.json"
+    if scene_json.is_file():
+        return scene_json
+    main_json = local_dir / f"{map_id}.json"
+    if main_json.is_file():
+        return main_json
+    return None
+
+
 def resolve_map_source(
     arg: str,
     *,
@@ -418,8 +435,9 @@ def resolve_map_source(
     # ── URL 分支：同步 → 返回本地 json ─────────────────────────────
     base_url, map_id = parse_mapserver_url(arg)
     local_dir = Path(cache_root) / map_id
-    json_path = local_dir / f"{map_id}.json"
-    have_cache = json_path.is_file()
+    # 主 json 文件名两种约定：场景地图为 scene.json，单张 SLAM 地图工程为 <map_id>.json。
+    cached_json = _resolve_main_json(local_dir, map_id)
+    have_cache = cached_json is not None
 
     logger.info(
         "[mapsource] resolving map: url=%s -> local=%s (cache=%s)",
@@ -436,9 +454,9 @@ def resolve_map_source(
         if have_cache and not network_required:
             logger.warning(
                 "[mapsource] sync failed (%s); falling back to local cache: %s",
-                e, json_path,
+                e, cached_json,
             )
-            return json_path.resolve()
+            return cached_json.resolve()
         raise RuntimeError(
             f"无法从 {arg} 同步地图且本地无可用缓存: {e}"
         ) from e
@@ -455,20 +473,23 @@ def resolve_map_source(
 
     if result.status == SyncStatus.FAILED:
         # 部分文件失败；若本地原本就有可用 json，可以尝试继续
-        if json_path.is_file() and not network_required:
+        local_json = _resolve_main_json(local_dir, map_id)
+        if local_json is not None and not network_required:
             logger.warning(
                 "[mapsource] sync had %d failed files; using current local copy: %s",
-                len(result.failed), json_path,
+                len(result.failed), local_json,
             )
-            return json_path.resolve()
+            return local_json.resolve()
         raise RuntimeError(
             f"同步 {arg} 失败的文件: {result.failed}"
         )
 
-    if not json_path.is_file():
+    json_path = _resolve_main_json(local_dir, map_id)
+    if json_path is None:
         raise FileNotFoundError(
-            f"同步完成但未在本地找到 {json_path}，请检查服务器上是否存在 "
-            f"{map_id}/{map_id}.json"
+            f"同步完成但未在本地找到主地图 json（{local_dir}/scene.json 或 "
+            f"{local_dir}/{map_id}.json），请检查服务器上是否存在 "
+            f"{map_id}/scene.json（场景地图）或 {map_id}/{map_id}.json（单张 SLAM 地图工程）"
         )
     return json_path.resolve()
 
