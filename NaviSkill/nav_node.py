@@ -302,6 +302,9 @@ class NavNode(Node):
             # 室外当前目标（campus_frame 下的 PoseStamped）及运行标志
             self._outdoor_goal: Optional[PoseStamped] = None
             self._outdoor_nav_active = False
+            # 关联的语义点名称 + 到达判定距离阈值（供 wait_goal_reached 按 target 判定）。
+            self._outdoor_goal_name: Optional[str] = None
+            self._outdoor_goal_tol: float = 3.0
 
             # 音频文件路径
             self.audio_dir = os.path.join(os.path.dirname(__file__), 'audio')
@@ -945,6 +948,7 @@ class NavNode(Node):
         # 清室外目标与运行标志
         self._outdoor_goal = None
         self._outdoor_nav_active = False
+        self._outdoor_goal_name = None
 
     # ── GNSS 定位监控 ─────────────────────────────────────────────────────
     def _gps_fix_callback(self, msg: NavSatFix) -> None:
@@ -1058,19 +1062,29 @@ class NavNode(Node):
         pose.pose.orientation.w = 1.0  # 朝向对路网规划无意义，规划器只用 xy 吸附道路
         return self.send_campus_goal(pose)
 
-    def set_outdoor_goal_by_lonlat(self, lon: float, lat: float) -> bool:
-        """以经纬度下发室外目标：按 ENU datum 换算成 campus_map 平面点再下发。"""
+    def set_outdoor_goal_by_lonlat(self, lon: float, lat: float,
+                                   target: Optional[str] = None,
+                                   tolerance: float = 3.0) -> bool:
+        """以经纬度下发室外目标：按 ENU datum 换算成 campus_map 平面点再下发。
+
+        :param target: 可选，关联的语义点名称；随目标一起记录，供
+                       ``wait_goal_reached`` 以该 target 判定是否到达。
+        :param tolerance: 到达判定距离阈值（米），随目标记录，供 ``wait_goal_reached`` 使用。
+        """
         east, north = self._lonlat_to_campus_xy(lon, lat)
         self.get_logger().info(
             f"室外目标经纬度→campus_map: ({lon:.7f},{lat:.7f}) -> "
-            f"({east:.2f},{north:.2f})"
+            f"({east:.2f},{north:.2f})  target={target} tol={tolerance}"
         )
+        self._outdoor_goal_name = target
+        self._outdoor_goal_tol = float(tolerance)
         return self.set_outdoor_goal_by_xy(east, north, frame=self.campus_frame)
 
     def cancel_outdoor_goal(self) -> None:
         """清除本地室外目标与运行标志，并发零速停车（尽力而为）。"""
         self._outdoor_goal = None
         self._outdoor_nav_active = False
+        self._outdoor_goal_name = None
         try:
             self.cmd_vel_pub.publish(Twist())
         except Exception:
@@ -1118,6 +1132,14 @@ class NavNode(Node):
             self._outdoor_nav_active = False
             return True
         return False
+
+    def get_outdoor_goal_name(self) -> Optional[str]:
+        """当前室外目标关联的语义点名称（未设置返回 None）。"""
+        return self._outdoor_goal_name
+
+    def get_outdoor_goal_tolerance(self) -> float:
+        """当前室外目标的到达判定距离阈值（米）。"""
+        return self._outdoor_goal_tol
 
     def chassis_speed_callback(self, msg: TwistStamped):
         """

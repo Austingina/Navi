@@ -718,220 +718,49 @@ class NavigationToolManager:
             except Exception as e:
                 return {"success": False, "msg": f"设置目标失败: {str(e)}"}
 
-        async def set_goal_by_multipose(target: str, timeout_per_pose: float = 60.0, xy_tolerance: float = 0.04, yaw_tolerance: float = 0.05) -> Dict[str, Any]:
+        def set_goal_by_lonlat(target: str, lon: float = None, lat: float = None,
+                               tolerance: float = 3.0) -> Dict[str, Any]:
             """
-            导航到multi_pose类型点位的所有位姿，依次到达每个位姿点
-            使用PID控制直接到达目标，跳过nav2导航
-            
-            参数:
-            target: 目标点名称（必须是 `multi_pose` 类型，使用 `get_pose_in_submap` 可查看 `type` 字段）
-            timeout_per_pose: 每个位姿点的超时时间（秒），默认120秒
-            xy_tolerance: 位置容差（米），默认0.04米
-            yaw_tolerance: 姿态容差（弧度），默认0.05弧度
-            
-            返回:
-            Dict: 包含操作结果的字典，包括每个位姿点的到达状态
-            """
-            try:
-                # 多位姿点导航属于 SLAM：确保处于 slam 模式
-                self._ensure_nav_mode(NavNode.NAV_MODE_SLAM)
-                # 检查目标点是否在预设地图中
-                if target not in self.map_manager.pose_map_current_submap:
-                    return {"success": False, "msg": f"目标点 {target} 不在白名单中"}
-                
-                # 检查是否为multi_pose类型
-                if not self.map_manager.is_multi_pose(target):
-                    return {"success": False, "msg": f"目标点 {target} 不是multi_pose类型，请使用set_goal接口"}
-                
-                # 获取所有位姿
-                poses_list = self.map_manager.get_multi_poses_in_submap(target)
-                if not poses_list:
-                    return {"success": False, "msg": f"目标点 {target} 缺少位姿信息"}
-                
-                total_poses = len(poses_list)
-                results = []
-                
-                # 依次导航到每个位姿点
-                for idx, pose_info in enumerate(poses_list):
-                    # 创建PoseStamped消息
-                    pose = PoseStamped()
-                    pose.header.frame_id = "odom"
-                    pose.pose.position.x = pose_info["position"]["x"]
-                    pose.pose.position.y = pose_info["position"]["y"]
-                    pose.pose.position.z = pose_info["position"]["z"]
-                    pose.pose.orientation.x = pose_info["orientation"]["x"]
-                    pose.pose.orientation.y = pose_info["orientation"]["y"]
-                    pose.pose.orientation.z = pose_info["orientation"]["z"]
-                    pose.pose.orientation.w = pose_info["orientation"]["w"]
-                    
-                    # 直接设置last_goal，跳过nav2导航
-                    self.ros_node.last_goal = pose
-                    self.ros_node.pid_control_active = True
-                    self.ros_node.pid_rotation_phase = True  # 先调整yaw角度
-                    
-                    logging.info(f"[multipose] 开始PID控制到位姿点 {idx+1}/{total_poses}: x={pose_info['position']['x']}, y={pose_info['position']['y']}")
-                    
-                    # 使用PID控制到达当前位姿点
-                    start_time = time.time()
-                    reached = False
-                    while time.time() - start_time < timeout_per_pose:
-                        await asyncio.sleep(0.05)  # 50ms控制周期
-                        # 执行一步PID控制
-                        if self.ros_node.pid_control_step(yaw_tolerance, xy_tolerance):
-                            reached = True
-                            break
-                    
-                    # 停止机器人
-                    self.ros_node.pid_control_active = False
-                    
-                    pose_result = {
-                        "pose_index": idx,
-                        "position": pose_info["position"],
-                        "reached": reached,
-                        "elapsed_time": round(time.time() - start_time, 2)
-                    }
-                    results.append(pose_result)
-                    
-                    logging.info(f"[multipose] 位姿点 {idx+1}/{total_poses} {'到达' if reached else '超时'}, 耗时: {pose_result['elapsed_time']}s")
-                    
-                    # 如果未到达当前位姿点，返回部分结果
-                    if not reached:
-                        return {
-                            "success": False,
-                            "msg": f"在位姿点 {idx + 1}/{total_poses} 超时未到达",
-                            "target": target,
-                            "total_poses": total_poses,
-                            "completed_poses": idx,
-                            "results": results
-                        }
-                
-                # 所有位姿点都已到达
-                return {
-                    "success": True,
-                    "msg": f"已完成 {target} 的所有 {total_poses} 个位姿点导航",
-                    "target": target,
-                    "total_poses": total_poses,
-                    "completed_poses": total_poses,
-                    "results": results
-                }
-            except Exception as e:
-                return {"success": False, "msg": f"多位姿导航失败: {str(e)}"}
+            按语义点下发室外 GPS 导航目标（campus_nav 路网规划器）。
 
-        def set_goal_by_lonlat(lon: float, lat: float, distance: float = 1.5,
-                               mode: str = "auto") -> Dict[str, Any]:
-            """
-            根据输入的经纬度下发导航目标（区分 SLAM / 室外 GPS 两种后端）。
+            仅支持室外 GPS 模式，调用时自动切到 gps 模式（不再支持 SLAM 换算）。
 
             参数:
-            lon: 目标点经度
-            lat: 目标点纬度
-            distance: （仅 SLAM 模式）距离目标点的停靠距离，默认1.5米
-            mode: 目标后端选择——
-                  - ``"gps"``：走室外 GNSS 导航（campus_nav 路网规划器），自动切到 gps 模式；
-                  - ``"slam"``：把经纬度按单图 wgs84 锚点换算成当前 SLAM 地图坐标再 navigate_to_pose；
-                  - ``"auto"``（默认）：有场景(scene)地图或当前已是 gps 模式 → 走室外 GPS；
-                    否则回退到单图 SLAM 换算（向后兼容旧 408 单图用法）。
+            target: 必填，目标语义点名称；随目标记录，供 `wait_goal_reached` 以该 target
+                    判定是否到达（GPS 无 Nav2 到达回调，按几何距离阈值判定）。
+            lon: 可选，目标点经度；缺省时从 MapManager 的场景语义点 `target` 读取。
+            lat: 可选，目标点纬度；缺省时同上。
+            tolerance: 到达判定距离阈值（米），默认 3.0；随目标记录并供 `wait_goal_reached` 使用。
 
             返回:
             Dict: 操作结果
             """
             try:
-                # ── 选择后端：室外 GPS vs 单图 SLAM 换算 ──
-                use_gps = (
-                    mode == "gps" or (
-                        mode == "auto" and (
-                            (self.map_manager is not None and self.map_manager.has_scene())
-                            or self.ros_node.get_nav_mode() == NavNode.NAV_MODE_GPS
-                        )
-                    )
-                )
-                if use_gps:
-                    mode_switch = self._ensure_nav_mode(NavNode.NAV_MODE_GPS)
-                    ok = self.ros_node.set_outdoor_goal_by_lonlat(float(lon), float(lat))
-                    return {
-                        "success": bool(ok),
-                        "mode": "gps",
-                        "mode_switch": mode_switch,
-                        "target": {"lon": lon, "lat": lat},
-                        "msg": ("已向室外路网规划器下发经纬度目标" if ok
-                                else "室外经纬度目标下发失败"),
-                    }
+                if not target:
+                    return {"success": False, "msg": "target 不能为空"}
+                # 经纬度缺省时从 MapManager 场景语义点解析（lon/lat）。
+                if lon is None or lat is None:
+                    if self.map_manager is None:
+                        return {"success": False,
+                                "msg": "未加载地图，无法从 target 解析经纬度，请显式传入 lon/lat"}
+                    pt = self.map_manager.get_scene_point(target)
+                    if not pt or pt.get("lon") is None or pt.get("lat") is None:
+                        return {"success": False,
+                                "msg": f"场景语义点 '{target}' 不存在或缺少经纬度，请显式传入 lon/lat"}
+                    lon, lat = pt["lon"], pt["lat"]
 
-                # ── 单图 SLAM 换算路径（保持原行为，确保 slam 模式）──
-                self._ensure_nav_mode(NavNode.NAV_MODE_SLAM)
-                # 将经纬度转换为地图坐标系
-                x, y = self.wgs84_converter.lonlat_to_xy(lon, lat)
-                
-                # 检查转换后的坐标是否在地图边界内
-                if not (self.ros_node.map_bound["xmin"] <= x <= self.ros_node.map_bound["xmax"] and
-                        self.ros_node.map_bound["ymin"] <= y <= self.ros_node.map_bound["ymax"]):
-                    return {"success": False, "msg": f"目标点({lon}, {lat})转换后坐标({x:.2f}, {y:.2f})超出地图边界"}
-                
-                # 获取当前位置
-                odom = self.ros_node.current_pose
-                if not odom:
-                    return {"success": False, "msg": "无法获取当前位置信息"}
-                
-                curr_x = odom.pose.position.x
-                curr_y = odom.pose.position.y
-                
-                # 计算从当前位置到目标点的方向向量
-                dx = x - curr_x
-                dy = y - curr_y
-                target_distance = (dx**2 + dy**2) ** 0.5
-                
-                # 如果当前距离目标点小于指定距离，则直接面向目标点
-                if target_distance <= distance:
-                    actual_x = curr_x
-                    actual_y = curr_y
-                else:
-                    # 计算单位方向向量
-                    unit_dx = dx / target_distance
-                    unit_dy = dy / target_distance
-                    
-                    # 计算实际目标位置（距离目标点distance距离的位置）
-                    actual_x = x - unit_dx * distance
-                    actual_y = y - unit_dy * distance
-                
-                # 检查实际目标位置是否在地图边界内
-                if not (self.ros_node.map_bound["xmin"] <= actual_x <= self.ros_node.map_bound["xmax"] and
-                        self.ros_node.map_bound["ymin"] <= actual_y <= self.ros_node.map_bound["ymax"]):
-                    return {"success": False, "msg": f"计算的实际目标位置({actual_x:.2f}, {actual_y:.2f})超出地图边界"}
-                
-                # 计算面向目标点的朝向（从实际位置指向目标点）
-                face_dx = x - actual_x
-                face_dy = y - actual_y
-                yaw = np.arctan2(face_dy, face_dx)
-                
-                # 计算四元数
-                qz = np.sin(yaw / 2)
-                qw = np.cos(yaw / 2)
-
-                # 创建PoseStamped消息
-                pose = PoseStamped()
-                pose.header.frame_id = "odom"
-                pose.pose.position.x = actual_x
-                pose.pose.position.y = actual_y
-                pose.pose.position.z = 0.0  # 假设z=0
-                
-                # 设置朝向为面向目标点
-                pose.pose.orientation.x = 0.0
-                pose.pose.orientation.y = 0.0
-                pose.pose.orientation.z = qz
-                pose.pose.orientation.w = qw
-                
-                target_str = f"lonlat({lon},{lat})_dist_{distance}"
-                # 发布目标点
-                self.ros_node.publish_goal(pose, target_str)
-
+                mode_switch = self._ensure_nav_mode(NavNode.NAV_MODE_GPS)
+                ok = self.ros_node.set_outdoor_goal_by_lonlat(
+                    float(lon), float(lat), target=target, tolerance=float(tolerance))
                 return {
-                    "success": True,
-                    "mode": "slam",
-                    "target_str": target_str,
-                    "msg": f"已下发目标，将在距离经纬度({lon}, {lat})约{distance}米处停下并面向目标点",
-                    "original_target": {"lon": lon, "lat": lat, "x": x, "y": y},
-                    "actual_target": {"x": actual_x, "y": actual_y},
-                    "distance": distance
+                    "success": bool(ok),
+                    "mode": "gps",
+                    "mode_switch": mode_switch,
+                    "target": target,
+                    "goal": {"lon": lon, "lat": lat},
+                    "tolerance": tolerance,
+                    "msg": (f"已向室外路网规划器下发目标 target={target} ({lon},{lat})"
+                            if ok else "室外经纬度目标下发失败"),
                 }
             except Exception as e:
                 return {"success": False, "msg": f"经纬度导航失败: {str(e)}"}
@@ -1092,7 +921,7 @@ class NavigationToolManager:
 
             point_info 中 `type` 字段说明：
             - "single_pose": 单一位姿点；使用普通导航接口 `set_goal_by_name` 下发目标。
-            - "multi_pose": 多位姿点；需使用 `set_goal_by_multipose` 来依次导航到各个位姿。
+            - "multi_pose": 多位姿点（一串按顺序经过的位姿，用 `poses` 数组）；当前无专用下发接口。
             - "LowPrecision_pose": 低精度点位；到达后不要求位置和朝向精确，使用较大容差即可。
             - "elevator_call": 电梯呼叫点；机器人到达该点后应等待外部 agent 执行呼叫电梯的动作。
             - "elevator_wait": 电梯等待点；机器人到达该点后应等待外部 agent 确认电梯已到达且车门已打开。
@@ -1503,15 +1332,34 @@ class NavigationToolManager:
         async def wait_goal_reached(target: str, timeout: float = 120.0, xy_tolerance: float = 0.1, yaw_tolerance: float = 0.1) -> Dict[str, Any]:
             """
             阻塞直到到达目标点或超时
-            
+
+            - 室外 GPS 模式：按 target 关联的室外目标做几何距离判定
+              （campus 规划器无“到达”回调，用 `is_outdoor_goal_reached` 的距离阈值，
+              阈值取 `set_goal_by_lonlat` 时记录的 tolerance）。
+            - SLAM 模式：按 Nav2 + PID 精调结果判定（`check_goal_reached`）。
+
             参数:
-            target: 目标点名称
+            target: 目标点名称（GPS 模式下即 `set_goal_by_lonlat` 传入的语义点名称）
             timeout: 超时时间（秒）
-            
+
             返回:
             Dict: 包含到达结果的字典
             """
-            # elevator_in / LowPrecision_pose 强制宽松容差
+            # ── 室外 GPS：按 target 关联的室外目标做距离判定 ──
+            if self.ros_node.get_nav_mode() == NavNode.NAV_MODE_GPS:
+                tol = self.ros_node.get_outdoor_goal_tolerance()
+                try:
+                    start_time = time.time()
+                    while time.time() - start_time < timeout:
+                        await asyncio.sleep(0.2)
+                        if self.ros_node.is_outdoor_goal_reached(tol):
+                            return {"success": True, "msg": f"已到达目标 {target}",
+                                    "timestamp": int(time.time())}
+                    return {"success": False, "msg": "等待超时或未到达", "nav_failed": False}
+                except Exception as e:
+                    return {"success": False, "msg": f"等待目标失败: {str(e)}"}
+
+            # elevator_in / LowPrecision_pose 强制宽松容差（SLAM）
             if self.map_manager:
                 pt = self.map_manager.get_pose_in_submap(target)
                 if pt and pt.get("type") in ("elevator_in", "LowPrecision_pose"):
@@ -1746,7 +1594,6 @@ class NavigationToolManager:
 
         self._handlers = {
             "set_goal_by_name": set_goal_by_name,
-            "set_goal_by_multipose": set_goal_by_multipose,
             "set_goal_by_lonlat": set_goal_by_lonlat,
             "set_goal_by_xy": set_goal_by_xy,
             "pause_navigation": pause_navigation,
