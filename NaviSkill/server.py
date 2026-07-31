@@ -1947,11 +1947,11 @@ class NavigationToolManager:
 # 异步主函数
 def _launch_nav_stack(args, map_manager) -> None:
     """
-    依据 -s/--submap 决定导航模式并拉起对应导航栈（仅负责"首次拉起"）：
+    依据 --ss 决定导航模式并拉起对应导航栈（仅负责"首次拉起"）：
 
-      * 指定 -s slam_map_id/submap_id → SLAM 室内栈：
+      * 指定 --ss slam_map_id/submap_id → SLAM 室内栈：
         解析该 submap 的 pcd 路径后 ``start_slam.sh -m <pcd>``；
-      * 未指定 -s → 室外 GPS 栈：``start_outdoor.sh``。
+      * 未指定 --ss → 室外 GPS 栈：``start_outdoor.sh``。
 
     仿真时钟：读环境变量 ``$NAVI_SIM_ARG``，非空则给启动脚本追加 ``-s``（--simulated）。
     server.py 运行在 tmux pane 内，子进程需 unset ``$TMUX`` 才能让脚本里的 tmuxp 正常新建会话。
@@ -1968,7 +1968,7 @@ def _launch_nav_stack(args, map_manager) -> None:
     if args.submap:
         slam_map_id, submap_id = args.submap.split('/', 1)
         if map_manager is None:
-            logging.error("指定了 -s %s 但地图未加载成功，无法拉起 SLAM 栈", args.submap)
+            logging.error("指定了 --ss %s 但地图未加载成功，无法拉起 SLAM 栈", args.submap)
             return
         pcd = map_manager.get_submap_full_map_path(submap_id, slam_map_id)
         if not pcd:
@@ -2004,11 +2004,12 @@ async def main():
                              '2) mapserver URL，如 http://10.239.18.181:8080/mapserver/408 '
                              '（首次启动会下载到 <repo>/maps/<map_id>/，之后做增量同步；'
                              '网络失败但本地有缓存时降级到本地）')
-    parser.add_argument('-s', '--submap', type=str, default=None,
+    parser.add_argument('--ss', dest='submap', type=str, default=None,
                         help='初始定位目标，格式严格为 slam_map_id/submap_id（例如 caihong/2f；'
                              '单文件地图的 slam_map_id 为 default，如 default/2f）。'
-                             '给出 -s 即进入 SLAM 室内模式：server.py 会解析该 submap 的 pcd 并'
-                             '拉起 start_slam.sh -m <pcd>；不给 -s 则进入室外 GPS 模式，拉起 start_outdoor.sh')
+                             '给出 --ss 即进入 SLAM 室内模式：server.py 会解析该 submap 的 pcd 并'
+                             '拉起 start_slam.sh -m <pcd>；不给 --ss 则进入室外 GPS 模式，拉起 start_outdoor.sh。'
+                             '（注意与常用 -s 区分：-s 一般表示 use_sim_time 仿真时钟）')
     parser.add_argument('--image_topic', type=str, default=None,
                         help='VPR 引导/重定位使用的相机 CompressedImage 话题；'
                              '省略则使用 NavNode 默认 '
@@ -2039,9 +2040,9 @@ async def main():
                         help='(已废弃，等价于 --viz_mode serve) 不 spawn viewer，仅起 TCP server')
     args = parser.parse_args()
 
-    # -s 严格要求 slam_map_id/submap_id 形式（区分"哪张 SLAM 地图的哪个 submap"）。
+    # --ss 严格要求 slam_map_id/submap_id 形式（区分"哪张 SLAM 地图的哪个 submap"）。
     if args.submap is not None and '/' not in args.submap:
-        parser.error("-s/--submap 需为 slam_map_id/submap_id 格式（例如 caihong/2f 或 default/2f）")
+        parser.error("--ss 需为 slam_map_id/submap_id 格式（例如 caihong/2f 或 default/2f）")
 
     # 兼容旧参数
     if args.viz_no_spawn and args.viz_mode == 'spawn':
@@ -2073,7 +2074,7 @@ async def main():
         except Exception as e:
             logging.error(f"加载地图配置失败: {e}")
 
-    # 依据 -s 决定导航模式并拉起对应导航栈（"首次拉起"统一由 server.py 负责）。
+    # 依据 --ss 决定导航模式并拉起对应导航栈（"首次拉起"统一由 server.py 负责）。
     _launch_nav_stack(args, map_manager)
 
     mgr = None
