@@ -47,6 +47,7 @@ class NavigationToolManager:
         map_manager: MapManager = None,
         *,
         submap_specified: bool = False,
+        nav_mode: str = NavNode.NAV_MODE_SLAM,
         vpr_device: str = "cuda",
         camera_image_topic: Optional[str] = None,
     ):
@@ -56,6 +57,8 @@ class NavigationToolManager:
         :param map_manager: 多楼层地图管理器实例，可选
         :param submap_specified: 用户是否在命令行显式指定了初始 submap；为 False
                                   时若存在 VPR 数据库会用相机图像引导确定 submap
+        :param nav_mode: 初始导航模式（``slam`` / ``gps``）。室外 GPS 模式下不做
+                          初始 submap 识别、不与 ROS 端点云地图对齐（不发起换图）。
         :param vpr_device: VPR 子进程使用的设备（``cuda`` / ``cpu``）
         :param camera_image_topic: 用于 VPR 引导/重定位的 CompressedImage 话题；
                                     None 时使用 NavNode 默认值
@@ -95,9 +98,11 @@ class NavigationToolManager:
             use_sim_time = bool(os.environ.get('NAVI_SIM_ARG', '').strip())
             if camera_image_topic:
                 self.ros_node = NavNode(camera_image_topic=camera_image_topic,
-                                        use_sim_time=use_sim_time)
+                                        use_sim_time=use_sim_time,
+                                        initial_nav_mode=nav_mode)
             else:
-                self.ros_node = NavNode(use_sim_time=use_sim_time)
+                self.ros_node = NavNode(use_sim_time=use_sim_time,
+                                        initial_nav_mode=nav_mode)
             # 创建多线程执行器：3 个线程分别服务 TF 心跳 / 重量级消息 / call-queue 三个回调组
             self.executor = MultiThreadedExecutor(num_threads=3)
             # 将节点添加到执行器
@@ -123,25 +128,31 @@ class NavigationToolManager:
                     change_map_fn=self._change_map,
                 )
 
-            # 启动时若未指定 submap：让 relocator 做多帧共识识别 submap，
-            # 再让 _sync_map_state 完成 change_map。
-            if (
-                not self._submap_specified
-                and self.vpr_relocator is not None
-                and self.vpr_relocator.available
-            ):
-                self.vpr_relocator.pick_initial_submap()
-            elif (
-                not self._submap_specified
-                and map_manager is not None
-            ):
-                logging.warning(
-                    "启动时未指定 submap 且 VPR 不可用，将使用 MapManager 当前 submap: %s",
-                    map_manager.get_current_submap(),
-                )
+            # 仅 SLAM 室内模式才做"初始 submap 识别 + 与 ROS 端点云地图对齐"。
+            # 室外 GPS 模式无点云地图定位：既不设置/引导 submap，也不发起换图，
+            # 否则会把 MapManager 缓存的 submap（如 caihong/2f）误当作目标发一次 change_map。
+            if nav_mode == NavNode.NAV_MODE_SLAM:
+                # 启动时若未指定 submap：让 relocator 做多帧共识识别 submap，
+                # 再让 _sync_map_state 完成 change_map。
+                if (
+                    not self._submap_specified
+                    and self.vpr_relocator is not None
+                    and self.vpr_relocator.available
+                ):
+                    self.vpr_relocator.pick_initial_submap()
+                elif (
+                    not self._submap_specified
+                    and map_manager is not None
+                ):
+                    logging.warning(
+                        "启动时未指定 submap 且 VPR 不可用，将使用 MapManager 当前 submap: %s",
+                        map_manager.get_current_submap(),
+                    )
 
-            # 同步地图状态：检查 MapManager 与 ROS 节点的当前地图是否一致
-            self._sync_map_state()
+                # 同步地图状态：检查 MapManager 与 ROS 节点的当前地图是否一致
+                self._sync_map_state()
+            else:
+                logging.info("室外 GPS 模式：跳过初始 submap 识别与地图切换（不发起 change_map）")
         except Exception as e:
             logging.error(f"ROS初始化失败: {e}")
             raise
@@ -2014,6 +2025,8 @@ async def main():
         mgr = NavigationToolManager(
             map_manager=map_manager,
             submap_specified=args.submap is not None,
+            # --ss 给出 → SLAM 室内；否则 → 室外 GPS（与 _launch_nav_stack 决策一致）
+            nav_mode=(NavNode.NAV_MODE_SLAM if args.submap else NavNode.NAV_MODE_GPS),
             vpr_device=args.vpr_device,
             camera_image_topic=args.image_topic,
         )
