@@ -28,15 +28,11 @@
                 }
             ]
         },
-        "智城AB栋巡检": {
+        "route_outdoor": {
             "description": "",
             "waypoints": [
                 {
                     "scene_point": "智城西北角"
-                },
-                {
-                    "route": "routeA2_reception",
-                    "slam_map": "zhichengA2A3"
                 },
                 {
                     "scene_point": "智城兴科一街北出口"
@@ -54,7 +50,7 @@
         }
     },
     "scene": {
-        "build_no": 20260731094943,
+        "build_no": 20260731164456,
         "crs": "WGS84",
         "name": "xili",
         "origin": {
@@ -2541,7 +2537,7 @@
                 "scale": 1
             },
             "global": {
-                "build_no": 20260731094943,
+                "build_no": 20260731164457,
                 "default_route": "routeA2_reception",
                 "default_submap": "",
                 "version": "1.0"
