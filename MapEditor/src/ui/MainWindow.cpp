@@ -2454,10 +2454,23 @@ void MainWindow::onRenameRoute(const QString& oldName, const QString& newName) {
             QString("重命名失败：路线 '%1' 不存在或 '%2' 已被占用").arg(oldName, newName));
         return;
     }
+    // 同步更新场景全局路线中对该内部路线的引用
+    // （GlobalWaypoint::Route，slamMap==当前活跃地图 且 route==oldName）
+    const QString mapId = activeMapId();
+    bool refUpdated = false;
+    for (auto& r : scene_.globalRoutes())
+        for (auto& wp : r.waypoints)
+            if (wp.kind == GlobalWaypoint::Route
+                && wp.slamMap == mapId && wp.route == oldName) {
+                wp.route = newName;
+                refUpdated = true;
+            }
+
     markDirty();
     submapPanel_->rebuild(&project_);
     submapPanel_->expandRoute(newName);
     refreshRouteLines();
+    if (refUpdated) scenePanel_->rebuild(&scene_);
     statusLabel_->setText(QString("已将路线 '%1' 重命名为 '%2'").arg(oldName, newName));
 }
 
