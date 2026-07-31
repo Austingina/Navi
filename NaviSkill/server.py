@@ -497,78 +497,13 @@ class NavigationToolManager:
     # ══════════════════════════════════════════════════════════════════════
     # 混合路线：逐 waypoint 自动切换导航模式（SLAM 室内点云 ↔ 室外 GPS）
     #
-    # 一条路线的 waypoint 可以是某张 SLAM 地图内的语义点（map），也可以是室外
-    # 经纬度点（gps），还可能是进楼衔接的场景传送门（scene_point）。执行路线时
-    # 逐个 waypoint 判断其所需导航模式：从「某张 SLAM 地图」跨到「室外」，或从
-    # 「室外」跨回「某张 SLAM 地图」时，自动调用 NavNode.set_nav_mode 切换，并在
-    # SLAM 侧对齐目标 slam_map / submap（跨 SLAM 地图时用 geo_anchor 播种初始位姿）。
+    # 一条路线的 waypoint 统一由 ``type`` 唯一确定所需导航模式：
+    #   - ``slam`` → SLAM 室内点云定位（某 SLAM 地图 submap 内的语义点）
+    #   - ``gps``  → 室外 GNSS（场景 scene_point / 经纬度点）
+    # 执行时客户端按 ``type`` 顺序调用对应单点接口（``set_goal_by_slam`` /
+    # ``set_goal_by_outdoor``），服务端在下发目标时按需自动切模式并走传送门
+    # （见 ``_ensure_nav_mode`` / ``_ensure_submap``），无需提前规划切换段。
     # ══════════════════════════════════════════════════════════════════════
-    @staticmethod
-    def _waypoint_nav_mode(wp: Dict[str, Any]) -> Optional[str]:
-        """由 waypoint 类型推断所需导航模式：
-
-        - ``gps``（经纬度 / OSM 主干）           → ``NavNode.NAV_MODE_GPS``（室外）
-        - ``map``（语义点 / ``{x,y}``，属某张 SLAM 地图）→ ``NavNode.NAV_MODE_SLAM``
-        - ``scene_point``（场景传送门，进楼衔接点） → ``NavNode.NAV_MODE_SLAM``
-        - ``instruction``（VLN）/ 未知             → ``None``（不改变当前模式）
-        """
-        wtype = wp.get('type') or MapManager.classify_waypoint(wp)
-        if wtype == 'gps':
-            return NavNode.NAV_MODE_GPS
-        if wtype in ('map', 'scene_point'):
-            return NavNode.NAV_MODE_SLAM
-        return None
-
-    def get_route_mode_plan(self, route_name: str) -> Dict[str, Any]:
-        """把一条路线展开成带导航模式标注的段计划（供混合路线执行 / 排障）。
-
-        - 场景全局路线（顶层 ``routes``，异构 waypoint）：用 ``get_global_route_by_name``；
-        - 旧单图内部路线：用 ``get_route_by_name``（全部为 SLAM 段，向后兼容）。
-
-        :return: ``{success, route_name, waypoint_count, waypoints, segments}``；
-                 每个 waypoint 追加 ``nav_mode`` 字段，``segments`` 把相邻同模式的
-                 waypoint 归并成段（段边界即需要自动切换导航模式处）。
-        """
-        if not self.map_manager:
-            return {"success": False, "msg": "未配置 MapManager"}
-        route = None
-        try:
-            if route_name in self.map_manager.get_global_route_names():
-                route = self.map_manager.get_global_route_by_name(route_name)
-        except Exception as e:
-            logging.warning(f"读取全局路线失败({route_name}): {e}")
-        if route is None:
-            route = self.map_manager.get_route_by_name(route_name)
-        if route is None:
-            return {"success": False, "msg": f"路线不存在: {route_name}"}
-
-        waypoints = route.get('waypoints', [])
-        annotated = []
-        for wp in waypoints:
-            item = dict(wp)
-            item.setdefault('type', MapManager.classify_waypoint(wp))
-            item['nav_mode'] = self._waypoint_nav_mode(item)
-            annotated.append(item)
-
-        segments: list = []
-        for i, wp in enumerate(annotated):
-            mode = wp['nav_mode']
-            if segments and segments[-1]['mode'] == mode:
-                segments[-1]['waypoints'].append(i)
-            else:
-                segments.append({
-                    'index': len(segments),
-                    'mode': mode,
-                    'wp_type': wp['type'],
-                    'waypoints': [i],
-                })
-        return {
-            "success": True,
-            "route_name": route_name,
-            "waypoint_count": len(annotated),
-            "waypoints": annotated,
-            "segments": segments,
-        }
 
     def _current_submap_id(self) -> Optional[str]:
         """当前活跃 submap id：以 ROS 端实际加载的地图为准，回退 MapManager 缓存。
@@ -1397,17 +1332,24 @@ class NavigationToolManager:
 
         def get_route(route_name: str) -> Dict[str, Any]:
             """
-            根据路线名称获取巡逻点位列表。
+            根据路线名称获取巡逻点位列表（统一 waypoint 定义）。
 
-            - 场景级全局路线：返回异构 waypoint（每个带 ``type``：map/gps/instruction/scene_point），
-              并附带按导航模式归并的 ``segments``（段边界即 SLAM↔室外切换处）。
-            - 当前 SLAM 地图内部路线：返回展开后的 ``{submap, semantic_point}`` waypoint。
+            每个 waypoint 由 ``type`` 唯一确定导航模式：
+
+            - ``type == "slam"``：``{name, type:'slam', slam_map, submap}``（室内 SLAM）；
+            - ``type == "gps"``： ``{name, type:'gps', area, lon, lat, heading_deg}``（室外）。
+
+            客户端按 ``type`` 顺序调用 ``set_goal_by_slam`` / ``set_goal_by_outdoor``
+            即可，服务端在下发目标时按需自动切换导航模式（无需 nav_mode/segments）。
+
+            - 场景级全局路线：返回展开后的异构统一 waypoint；
+            - 当前 SLAM 地图内部路线：返回统一 SLAM 型 waypoint。
 
             Args:
                 route_name: 路线名称（如 线路A）
 
             Returns:
-            Dict: 包含路线描述、巡逻点位列表（全局路线含 type/nav_mode）与可选 segments。
+            Dict: 包含路线名、巡逻点位列表（统一 waypoint，含 name/type）与 count。
             """
             try:
                 is_global = False
@@ -1416,16 +1358,16 @@ class NavigationToolManager:
                 except Exception:
                     is_global = False
                 if is_global:
-                    plan = self.get_route_mode_plan(route_name)
-                    if not plan.get("success"):
-                        return plan
+                    route_info = self.map_manager.get_global_route_by_name(route_name)
+                    if not route_info:
+                        return {"success": False, "msg": f"路线不存在: {route_name}"}
                     return {
                         "success": True,
                         "scope": "global",
-                        "name": route_name,
-                        "waypoints": plan["waypoints"],
-                        "segments": plan["segments"],
-                        "count": plan["waypoint_count"],
+                        "name": route_info['name'],
+                        "description": route_info.get('description', ''),
+                        "waypoints": route_info['waypoints'],
+                        "count": len(route_info['waypoints']),
                     }
                 route_info = self.map_manager.get_route_by_name(route_name)
                 if not route_info:
@@ -1785,17 +1727,6 @@ class NavigationToolManager:
             except Exception as e:
                 return {"success": False, "msg": f"切换导航模式失败: {str(e)}"}
 
-        def get_route_plan(route_name: str) -> Dict[str, Any]:
-            """返回一条路线逐 waypoint 的导航模式标注与段计划（SLAM/GPS 段边界即切换点）。
-
-            仅供调用方组织路线用（只读，不执行）：调用方据此按序对每个 waypoint
-            选用相应的单点导航接口（``set_goal_by_*`` / ``set_nav_mode``）并等待到达。
-            """
-            try:
-                return self.get_route_mode_plan(route_name)
-            except Exception as e:
-                return {"success": False, "msg": f"生成路线模式计划失败: {str(e)}"}
-
         self._handlers = {
             "set_goal_by_slam": set_goal_by_slam,
             "set_goal_by_outdoor": set_goal_by_outdoor,
@@ -1822,7 +1753,6 @@ class NavigationToolManager:
             "set_xy_goal_tolerance": set_xy_goal_tolerance,
             "get_nav_mode": get_nav_mode,
             "set_nav_mode": set_nav_mode,
-            "get_route_plan": get_route_plan,
         }
 
     async def call_method(self, method: str, params: Dict[str, Any]) -> Any:

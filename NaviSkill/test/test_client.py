@@ -311,7 +311,7 @@ class SimplePatrolClient:
                 best_idx = 0
                 best_dist = float('inf')
                 for idx, wp in enumerate(self.patrol_sequence):
-                    wp_name = (wp.get('semantic_point') or wp.get('name')) if isinstance(wp, dict) else wp
+                    wp_name = wp.get('name') if isinstance(wp, dict) else wp
                     if not wp_name:
                         continue
                     pi = await client.call("get_pose_in_submap", {"pose_name": wp_name})
@@ -344,19 +344,11 @@ class SimplePatrolClient:
 
                 is_route_dict = isinstance(waypoint, dict)
 
-                # 判定 waypoint 类型（服务端展开全局路线时已标 type，缺失时据字段推断）：
-                #   instruction → VLN；scene_point → 场景传送/锚点（室外经纬度）；
-                #   gps → {lon,lat}（室外）；map → SLAM 语义点/坐标。
-                wp_type = waypoint.get("type") if is_route_dict else "map"
-                if is_route_dict and not wp_type:
-                    if "scene_point" in waypoint:
-                        wp_type = "scene_point"
-                    elif "lon" in waypoint and "lat" in waypoint:
-                        wp_type = "gps"
-                    elif "instruction" in waypoint:
-                        wp_type = "instruction"
-                    else:
-                        wp_type = "map"
+                # waypoint 类型完全以统一的 type 字段为准（服务端已标注 slam/gps/instruction）：
+                #   slam = 某 SLAM 地图 submap 的语义点；gps = 场景/经纬度点；
+                #   instruction = VLN 指令（本简单客户端不支持）。
+                # -p 传入的裸字符串点名按 slam 处理。
+                wp_type = waypoint.get("type", "slam") if is_route_dict else "slam"
 
                 start_time = time.time()
 
@@ -368,13 +360,13 @@ class SimplePatrolClient:
                     )
                     continue
 
-                # ── 室外 GPS / 场景语义点：走 set_goal_by_outdoor ──
-                if wp_type in ("scene_point", "gps"):
-                    if wp_type == "scene_point":
-                        gname = waypoint.get("scene_point") or waypoint.get("name")
+                # ── 室外 GPS（场景语义点 / 裸经纬度）：走 set_goal_by_outdoor ──
+                if wp_type == "gps":
+                    gname = waypoint.get("name")
+                    if gname:
                         outdoor_params = {"target": gname}
                     else:
-                        gname = waypoint.get("name") or "tmp"
+                        gname = "tmp"
                         outdoor_params = {
                             "target": "tmp",
                             "lon": waypoint.get("lon"),
@@ -406,11 +398,7 @@ class SimplePatrolClient:
                 target_submap = None
                 if is_route_dict:
                     target_submap = waypoint.get("submap")
-                    target_name = (
-                        waypoint.get("semantic_point")
-                        or waypoint.get("point")
-                        or waypoint.get("name")
-                    )
+                    target_name = waypoint.get("name")
                     if not target_name:
                         logger.error(f"❌ 路线点格式不正确: {waypoint}")
                         continue

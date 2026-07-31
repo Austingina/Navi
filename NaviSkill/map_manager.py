@@ -619,7 +619,7 @@ class MapManager:
         :param route_name: 路线名称
         :param slam_map_id: SLAM 地图 id，默认当前 SLAM 地图
         :return: 路线配置，包含 description 和 waypoints
-                 waypoints 格式: [{submap, semantic_point}, ...]
+                 waypoints 为统一 SLAM 型: [{name, type:'slam', slam_map, submap}, ...]
                  嵌套路线引用会被递归展开为扁平列表
                  如果路线不存在返回 None
         """
@@ -627,12 +627,23 @@ class MapManager:
         route_config = routes.get(route_name)
         if not route_config:
             return None
+        eff_slam_map = slam_map_id or self.current_slam_map
         raw_waypoints = route_config.get('waypoints', [])
         flat_waypoints = self._flatten_waypoints(raw_waypoints, {route_name}, routes)
+        waypoints = []
+        for wp in flat_waypoints:
+            item = self._slam_waypoint(
+                wp.get('semantic_point'), wp.get('submap'),
+                wp.get('slam_map') or eff_slam_map)
+            # 罕见：局部路线里直接给 map 系坐标 {x, y}（无语义点名），原样保留
+            if 'x' in wp and 'y' in wp:
+                item['x'] = wp['x']
+                item['y'] = wp['y']
+            waypoints.append(item)
         return {
             'name': route_name,
             'description': route_config.get('description', ''),
-            'waypoints': flat_waypoints
+            'waypoints': waypoints
         }
     
     def get_default_route(self) -> Optional[str]:
@@ -992,6 +1003,41 @@ class MapManager:
         """顶层全局路线名称列表。"""
         return list(self.global_routes.keys())
 
+    # ==================== 统一 waypoint 定义 ====================
+    #
+    # 路线（局部/全局）展开后统一为以下两类 waypoint：
+    #   - SLAM 型（来自局部路线的 semantic_point）：
+    #       {name, type:'slam', slam_map, submap}
+    #   - GPS 型（来自全局路线的 scene_point）：
+    #       {name, type:'gps', area, lon, lat, heading_deg}
+    # 其中 name 统一为点位名（semantic_point / scene_point）。
+
+    @staticmethod
+    def _slam_waypoint(name: Optional[str], submap: Optional[str],
+                       slam_map: Optional[str]) -> Dict:
+        """构造统一的 SLAM 型 waypoint：来自某 SLAM 地图某 submap 的语义点。"""
+        return {
+            'name': name,
+            'type': 'slam',
+            'slam_map': slam_map,
+            'submap': submap,
+        }
+
+    def _gps_waypoint(self, name: str) -> Dict:
+        """构造统一的 GPS 型 waypoint：来自场景语义点（scene_point）。
+
+        area / lon / lat / heading_deg 从场景语义点查出（缺失时为 None）。
+        """
+        pt = self.get_scene_point(name) or {}
+        return {
+            'name': name,
+            'type': 'gps',
+            'area': pt.get('area'),
+            'lon': pt.get('lon'),
+            'lat': pt.get('lat'),
+            'heading_deg': pt.get('heading_deg'),
+        }
+
     @staticmethod
     def classify_waypoint(wp: Dict) -> str:
         """
@@ -1015,30 +1061,26 @@ class MapManager:
 
     def _expand_global_waypoints(self, waypoints: List[Dict], visited: set) -> List[Dict]:
         """
-        展开全局路线的异构 waypoint 序列，为每个 waypoint 标注 ``type``：
+        展开全局路线的异构 waypoint 序列，统一为 SLAM / GPS 两类 waypoint：
 
         - ``{slam_map, route}``：把该 SLAM 地图的一条内部路线整体展开为若干
-          ``{slam_map, submap, semantic_point, type=map}``；
+          统一 SLAM 型 ``{name, type:'slam', slam_map, submap}``；
         - ``{route}``（无 slam_map）：递归展开另一条**全局路线**；
-        - ``{scene_point}`` / ``{lon,lat}`` / ``{instruction}`` /
-          ``{(slam_map,) submap, semantic_point}`` / ``{x,y}``：原样透传并标注类型，
-          尽力附带解析出的坐标（scene_point 附 lon/lat，map 语义点附 pose）。
+        - ``{scene_point}``：统一 GPS 型 ``{name, type:'gps', area, lon, lat, heading_deg}``；
+        - ``{(slam_map,) submap, semantic_point}`` / ``{x,y}``：统一 SLAM 型；
+        - ``{lon,lat}``（无 scene_point 名）：统一 GPS 型（area/name 尽力补全）；
+        - ``{instruction}``：透传为 ``{name:None, type:'instruction', instruction}``。
         """
         flat: List[Dict] = []
         for wp in waypoints:
-            # 1) SLAM 地图内部路线整体引用
+            # 1) SLAM 地图内部路线整体引用 → 已是统一 SLAM 型
             if 'route' in wp and 'slam_map' in wp:
                 sid = wp['slam_map']
                 sub = self.get_route_by_name(wp['route'], slam_map_id=sid)
                 if not sub:
                     print(f"MapManager: 全局路线引用的内部路线不存在，跳过: {sid}/{wp['route']}")
                     continue
-                for sw in sub['waypoints']:
-                    item = dict(sw)
-                    item['slam_map'] = sid
-                    item['type'] = 'map'
-                    self._attach_map_pose(item)
-                    flat.append(item)
+                flat.extend(sub['waypoints'])
                 continue
             # 2) 嵌套全局路线引用
             if 'route' in wp and 'slam_map' not in wp:
@@ -1054,37 +1096,45 @@ class MapManager:
                 flat.extend(self._expand_global_waypoints(ref_cfg.get('waypoints', []), visited))
                 visited.discard(ref)
                 continue
-            # 3) 普通异构 waypoint：标注类型 + 尽力补充坐标
-            item = dict(wp)
+            # 3) 普通异构 waypoint → 统一为 SLAM / GPS
             wtype = self.classify_waypoint(wp)
-            item['type'] = wtype
             if wtype == 'scene_point':
-                pt = self.get_scene_point(wp['scene_point'])
-                if pt:
-                    item.setdefault('lon', pt.get('lon'))
-                    item.setdefault('lat', pt.get('lat'))
-                    item.setdefault('heading_deg', pt.get('heading_deg'))
-                    target = self.get_scene_portal_target(wp['scene_point'])
-                    if target:
-                        item['target_slam_map'] = target
+                flat.append(self._gps_waypoint(wp['scene_point']))
+            elif wtype == 'gps':
+                # 裸经纬度点（无 scene_point 名）
+                flat.append({
+                    'name': wp.get('name'),
+                    'type': 'gps',
+                    'area': wp.get('area'),
+                    'lon': wp.get('lon'),
+                    'lat': wp.get('lat'),
+                    'heading_deg': wp.get('heading_deg'),
+                })
             elif wtype == 'map':
-                self._attach_map_pose(item)
-            flat.append(item)
+                item = self._slam_waypoint(
+                    wp.get('semantic_point'), wp.get('submap'),
+                    wp.get('slam_map') or self.current_slam_map)
+                if 'x' in wp and 'y' in wp:
+                    item['x'] = wp['x']
+                    item['y'] = wp['y']
+                flat.append(item)
+            elif wtype == 'instruction':
+                flat.append({
+                    'name': None,
+                    'type': 'instruction',
+                    'instruction': wp.get('instruction'),
+                })
+            else:
+                item = dict(wp)
+                item['type'] = 'unknown'
+                flat.append(item)
         return flat
-
-    def _attach_map_pose(self, item: Dict):
-        """为 map 型 waypoint（引用语义点）尽力附带解析出的 pose（best-effort）。"""
-        if item.get('semantic_point') and 'pose' not in item:
-            pi = self.get_pose_in_submap(
-                item['semantic_point'], item.get('submap'), item.get('slam_map'))
-            if pi and pi.get('pose'):
-                item['pose'] = pi['pose']
 
     def get_global_route_by_name(self, route_name: str) -> Optional[Dict]:
         """
-        根据名称获取顶层全局路线，返回展开并标注类型后的异构 waypoint 序列。
+        根据名称获取顶层全局路线，返回展开并统一后的 waypoint 序列。
 
-        :return: {name, description, waypoints:[{..., type: map|gps|instruction|scene_point}]}
+        :return: {name, description, waypoints:[{name, type: slam|gps|instruction, ...}]}
                  路线不存在返回 None
         """
         cfg = self.global_routes.get(route_name)
