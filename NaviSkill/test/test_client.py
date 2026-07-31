@@ -124,13 +124,45 @@ class SimplePatrolClient:
         self.route_cli: Optional[str] = _r if _r else None
         self.route_name: str = ""
 
-    async def start_patrol_test(self) -> bool:
-        """开始巡检测试"""
-        logger.info("🚀 开始巡检路径测试 (WebSocket)")
-        logger.info(f"📡 {self.ws_url}")
+    async def print_status(self, client) -> Optional[dict]:
+        """打印当前机器人状态（导航模式 / 地图 / 位置）。
 
-        async with WsNavClient(self.ws_url) as client:
-            # 打印所有 submap 信息
+        - 打印当前 nav_mode：
+          * SLAM 模式：打印 slam_map id、当前 submap id、平面位置及子地图列表；
+          * 室外 GPS 模式：打印平面位置与最新 GNSS fix；
+        - 打印最接近的预设点。
+
+        :return: 当前平面位置 dict（``{'x','y','z'}``）；暂无实时位姿时返回 None。
+        """
+        # 当前导航状态
+        logger.info("🔍 检查服务器连接和机器人状态...")
+        status_data = await client.call("get_status")
+        nav_mode = status_data.get("nav_mode")
+        if nav_mode:
+            logger.info(f"🧭 当前导航模式: {nav_mode}")
+
+        if not status_data.get("success"):
+            # 无实时位姿并非致命：新架构下定位/导航栈可能按需（首个目标触发
+            # _ensure_nav_mode）才拉起，此时尚无 map→base_link。继续下发目标即可。
+            logger.warning(
+                "⚠️  暂无机器人实时位姿（%s）；定位/导航栈可能尚未就绪，"
+                "仍继续下发目标（服务端会按需切换/拉起对应导航栈）",
+                status_data.get("msg"),
+            )
+            return None
+
+        current_pos = status_data.get("position")
+        if nav_mode == "slam":
+            slam_map = status_data.get("slam_map")
+            cur_map = await client.call("get_current_map_id")
+            submap_id = cur_map.get("map_id") if cur_map.get("success") else None
+            logger.info(f"🗺️  SLAM 定位：slam_map={slam_map}, submap={submap_id}")
+            if current_pos:
+                logger.info(
+                    f"📍 当前位置: x={current_pos['x']:.3f}, y={current_pos['y']:.3f}"
+                )
+
+            # 子地图列表（仅 SLAM 模式下有意义）
             submap_list_data = await client.call("get_submap_list")
             if submap_list_data.get("success"):
                 submap_ids = submap_list_data.get("submaps", [])
@@ -147,113 +179,130 @@ class SimplePatrolClient:
                             f"map_file={info.get('map_file', '')}, "
                             f"points={sp_count}, portals={portal_count}"
                         )
-
-            if self.patrol_sequence:
+        else:
+            # 室外 GPS 模式
+            if current_pos:
                 logger.info(
-                    "📌 使用 -p 指定的巡检序列 (%d 个目的地): %s",
-                    len(self.patrol_sequence),
-                    self.patrol_sequence,
+                    f"📍 当前位置(map): x={current_pos['x']:.3f}, y={current_pos['y']:.3f}"
                 )
-            else:
-                routes_data = await client.call("get_route_names")
-                if not routes_data.get("success"):
-                    logger.error(
-                        "❌ get_route_names 失败: %s",
-                        routes_data.get("msg"),
-                    )
-                    return False
-
-                names: List[str] = list(routes_data.get("route_names") or [])
-                cnt = routes_data.get("count", len(names))
-                logger.info(f"📋 服务器全部路线 ({cnt} 条): {names}")
-                if not names:
-                    logger.error("❌ 服务器未配置任何路线")
-                    return False
-
-                if self.route_cli:
-                    if self.route_cli not in names:
-                        logger.error(
-                            "❌ 路线 %r 不存在，可用: %s",
-                            self.route_cli,
-                            names,
-                        )
-                        return False
-                    self.route_name = self.route_cli
-                    logger.info("📌 使用 -r 指定路线: %r", self.route_name)
-                else:
-                    default_route_data = await client.call("get_default_route")
-                    dr = default_route_data.get("default_route") if default_route_data.get("success") else None
-                    if dr and dr in names:
-                        self.route_name = dr
-                        logger.info("📌 使用 default_route: %r", self.route_name)
-                    else:
-                        self.route_name = names[0]
-                        logger.info("📌 未指定 -r 且无 default_route，使用第一条路线: %r", self.route_name)
-
-                logger.info(f"📌 拉取路线详情: {self.route_name!r}")
-                try:
-                    route_data = await client.call(
-                        "get_route", {"route_name": self.route_name}
-                    )
-                    if route_data.get("success") and route_data.get("waypoints"):
-                        self.patrol_sequence = route_data["waypoints"]
-                        logger.info(
-                            f"✅ 路线 {self.route_name} 共 {len(self.patrol_sequence)} 个途经点"
-                        )
-                    else:
-                        logger.warning(
-                            "无法获取路线 %r: %s",
-                            self.route_name,
-                            route_data.get("msg"),
-                        )
-                except Exception as e:
-                    logger.warning(f"获取路线异常: {e}")
-
-                if not self.patrol_sequence:
-                    logger.error(
-                        "❌ 未得到任何路线途经点（请检查地图 multifloor 是否配置 routes）"
-                    )
-                    return False
-
-            if self.route_start_index > 0:
-                total = len(self.patrol_sequence)
-                if self.route_start_index >= total:
-                    logger.error(
-                        f"❌ 起始序号 {self.route_start_index + 1} 超出路线点位总数 {total}"
-                    )
-                    return False
-                self.patrol_sequence = self.patrol_sequence[self.route_start_index:]
+            gps_fix = status_data.get("gps_fix")
+            if gps_fix:
                 logger.info(
-                    f"📌 从第 {self.route_start_index + 1}/{total} 个点位开始，"
-                    f"剩余 {len(self.patrol_sequence)} 个点"
+                    f"🛰️  GNSS fix: lon={gps_fix.get('lon')}, "
+                    f"lat={gps_fix.get('lat')}, status={gps_fix.get('status')}"
                 )
 
+        nearest_data = await client.call("get_nearest_point")
+        if nearest_data.get("success"):
             logger.info(
-                f"📋 本次测试点位序列 ({len(self.patrol_sequence)}): "
-                f"{self.patrol_sequence}"
+                f"📍 最接近的预设点: {nearest_data['nearest_point']} "
+                f"(距离: {nearest_data['distance']}m)"
             )
 
-            logger.info("🔍 检查服务器连接和机器人状态...")
-            status_data = await client.call("get_status")
-            current_pos = None
-            if status_data.get("success"):
-                current_pos = status_data["position"]
-                logger.info(f"📍 当前位置: x={current_pos['x']:.3f}, y={current_pos['y']:.3f}")
-            else:
-                # 无实时位姿并非致命：新架构下定位/导航栈可能按需（首个目标触发
-                # _ensure_nav_mode）才拉起，此时尚无 map→base_link。继续下发目标即可。
-                logger.warning(
-                    "⚠️  暂无机器人实时位姿（%s）；定位/导航栈可能尚未就绪，"
-                    "仍继续下发目标（服务端会按需切换/拉起对应导航栈）",
-                    status_data.get("msg"),
-                )
+        return current_pos
 
-            nearest_data = await client.call("get_nearest_point")
-            if nearest_data.get("success"):
-                logger.info(
-                    f"📍 最接近的预设点: {nearest_data['nearest_point']} "
-                    f"(距离: {nearest_data['distance']}m)"
+    async def print_routes(self, client) -> bool:
+        """确定并打印本次巡检路线，结果写入 ``self.patrol_sequence`` / ``self.route_name``。
+
+        优先级：``-p`` 指定序列 > ``-r`` 指定路线 > default_route > 第一条路线；
+        再按 ``route_start_index`` 截断。返回 False 表示无可用路线（应终止）。
+        """
+        if self.patrol_sequence:
+            logger.info(
+                "📌 使用 -p 指定的巡检序列 (%d 个目的地): %s",
+                len(self.patrol_sequence),
+                self.patrol_sequence,
+            )
+        else:
+            routes_data = await client.call("get_route_names")
+            if not routes_data.get("success"):
+                logger.error(
+                    "❌ get_route_names 失败: %s",
+                    routes_data.get("msg"),
                 )
+                return False
+
+            names: List[str] = list(routes_data.get("route_names") or [])
+            cnt = routes_data.get("count", len(names))
+            logger.info(f"📋 服务器全部路线 ({cnt} 条): {names}")
+            if not names:
+                logger.error("❌ 服务器未配置任何路线")
+                return False
+
+            if self.route_cli:
+                if self.route_cli not in names:
+                    logger.error(
+                        "❌ 路线 %r 不存在，可用: %s",
+                        self.route_cli,
+                        names,
+                    )
+                    return False
+                self.route_name = self.route_cli
+                logger.info("📌 使用 -r 指定路线: %r", self.route_name)
+            else:
+                default_route_data = await client.call("get_default_route")
+                dr = default_route_data.get("default_route") if default_route_data.get("success") else None
+                if dr and dr in names:
+                    self.route_name = dr
+                    logger.info("📌 使用 default_route: %r", self.route_name)
+                else:
+                    self.route_name = names[0]
+                    logger.info("📌 未指定 -r 且无 default_route，使用第一条路线: %r", self.route_name)
+
+            logger.info(f"📌 拉取路线详情: {self.route_name!r}")
+            try:
+                route_data = await client.call(
+                    "get_route", {"route_name": self.route_name}
+                )
+                if route_data.get("success") and route_data.get("waypoints"):
+                    self.patrol_sequence = route_data["waypoints"]
+                    logger.info(
+                        f"✅ 路线 {self.route_name} 共 {len(self.patrol_sequence)} 个途经点"
+                    )
+                else:
+                    logger.warning(
+                        "无法获取路线 %r: %s",
+                        self.route_name,
+                        route_data.get("msg"),
+                    )
+            except Exception as e:
+                logger.warning(f"获取路线异常: {e}")
+
+            if not self.patrol_sequence:
+                logger.error(
+                    "❌ 未得到任何路线途经点（请检查地图 multifloor 是否配置 routes）"
+                )
+                return False
+
+        if self.route_start_index > 0:
+            total = len(self.patrol_sequence)
+            if self.route_start_index >= total:
+                logger.error(
+                    f"❌ 起始序号 {self.route_start_index + 1} 超出路线点位总数 {total}"
+                )
+                return False
+            self.patrol_sequence = self.patrol_sequence[self.route_start_index:]
+            logger.info(
+                f"📌 从第 {self.route_start_index + 1}/{total} 个点位开始，"
+                f"剩余 {len(self.patrol_sequence)} 个点"
+            )
+
+        logger.info(
+            f"📋 本次测试点位序列 ({len(self.patrol_sequence)}): "
+            f"{self.patrol_sequence}"
+        )
+        return True
+
+    async def start_patrol_test(self) -> bool:
+        """开始巡检测试"""
+        logger.info("🚀 开始巡检路径测试 (WebSocket)")
+        logger.info(f"📡 {self.ws_url}")
+
+        async with WsNavClient(self.ws_url) as client:
+            current_pos = await self.print_status(client)
+
+            if not await self.print_routes(client):
+                return False
 
             if self.continue_tolerance >= 0 and current_pos and len(self.patrol_sequence) > 1:
                 tol = self.continue_tolerance
