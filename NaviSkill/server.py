@@ -1056,11 +1056,18 @@ class NavigationToolManager:
                 return {"success": False, "msg": f"设置目标失败: {str(e)}"}
 
         def set_goal_by_outdoor(target: str, lon: float = None, lat: float = None,
-                                tolerance: float = 3.0) -> Dict[str, Any]:
+                                tolerance: float = 3.0,
+                                direct_threshold: float = 30.0) -> Dict[str, Any]:
             """
-            按语义点下发室外 GPS 导航目标（campus_nav 路网规划器）。
+            按语义点下发室外 GPS 导航目标（按距离自适应选择下发通道）。
 
             仅支持室外 GPS 模式，调用时自动切到 gps 模式（不再支持 SLAM 换算）。
+
+            下发通道（见 ``NavNode.set_outdoor_goal``）：
+            - 目标与机器人当前位置的直线距离 < ``direct_threshold``（默认 30m）：作为
+              **点到点 Nav2 目标**直接发布 ``PoseStamped`` 到 ``/goal_pose``（等价 RViz
+              “Nav2 Goal”），绕过路网规划；
+            - 否则（或当前未定位、无法估距）：走 **campus_nav 路网规划器**（``campus_goal_pose``）。
 
             两种用法：
             - **命名场景语义点**（``target`` 为具体点名）：经纬度**始终**从 MapManager 的
@@ -1075,9 +1082,10 @@ class NavigationToolManager:
             lon: 目标点经度；仅 ``target == "tmp"`` 时使用且必填。
             lat: 目标点纬度；仅 ``target == "tmp"`` 时使用且必填。
             tolerance: 到达判定距离阈值（米），默认 3.0；随目标记录并供 `wait_goal_reached` 使用。
+            direct_threshold: 直线距离阈值（米），默认 30.0；小于该值走 Nav2 直达，否则走路网规划。
 
             返回:
-            Dict: 操作结果
+            Dict: 操作结果（含 ``channel``: 'nav2'|'campus' 与估算 ``distance``）
             """
             try:
                 if not target:
@@ -1103,17 +1111,25 @@ class NavigationToolManager:
                     return {"success": False,
                             "msg": mode_switch.get("msg", "切换到室外 GPS 模式失败"),
                             "mode_switch": mode_switch}
-                ok = self.ros_node.set_outdoor_goal_by_lonlat(
-                    float(lon), float(lat), target=target, tolerance=float(tolerance))
+                res = self.ros_node.set_outdoor_goal(
+                    float(lon), float(lat), target=target, tolerance=float(tolerance),
+                    direct_threshold_m=float(direct_threshold))
+                ok = res.get("ok")
+                channel = res.get("channel")
+                dist = res.get("distance")
+                dist_str = "未知" if dist is None else f"{dist:.1f}m"
+                chan_str = "Nav2直达(/goal_pose)" if channel == "nav2" else "路网规划器(campus_goal_pose)"
                 return {
                     "success": bool(ok),
                     "mode": "gps",
+                    "channel": channel,
+                    "distance": dist,
                     "mode_switch": mode_switch,
                     "target": target,
                     "goal": {"lon": lon, "lat": lat},
                     "tolerance": tolerance,
-                    "msg": (f"已向室外路网规划器下发目标 target={target} ({lon},{lat})"
-                            if ok else "室外经纬度目标下发失败"),
+                    "msg": (f"已下发室外目标 target={target} ({lon},{lat})，距离={dist_str}，通道={chan_str}"
+                            if ok else "室外目标下发失败"),
                 }
             except Exception as e:
                 return {"success": False, "msg": f"经纬度导航失败: {str(e)}"}
