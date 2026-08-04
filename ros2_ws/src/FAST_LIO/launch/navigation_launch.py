@@ -15,14 +15,17 @@
 # Local copy of nav2_bringup's navigation_launch.py, trimmed to the servers this
 # project actually configures.
 #
-# Jazzy's upstream copy also brings up route_server, collision_monitor and
-# docking_server under the lifecycle manager. None of them are configured in our
-# param files, and a lifecycle node that fails to configure aborts the whole
-# bringup -- collision_monitor treats observation_sources as mandatory, so it
-# dies immediately. Enabling collision_monitor would also be wrong here: the
-# upstream launch leaves its cmd_vel unremapped while our velocity_smoother owns
-# cmd_vel_nav, so the two would fight over the same topic. Routing is handled by
+# Jazzy's upstream copy also brings up route_server and docking_server under the
+# lifecycle manager. Neither is configured in our param files, and a lifecycle
+# node that fails to configure aborts the whole bringup. Routing is handled by
 # campus_nav instead, and we have no docking hardware.
+#
+# collision_monitor IS brought up: it owns the last hop of the velocity chain,
+# cmd_vel_smoothed -> cmd_vel, so without it nothing ever publishes /cmd_vel and
+# the base never moves. Its observation_sources/polygons are configured in
+# param_outdoor_elevation.yaml (mandatory -- it dies at configure without them).
+# Its in/out topics come from params, not remappings, so there is no clash with
+# the cmd_vel -> cmd_vel_nav remap that feeds velocity_smoother.
 #
 # Keep the rest in sync with /opt/ros/$ROS_DISTRO/share/nav2_bringup/launch/navigation_launch.py.
 
@@ -60,6 +63,7 @@ def generate_launch_description():
         'planner_server',
         'behavior_server',
         'velocity_smoother',
+        'collision_monitor',
         'bt_navigator',
         'waypoint_follower',
     ]
@@ -215,6 +219,17 @@ def generate_launch_description():
                 + [('cmd_vel', 'cmd_vel_nav')],
             ),
             Node(
+                package='nav2_collision_monitor',
+                executable='collision_monitor',
+                name='collision_monitor',
+                output='screen',
+                respawn=use_respawn,
+                respawn_delay=2.0,
+                parameters=[configured_params],
+                arguments=['--ros-args', '--log-level', log_level],
+                remappings=remappings,
+            ),
+            Node(
                 package='nav2_lifecycle_manager',
                 executable='lifecycle_manager',
                 name='lifecycle_manager_navigation',
@@ -281,6 +296,13 @@ def generate_launch_description():
                         parameters=[configured_params],
                         remappings=remappings
                         + [('cmd_vel', 'cmd_vel_nav')],
+                    ),
+                    ComposableNode(
+                        package='nav2_collision_monitor',
+                        plugin='nav2_collision_monitor::CollisionMonitor',
+                        name='collision_monitor',
+                        parameters=[configured_params],
+                        remappings=remappings,
                     ),
                     ComposableNode(
                         package='nav2_lifecycle_manager',

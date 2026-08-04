@@ -114,6 +114,53 @@ velocity_smoother:
     velocity_timeout: 1.0
 
 # -----------------------------------------------------------------------------
+# 碰撞监视器：速度链的最后一跳 cmd_vel_smoothed -> cmd_vel（底盘只订阅 /cmd_vel）。
+# 不启用它就没人发 /cmd_vel，车原地不动、controller 反复报 Failed to make progress。
+# observation_sources 是必填项，缺了节点在 configure 阶段就会死并拖崩整个 bringup。
+# -----------------------------------------------------------------------------
+collision_monitor:
+  ros__parameters:
+    use_sim_time: True
+    base_frame_id: base_link
+    odom_frame_id: odom
+    cmd_vel_in_topic: cmd_vel_smoothed
+    cmd_vel_out_topic: cmd_vel
+    state_topic: collision_monitor_state
+    transform_tolerance: 0.3
+    # /livox_scan2 约 10 Hz，1 s 内收不到就认为传感器失效并刹停。
+    source_timeout: 1.0
+    base_shift_correction: True
+    stop_pub_timeout: 2.0
+    # approach 型：按当前速度前推 time_before_collision 秒，footprint 撞上点就减速/停，
+    # 不需要手调几何。硬性 stop 区见下方注释（地形层偶有误报，默认不开以免原地锁死）。
+    polygons: ["FootprintApproach"]
+    FootprintApproach:
+      type: "polygon"
+      action_type: "approach"
+      footprint_topic: /local_costmap/published_footprint
+      time_before_collision: 1.5
+      simulation_time_step: 0.1
+      min_points: 4
+      visualize: False
+      enabled: True
+    # PolygonStop:
+    #   type: "polygon"
+    #   action_type: "stop"
+    #   # 略大于 0.8x0.8 的 footprint，进入即刹停。
+    #   points: "[[0.55, 0.45], [0.55, -0.45], [-0.45, -0.45], [-0.45, 0.45]]"
+    #   min_points: 4
+    #   visualize: True
+    #   polygon_pub_topic: collision_monitor_stop_zone
+    #   enabled: True
+    # 与两张 costmap 的 obstacle_layer 同源，保证“看得见的障碍”和“会刹车的障碍”一致。
+    # 该 scan 的 frame 是 livox_frame，需要 base_link->livox_frame 的 TF 才能用。
+    observation_sources: ["scan"]
+    scan:
+      type: "scan"
+      topic: /livox_scan2
+      enabled: True
+
+# -----------------------------------------------------------------------------
 # 局部代价地图：滚动窗口，global_frame = odom（对 GPS 修正的 map->odom 跳变免疫）
 # 障碍源 = /livox_scan2（地面感知 2D scan，来自 cloud_to_2d_laserscan）
 # -----------------------------------------------------------------------------

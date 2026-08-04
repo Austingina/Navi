@@ -1,5 +1,6 @@
 import glob
 import os
+from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -22,8 +23,14 @@ def generate_launch_description():
     # python3.10；ELEVATION_VENV_SITE_PACKAGES 可直接覆盖。
     elevation_site_packages = os.environ.get('ELEVATION_VENV_SITE_PACKAGES', '')
     if not elevation_site_packages:
-        navi_root = os.environ.get(
-            'NAVI_ROOT', os.path.join(os.path.expanduser('~'), 'Navi'))
+        navi_root = os.environ.get('NAVI_ROOT')
+        if not navi_root:
+            # Support arbitrary clone directories.  Walk up from the installed
+            # package share directory and use the first repository root.
+            navi_root = next(
+                (str(parent) for parent in Path(fast_lio_dir).parents
+                 if (parent / 'envs' / 'elevation_mapping').is_dir()),
+                os.path.join(os.path.expanduser('~'), 'Navi'))
         candidates = sorted(glob.glob(os.path.join(
             navi_root, 'envs', 'elevation_mapping', '.venv', 'lib',
             'python3.*', 'site-packages')))
@@ -116,4 +123,3 @@ def generate_launch_description():
         elevation_node,
         terrain_scan_node,
     ])
-
