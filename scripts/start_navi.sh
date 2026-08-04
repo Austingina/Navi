@@ -1,7 +1,7 @@
 #! /bin/bash
 # 启动共享常驻会话 session=navi（navi.base.yaml）：雷达 + NaviSkill。
-# 这套与导航模式无关、常驻不重启；SLAM / 室外由 start_slam.sh / start_outdoor.sh
-# 各自的会话切换（见 switch_nav_mode.sh）。
+# 这套与导航模式无关、常驻不重启。SLAM / 室外导航栈的"首次拉起"由 NaviSkill(server.py)
+# 依据 start_mcp.sh 的 -s 参数自动决定并调起 start_slam.sh / start_outdoor.sh。
 #
 # 用法:
 #   ./start_navi.sh          # 真实环境：启动激光雷达 + NaviSkill

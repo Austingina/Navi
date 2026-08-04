@@ -209,6 +209,7 @@ void MainWindow::setupMenuBar() {
     fileMenu->addAction("打开单张地图（替换场景）...", this, &MainWindow::onOpen);
     fileMenu->addAction("导入 OSM/PBF 底图...", this, &MainWindow::onImportOsm);
     fileMenu->addAction("导入 SLAM 地图...", this, &MainWindow::onImportSlamMap);
+    fileMenu->addAction("导出当前 SLAM 地图...", this, &MainWindow::onExportActiveSlamMap);
     fileMenu->addSeparator();
     fileMenu->addAction("修改版本号...", this, &MainWindow::onEditVersion);
     fileMenu->addSeparator();
@@ -936,6 +937,16 @@ void MainWindow::onRenameSlamMap(const QString& slamMapId, const QString& newNam
                               .arg(e ? e->name : nn, e ? e->id : code));
 }
 
+void MainWindow::onExportActiveSlamMap() {
+    const QString id = activeMapId();
+    if (id.isEmpty()) {
+        QMessageBox::information(this, "导出 SLAM 地图",
+            "当前没有激活的 SLAM 地图。\n请先在「SLAM地图」标签中激活/打开一张地图。");
+        return;
+    }
+    onExportSlamMap(id);
+}
+
 void MainWindow::onExportSlamMap(const QString& slamMapId) {
     // 活跃地图取工作副本 project_（含未保存编辑），其余取条目内 project
     MapProject* proj = projectForMap(slamMapId);
@@ -944,7 +955,8 @@ void MainWindow::onExportSlamMap(const QString& slamMapId) {
         return;
     }
     auto* e = scene_.mapById(slamMapId);
-    const QString suggest = e ? (e->name.isEmpty() ? e->id : e->name) : slamMapId;
+    // 按 SLAM 地图的 code（即 id）命名导出目录 / <目录名>.json，不使用 name 字段
+    const QString suggest = e ? e->id : slamMapId;
 
     QString parentDir = QFileDialog::getExistingDirectory(
         this, QString("选择导出「%1」的目标目录（将写入 <目录名>.json 与 PCD）").arg(suggest),
@@ -2442,10 +2454,23 @@ void MainWindow::onRenameRoute(const QString& oldName, const QString& newName) {
             QString("重命名失败：路线 '%1' 不存在或 '%2' 已被占用").arg(oldName, newName));
         return;
     }
+    // 同步更新场景全局路线中对该内部路线的引用
+    // （GlobalWaypoint::Route，slamMap==当前活跃地图 且 route==oldName）
+    const QString mapId = activeMapId();
+    bool refUpdated = false;
+    for (auto& r : scene_.globalRoutes())
+        for (auto& wp : r.waypoints)
+            if (wp.kind == GlobalWaypoint::Route
+                && wp.slamMap == mapId && wp.route == oldName) {
+                wp.route = newName;
+                refUpdated = true;
+            }
+
     markDirty();
     submapPanel_->rebuild(&project_);
     submapPanel_->expandRoute(newName);
     refreshRouteLines();
+    if (refUpdated) scenePanel_->rebuild(&scene_);
     statusLabel_->setText(QString("已将路线 '%1' 重命名为 '%2'").arg(oldName, newName));
 }
 

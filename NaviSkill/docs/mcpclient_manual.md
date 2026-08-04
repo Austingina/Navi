@@ -66,7 +66,7 @@ bash scripts/start_navi.sh
 它会：
 
 1. 先执行 `scripts/stop_navi.sh` 清理旧的 `navi` tmux 会话；
-2. 用 `tmuxp` 加载 `scripts/navi.yaml`，在 `navi` 会话里**依次**拉起三个服务（见 `navi.yaml`）：
+2. 用 `tmuxp` 加载 `scripts/navi.slam.yaml`，在 `navi` 会话里**依次**拉起三个服务（见 `navi.slam.yaml`）：
 
    | 顺序 | pane 命令 | 作用 |
    |------|-----------|------|
@@ -80,8 +80,6 @@ bash scripts/start_navi.sh
 tmux attach -t navi     # 进入，Ctrl+b 再按数字/方向键切 pane
 # Ctrl+b d 脱离（服务继续在后台运行）
 ```
-
-> `-c` 选项：`bash scripts/start_navi.sh -c` 会改用 `navi.caihong.yaml`（另一套机器/地图配置）。
 
 **停止全部服务：**
 

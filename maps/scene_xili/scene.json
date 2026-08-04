@@ -1,14 +1,38 @@
 {
     "routes": {
-        "智城AB栋巡检": {
+        "route_A2_A1_A2": {
             "description": "",
             "waypoints": [
+                {
+                    "scene_point": "A2北广场"
+                },
+                {
+                    "route": "routeA2",
+                    "slam_map": "zhichengA2A3"
+                },
                 {
                     "scene_point": "智城西北角"
                 },
                 {
-                    "route": "A2大堂",
-                    "slam_map": "zhichengA2A3"
+                    "scene_point": "A2西广场"
+                },
+                {
+                    "route": "routeA1",
+                    "slam_map": "zhichengA1"
+                },
+                {
+                    "scene_point": "A2西广场"
+                },
+                {
+                    "scene_point": "A2北广场"
+                }
+            ]
+        },
+        "route_outdoor": {
+            "description": "",
+            "waypoints": [
+                {
+                    "scene_point": "智城西北角"
                 },
                 {
                     "scene_point": "智城兴科一街北出口"
@@ -26,7 +50,7 @@
         }
     },
     "scene": {
-        "build_no": 20260727103159,
+        "build_no": 20260731164456,
         "crs": "WGS84",
         "name": "xili",
         "origin": {
@@ -47,6 +71,9 @@
             "source": "osm/xili_5km_merged.osm.pbf"
         },
         "portals": {
+            "A1西广场": {
+                "target_slam_map": "zhichengA1"
+            },
             "A2北广场": {
                 "target_slam_map": "zhichengA2A3"
             },
@@ -59,12 +86,30 @@
             "彩虹"
         ],
         "semantic_points": {
+            "A1西广场": {
+                "alt": 0,
+                "area": "智城",
+                "heading_deg": 0,
+                "lat": 22.57348767,
+                "lon": 113.93442003,
+                "need_inspect": false,
+                "type": "single_pose"
+            },
             "A2北广场": {
                 "alt": 0,
                 "area": "智城",
                 "heading_deg": 0,
                 "lat": 22.57433615,
                 "lon": 113.93475818,
+                "need_inspect": false,
+                "type": "single_pose"
+            },
+            "A2西广场": {
+                "alt": 0,
+                "area": "智城",
+                "heading_deg": 0,
+                "lat": 22.57411489,
+                "lon": 113.93437742,
                 "need_inspect": false,
                 "type": "single_pose"
             },
@@ -2195,8 +2240,8 @@
                 "scale": 1
             },
             "global": {
-                "build_no": 20260727092408,
-                "default_route": "",
+                "build_no": 20260731093744,
+                "default_route": "routeA1",
                 "default_submap": "",
                 "version": "1.0"
             },
@@ -2205,6 +2250,31 @@
             "ortho_visible": true,
             "pcd_base": "zhichengA1",
             "routes": {
+                "routeA1": {
+                    "description": "",
+                    "waypoints": [
+                        {
+                            "semantic_point": "A1_entrance_1",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "A1_entrance_2",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "A1_reception",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "A1_exit_1",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "A1_exit_2",
+                            "submap": "1f"
+                        }
+                    ]
+                }
             },
             "submaps": {
                 "1f": {
@@ -2212,6 +2282,125 @@
                     "map_file": "A1.pcd",
                     "name": "A1 1楼",
                     "semantic_points": {
+                        "A1_entrance_1": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0.7071067811865476,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0.7071067811865476
+                                },
+                                "position": {
+                                    "x": 32.3122,
+                                    "y": 5.6491,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "A1_entrance_2": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0.7071067811865476,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0.7071067811865476
+                                },
+                                "position": {
+                                    "x": 32.2061,
+                                    "y": 10.0567,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "A1_exit_1": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0.7071067811865476,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": -0.7071067811865476
+                                },
+                                "position": {
+                                    "x": 32.1751,
+                                    "y": 9.0844,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "A1_exit_2": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0.7071067811865476,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": -0.7071067811865476
+                                },
+                                "position": {
+                                    "x": 32.2634,
+                                    "y": 6.8038,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "A1_reception": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 1,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0
+                                },
+                                "position": {
+                                    "x": 42.5861,
+                                    "y": 14.4116,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "elevator": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 1,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0
+                                },
+                                "position": {
+                                    "x": 45.0799,
+                                    "y": 38.2312,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "gate": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 1,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0
+                                },
+                                "position": {
+                                    "x": 28.5594,
+                                    "y": 30.2182,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        }
                     },
                     "submap_portals": [
                     ],
@@ -2243,7 +2432,7 @@
                 "scale": 1
             },
             "global": {
-                "build_no": 20260727103159,
+                "build_no": 20260729151836,
                 "default_route": "",
                 "default_submap": "",
                 "version": "1.0"
@@ -2276,6 +2465,63 @@
                             "z": 0
                         }
                     }
+                },
+                "2416": {
+                    "description": "",
+                    "map_file": "2026-07-28_10-14-48_PointCloud_uncolorized.pcd",
+                    "name": "",
+                    "parent_submap": "1f",
+                    "semantic_points": {
+                        "door": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 1,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": 0
+                                },
+                                "position": {
+                                    "x": 7.146,
+                                    "y": -0.0054,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        },
+                        "elevator": {
+                            "need_inspect": true,
+                            "pose": {
+                                "orientation": {
+                                    "w": 0.7071067811865476,
+                                    "x": 0,
+                                    "y": 0,
+                                    "z": -0.7071067811865476
+                                },
+                                "position": {
+                                    "x": 6.9862,
+                                    "y": -2.2614,
+                                    "z": 0
+                                }
+                            },
+                            "type": "single_pose"
+                        }
+                    },
+                    "submap_portals": [
+                    ],
+                    "transform": {
+                        "rotation": {
+                            "w": 1,
+                            "x": 0,
+                            "y": 0,
+                            "z": 0
+                        },
+                        "translation": {
+                            "x": 0,
+                            "y": 0,
+                            "z": 0
+                        }
+                    }
                 }
             }
         },
@@ -2291,8 +2537,8 @@
                 "scale": 1
             },
             "global": {
-                "build_no": 20260721202422,
-                "default_route": "A2大堂",
+                "build_no": 20260731164457,
+                "default_route": "routeA2_reception",
                 "default_submap": "",
                 "version": "1.0"
             },
@@ -2301,7 +2547,32 @@
             "ortho_visible": false,
             "pcd_base": "zhichengA2A3",
             "routes": {
-                "A2大堂": {
+                "routeA2": {
+                    "description": "",
+                    "waypoints": [
+                        {
+                            "semantic_point": "A2北门-entrance1",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "A2北门-entrance2",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "道通咖啡-autel coffee",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "A2北门-exit1",
+                            "submap": "1f"
+                        },
+                        {
+                            "semantic_point": "A2北门-exit2",
+                            "submap": "1f"
+                        }
+                    ]
+                },
+                "routeA2_reception": {
                     "description": "",
                     "waypoints": [
                         {

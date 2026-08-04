@@ -4,6 +4,7 @@ from rclpy.node import Node  # ROS节点基类
 from rcl_interfaces.srv import GetParameters, SetParameters  # 参数服务
 from rcl_interfaces.msg import Parameter as ParameterMsg, ParameterValue, ParameterType
 from rclpy.executors import SingleThreadedExecutor  # 单线程执行器
+from rclpy.parameter import Parameter  # 节点参数（用于 use_sim_time 仿真时钟）
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup  # 回调组（MultiThreadedExecutor 并行调度）
 from geometry_msgs.msg import PoseStamped, Twist, TwistStamped  # 位姿消息类型和速度控制消息类型
 from nav_msgs.msg import OccupancyGrid, Odometry, Path  # 占据网格、里程计、全局路径
@@ -67,6 +68,7 @@ class NavNode(Node):
         gps_datum_lat: float = DEFAULT_GPS_DATUM_LAT,
         gps_datum_lon: float = DEFAULT_GPS_DATUM_LON,
         initial_nav_mode: str = NAV_MODE_SLAM,
+        use_sim_time: Optional[bool] = None,
     ):
         """初始化ROS节点和相关发布者/订阅者
 
@@ -85,13 +87,28 @@ class NavNode(Node):
         :param gps_datum_lat/gps_datum_lon: 经纬度→campus_map 平面换算所用 ENU 原点，
                               必须与 campus_nav 的 datum 一致（否则目标点会错位）。
         :param initial_nav_mode: 初始导航模式 ``"slam"``（默认）或 ``"gps"``。
+        :param use_sim_time: 是否使用仿真时钟（订阅 ``/clock``）。``None`` 时按环境变量
+            ``NAVI_SIM_ARG`` 自动判定（非空即为仿真）。仿真下必须为 True，否则本节点用
+            墙上时钟、而 TF 盖的是仿真时间戳，两者相差几十年会导致 TF 新鲜度恒定“超标”，
+            进而 ``current_pose`` 永远刷不出、定位一直判为丢失。
         """
         # 先确保rclpy已经初始化
         if not rclpy.ok():
             rclpy.init()
-        
-        # 调用父类构造函数，设置节点名称
-        super().__init__('nav_node')
+
+        # 解析仿真时钟：未显式指定时按 NAVI_SIM_ARG 环境变量自动判定
+        if use_sim_time is None:
+            use_sim_time = bool(os.environ.get('NAVI_SIM_ARG', '').strip())
+
+        # 调用父类构造函数，设置节点名称；仿真下通过 parameter_overrides 打开 use_sim_time，
+        # 使 get_clock() 走 /clock 仿真时钟，与 TF 时间戳一致。
+        super().__init__(
+            'nav_node',
+            parameter_overrides=[
+                Parameter('use_sim_time', Parameter.Type.BOOL, bool(use_sim_time)),
+            ],
+        )
+        self.get_logger().info(f"nav_node use_sim_time={bool(use_sim_time)}")
 
         # ── 回调组：与 MultiThreadedExecutor(num_threads=3) 配合使用，
         # 使 TF 心跳 / 重量级消息 / call-queue 三组并行执行，互不阻塞。
@@ -295,6 +312,9 @@ class NavNode(Node):
             self.campus_frame = campus_frame
             self.campus_goal_pub = self.create_publisher(
                 PoseStamped, campus_goal_topic, 10)
+            # 近距离室外目标：点到点 Nav2 直达（发布 PoseStamped 到 /goal_pose，
+            # 等价于 RViz “Nav2 Goal” 工具），绕过 campus 路网规划器。
+            self.nav2_goal_pub = self.create_publisher(PoseStamped, 'goal_pose', 10)
             # 经纬度 ↔ campus_map 平面（等距圆柱投影，与 route_graph.ENU 完全一致）
             self.gps_datum_lat = float(gps_datum_lat)
             self.gps_datum_lon = float(gps_datum_lon)
@@ -302,6 +322,9 @@ class NavNode(Node):
             # 室外当前目标（campus_frame 下的 PoseStamped）及运行标志
             self._outdoor_goal: Optional[PoseStamped] = None
             self._outdoor_nav_active = False
+            # 关联的语义点名称 + 到达判定距离阈值（供 wait_goal_reached 按 target 判定）。
+            self._outdoor_goal_name: Optional[str] = None
+            self._outdoor_goal_tol: float = 3.0
 
             # 音频文件路径
             self.audio_dir = os.path.join(os.path.dirname(__file__), 'audio')
@@ -945,6 +968,7 @@ class NavNode(Node):
         # 清室外目标与运行标志
         self._outdoor_goal = None
         self._outdoor_nav_active = False
+        self._outdoor_goal_name = None
 
     # ── GNSS 定位监控 ─────────────────────────────────────────────────────
     def _gps_fix_callback(self, msg: NavSatFix) -> None:
@@ -1058,19 +1082,93 @@ class NavNode(Node):
         pose.pose.orientation.w = 1.0  # 朝向对路网规划无意义，规划器只用 xy 吸附道路
         return self.send_campus_goal(pose)
 
-    def set_outdoor_goal_by_lonlat(self, lon: float, lat: float) -> bool:
-        """以经纬度下发室外目标：按 ENU datum 换算成 campus_map 平面点再下发。"""
+    def set_outdoor_goal_by_lonlat(self, lon: float, lat: float,
+                                   target: Optional[str] = None,
+                                   tolerance: float = 3.0) -> bool:
+        """以经纬度下发室外目标：按 ENU datum 换算成 campus_map 平面点再下发。
+
+        :param target: 可选，关联的语义点名称；随目标一起记录，供
+                       ``wait_goal_reached`` 以该 target 判定是否到达。
+        :param tolerance: 到达判定距离阈值（米），随目标记录，供 ``wait_goal_reached`` 使用。
+        """
         east, north = self._lonlat_to_campus_xy(lon, lat)
         self.get_logger().info(
             f"室外目标经纬度→campus_map: ({lon:.7f},{lat:.7f}) -> "
-            f"({east:.2f},{north:.2f})"
+            f"({east:.2f},{north:.2f})  target={target} tol={tolerance}"
         )
+        self._outdoor_goal_name = target
+        self._outdoor_goal_tol = float(tolerance)
         return self.set_outdoor_goal_by_xy(east, north, frame=self.campus_frame)
+
+    def set_outdoor_goal(self, lon: float, lat: float,
+                         target: Optional[str] = None,
+                         tolerance: float = 3.0,
+                         direct_threshold_m: float = 30.0) -> Dict[str, Any]:
+        """室外目标自适应下发：按与机器人当前位置的直线距离选择下发通道。
+
+        - 距离 < ``direct_threshold_m``（默认 30m）：作为**点到点 Nav2 目标**直接
+          发布 ``geometry_msgs/PoseStamped`` 到 ``/goal_pose``（map 系，朝向指向目标），
+          等价于 RViz “Nav2 Goal”，绕过路网规划；
+        - 否则（或当前未定位 / 无法估计距离时）：走 **campus_nav 路网规划器**
+          （``campus_goal_pose``，见 ``set_outdoor_goal_by_lonlat``）。
+
+        两种通道都会记录 ``_outdoor_goal`` / ``target`` / ``tolerance``，使
+        ``wait_goal_reached`` 在 GPS 模式下统一按几何距离判定到达。
+
+        :return: {ok, channel: 'nav2'|'campus', distance, threshold, target, tolerance}
+        """
+        east, north = self._lonlat_to_campus_xy(lon, lat)
+
+        # 估算目标到机器人的直线距离（统一到 map 系）
+        dist = None
+        goal_xy_map = None
+        if self.current_pose is not None:
+            mapped = self._transform_xy(east, north, self.campus_frame, "map")
+            if mapped is not None:
+                gx, gy = mapped
+                rx = self.current_pose.pose.position.x
+                ry = self.current_pose.pose.position.y
+                dist = math.hypot(gx - rx, gy - ry)
+                goal_xy_map = (gx, gy, rx, ry)
+
+        # 近距离：点到点 Nav2 直达（/goal_pose，map 系，朝向指向目标）
+        if dist is not None and dist < direct_threshold_m:
+            gx, gy, rx, ry = goal_xy_map
+            yaw = math.atan2(gy - ry, gx - rx)
+            pose = PoseStamped()
+            pose.header.stamp = self.get_clock().now().to_msg()
+            pose.header.frame_id = "map"
+            pose.pose.position.x = float(gx)
+            pose.pose.position.y = float(gy)
+            pose.pose.orientation.z = math.sin(yaw / 2.0)
+            pose.pose.orientation.w = math.cos(yaw / 2.0)
+            # 记录目标供 wait_goal_reached 的几何到达判定复用
+            self._outdoor_goal = pose
+            self._outdoor_goal_name = target
+            self._outdoor_goal_tol = float(tolerance)
+            self._outdoor_nav_active = True
+            self.nav2_goal_pub.publish(pose)
+            self.get_logger().info(
+                f"室外近距目标({dist:.1f}m<{direct_threshold_m:.0f}m)→Nav2 /goal_pose: "
+                f"map=({gx:.2f},{gy:.2f}) target={target} tol={tolerance}")
+            return {"ok": True, "channel": "nav2", "distance": dist,
+                    "threshold": direct_threshold_m, "target": target,
+                    "tolerance": float(tolerance)}
+
+        # 远距离 / 无法估距：campus 路网规划器
+        ok = self.set_outdoor_goal_by_lonlat(lon, lat, target=target, tolerance=tolerance)
+        self.get_logger().info(
+            f"室外远距目标(dist={'未知' if dist is None else f'{dist:.1f}m'}"
+            f">={direct_threshold_m:.0f}m)→campus 路网规划器 target={target}")
+        return {"ok": bool(ok), "channel": "campus", "distance": dist,
+                "threshold": direct_threshold_m, "target": target,
+                "tolerance": float(tolerance)}
 
     def cancel_outdoor_goal(self) -> None:
         """清除本地室外目标与运行标志，并发零速停车（尽力而为）。"""
         self._outdoor_goal = None
         self._outdoor_nav_active = False
+        self._outdoor_goal_name = None
         try:
             self.cmd_vel_pub.publish(Twist())
         except Exception:
@@ -1118,6 +1216,14 @@ class NavNode(Node):
             self._outdoor_nav_active = False
             return True
         return False
+
+    def get_outdoor_goal_name(self) -> Optional[str]:
+        """当前室外目标关联的语义点名称（未设置返回 None）。"""
+        return self._outdoor_goal_name
+
+    def get_outdoor_goal_tolerance(self) -> float:
+        """当前室外目标的到达判定距离阈值（米）。"""
+        return self._outdoor_goal_tol
 
     def chassis_speed_callback(self, msg: TwistStamped):
         """
