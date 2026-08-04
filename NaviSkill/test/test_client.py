@@ -393,11 +393,13 @@ class SimplePatrolClient:
                         await asyncio.sleep(2)
                     continue
 
-                # ── SLAM（map 类型 / 裸字符串点名）：解析目标点与所在 submap ──
+                # ── SLAM（map 类型 / 裸字符串点名）：解析目标点与所在 slam_map/submap ──
                 target_name = None
                 target_submap = None
+                target_slam_map = None
                 if is_route_dict:
                     target_submap = waypoint.get("submap")
+                    target_slam_map = waypoint.get("slam_map")
                     target_name = waypoint.get("name")
                     if not target_name:
                         logger.error(f"❌ 路线点格式不正确: {waypoint}")
@@ -418,7 +420,15 @@ class SimplePatrolClient:
                 # submap，服务端内部（_ensure_submap）会先导航到当前→目标 submap 的
                 # 传送门、到达后换图，客户端无需自行判断/取传送门/换图。
 
-                point_meta = await client.call("get_pose_in_submap", {"pose_name": target_name})
+                pose_query = {"pose_name": target_name}
+                if is_route_dict:
+                    # 带上 slam_map/submap，室外模式下也能查到目标图的点位详情
+                    # （否则会去当前/默认 submap 里找而返回 null）。
+                    if target_slam_map:
+                        pose_query["slam_map"] = target_slam_map
+                    if target_submap:
+                        pose_query["submap_id"] = target_submap
+                point_meta = await client.call("get_pose_in_submap", pose_query)
                 pt_type = point_meta.get("point_info", {}).get("type") if point_meta.get("success") else None
                 logger.info(
                     f"📋 点位详细信息 [{target_name}]: "
@@ -469,9 +479,13 @@ class SimplePatrolClient:
                         f"🎯 下发目标点: {target_name}, type: {pt_type} (无 pose 坐标)"
                     )
                 goal_params = {"target": target_name}
-                if is_route_dict and target_submap:
-                    # 携带目标 submap：若与当前不一致，服务端会在下发前自动换图。
-                    goal_params["submap"] = target_submap
+                if is_route_dict:
+                    # 携带目标 slam_map/submap：与当前不一致时，服务端会在下发前
+                    # 自动切换导航模式（outdoor→slam）并换图/走传送门。
+                    if target_slam_map:
+                        goal_params["slam_map"] = target_slam_map
+                    if target_submap:
+                        goal_params["submap"] = target_submap
                 goal_data = await client.call("set_goal_by_slam", goal_params)
 
                 if not goal_data.get("success"):

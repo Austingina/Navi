@@ -1036,13 +1036,13 @@ class NavigationToolManager:
                 # 创建PoseStamped消息
                 pose = PoseStamped()
                 pose.header.frame_id = "odom"
-                pose.pose.position.x = pose_info["position"]["x"]
-                pose.pose.position.y = pose_info["position"]["y"]
-                pose.pose.position.z = pose_info["position"]["z"]
-                pose.pose.orientation.x = pose_info["orientation"]["x"]
-                pose.pose.orientation.y = pose_info["orientation"]["y"]
-                pose.pose.orientation.z = pose_info["orientation"]["z"]
-                pose.pose.orientation.w = pose_info["orientation"]["w"]
+                pose.pose.position.x = float(pose_info["position"]["x"])
+                pose.pose.position.y = float(pose_info["position"]["y"])
+                pose.pose.position.z = float(pose_info["position"]["z"])
+                pose.pose.orientation.x = float(pose_info["orientation"]["x"])
+                pose.pose.orientation.y = float(pose_info["orientation"]["y"])
+                pose.pose.orientation.z = float(pose_info["orientation"]["z"])
+                pose.pose.orientation.w = float(pose_info["orientation"]["w"])
 
                 point_info = self.map_manager.pose_map_current_submap[target]
                 if point_info.get("type") == "elevator_in":
@@ -1056,8 +1056,8 @@ class NavigationToolManager:
                 return {"success": False, "msg": f"设置目标失败: {str(e)}"}
 
         def set_goal_by_outdoor(target: str, lon: float = None, lat: float = None,
-                                tolerance: float = 3.0,
-                                direct_threshold: float = 30.0) -> Dict[str, Any]:
+                                tolerance: float = 10.0,
+                                direct_threshold: float = 50.0) -> Dict[str, Any]:
             """
             按语义点下发室外 GPS 导航目标（按距离自适应选择下发通道）。
 
