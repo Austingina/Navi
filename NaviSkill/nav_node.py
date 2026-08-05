@@ -873,6 +873,13 @@ class NavNode(Node):
                         return
                     # 帧足够新，清除门控
                     self._min_tf_stamp_for_ready_ns = 0
+                # 室外 GPS 模式下，map→odom 在收到首个 GPS 前是单位阵占位
+                # （map_odom_from_gps 的 publish_identity_until_gps），此时 TF 链
+                # 虽连通但 GPS 尚未真正定位。额外要求 GNSS fix 可用，避免在 GPS
+                # 收敛前就误报“定位成功”。SLAM 模式不受影响。
+                if (self.nav_mode == self.NAV_MODE_GPS
+                        and not self.is_gps_available()):
+                    return
                 self.tf_ready = True
                 self.get_logger().info("✓ TF定位成功，进入ready状态")
                 self.play_audio("success.mp3")
@@ -1082,24 +1089,6 @@ class NavNode(Node):
         pose.pose.orientation.w = 1.0  # 朝向对路网规划无意义，规划器只用 xy 吸附道路
         return self.send_campus_goal(pose)
 
-    def set_outdoor_goal_by_lonlat(self, lon: float, lat: float,
-                                   target: Optional[str] = None,
-                                   tolerance: float = 3.0) -> bool:
-        """以经纬度下发室外目标：按 ENU datum 换算成 campus_map 平面点再下发。
-
-        :param target: 可选，关联的语义点名称；随目标一起记录，供
-                       ``wait_goal_reached`` 以该 target 判定是否到达。
-        :param tolerance: 到达判定距离阈值（米），随目标记录，供 ``wait_goal_reached`` 使用。
-        """
-        east, north = self._lonlat_to_campus_xy(lon, lat)
-        self.get_logger().info(
-            f"室外目标经纬度→campus_map: ({lon:.7f},{lat:.7f}) -> "
-            f"({east:.2f},{north:.2f})  target={target} tol={tolerance}"
-        )
-        self._outdoor_goal_name = target
-        self._outdoor_goal_tol = float(tolerance)
-        return self.set_outdoor_goal_by_xy(east, north, frame=self.campus_frame)
-
     def set_outdoor_goal(self, lon: float, lat: float,
                          target: Optional[str] = None,
                          tolerance: float = 3.0,
@@ -1110,7 +1099,8 @@ class NavNode(Node):
           发布 ``geometry_msgs/PoseStamped`` 到 ``/goal_pose``（map 系，朝向指向目标），
           等价于 RViz “Nav2 Goal”，绕过路网规划；
         - 否则（或当前未定位 / 无法估计距离时）：走 **campus_nav 路网规划器**
-          （``campus_goal_pose``，见 ``set_outdoor_goal_by_lonlat``）。
+          （``campus_goal_pose``；经纬度经 ENU datum 换算成 campus_map 平面点后
+          调 ``set_outdoor_goal_by_xy`` 下发）。
 
         两种通道都会记录 ``_outdoor_goal`` / ``target`` / ``tolerance``，使
         ``wait_goal_reached`` 在 GPS 模式下统一按几何距离判定到达。
@@ -1155,8 +1145,10 @@ class NavNode(Node):
                     "threshold": direct_threshold_m, "target": target,
                     "tolerance": float(tolerance)}
 
-        # 远距离 / 无法估距：campus 路网规划器
-        ok = self.set_outdoor_goal_by_lonlat(lon, lat, target=target, tolerance=tolerance)
+        # 远距离 / 无法估距：campus 路网规划器（经纬度→campus_map 平面点）
+        self._outdoor_goal_name = target
+        self._outdoor_goal_tol = float(tolerance)
+        ok = self.set_outdoor_goal_by_xy(east, north, frame=self.campus_frame)
         self.get_logger().info(
             f"室外远距目标(dist={'未知' if dist is None else f'{dist:.1f}m'}"
             f">={direct_threshold_m:.0f}m)→campus 路网规划器 target={target}")

@@ -714,9 +714,9 @@ class NavigationToolManager:
     def _navigate_to_portal_outdoor(self, portal_name: str, pt: Dict[str, Any],
                                     timeout: float, tol: float) -> Dict[str, Any]:
         """室外 GPS 模式下导航到传送门（经纬度）并阻塞等待到达。"""
-        ok = self.ros_node.set_outdoor_goal_by_lonlat(
+        res = self.ros_node.set_outdoor_goal(
             float(pt['lon']), float(pt['lat']), target=portal_name, tolerance=float(tol))
-        if not ok:
+        if not res.get("ok"):
             return {"success": False, "msg": f"下发室外传送门目标失败: {portal_name}"}
         logging.info("室外导航到传送门 %s (%.7f,%.7f)，等待到达…",
                      portal_name, pt['lon'], pt['lat'])
