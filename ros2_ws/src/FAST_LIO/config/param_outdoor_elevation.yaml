@@ -40,7 +40,7 @@ controller_server:
     min_theta_velocity_threshold: 0.08
     failure_tolerance: 0.3
     progress_checker_plugin: "progress_checker"
-    goal_checker_plugins: ["general_goal_checker"]
+    goal_checker_plugins: ["general_goal_checker", "precise_goal_checker"]
     controller_plugins: ["FollowPath"]
 
     progress_checker:
@@ -52,6 +52,13 @@ controller_server:
       plugin: "nav2_controller::SimpleGoalChecker"
       # 室外 + 普通 GPS 精度（数米），到点容差放大；要精确到点需 RTK 并调小。
       xy_goal_tolerance: 1.0
+      yaw_goal_tolerance: 3.14
+    # campus_nav 的路线终点专用（由 navigate_to_pose_precise_goal.xml 的
+    # FollowPath 以 goal_checker_id 选中）。中途路点仍走 general_goal_checker。
+    precise_goal_checker:
+      stateful: True
+      plugin: "nav2_controller::SimpleGoalChecker"
+      xy_goal_tolerance: 0.6
       yaw_goal_tolerance: 3.14
     FollowPath:
       plugin: "dwb_core::DWBLocalPlanner"

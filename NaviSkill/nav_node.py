@@ -324,7 +324,7 @@ class NavNode(Node):
             self._outdoor_nav_active = False
             # 关联的语义点名称 + 到达判定距离阈值（供 wait_goal_reached 按 target 判定）。
             self._outdoor_goal_name: Optional[str] = None
-            self._outdoor_goal_tol: float = 3.0
+            self._outdoor_goal_tol: float = 1.0
 
             # 音频文件路径
             self.audio_dir = os.path.join(os.path.dirname(__file__), 'audio')
@@ -1084,7 +1084,7 @@ class NavNode(Node):
 
     def set_outdoor_goal_by_lonlat(self, lon: float, lat: float,
                                    target: Optional[str] = None,
-                                   tolerance: float = 3.0) -> bool:
+                                   tolerance: float = 1.0) -> bool:
         """以经纬度下发室外目标：按 ENU datum 换算成 campus_map 平面点再下发。
 
         :param target: 可选，关联的语义点名称；随目标一起记录，供
@@ -1102,7 +1102,7 @@ class NavNode(Node):
 
     def set_outdoor_goal(self, lon: float, lat: float,
                          target: Optional[str] = None,
-                         tolerance: float = 3.0,
+                         tolerance: float = 1.0,
                          direct_threshold_m: float = 30.0) -> Dict[str, Any]:
         """室外目标自适应下发：按与机器人当前位置的直线距离选择下发通道。
 
@@ -1194,11 +1194,12 @@ class NavNode(Node):
         ty = tf.transform.translation.y
         return tx + cy * x - sy * y, ty + sy * x + cy * y
 
-    def is_outdoor_goal_reached(self, tolerance: float = 3.0) -> bool:
+    def is_outdoor_goal_reached(self, tolerance: float = 1.0) -> bool:
         """室外目标是否到达：把 campus_frame 目标变换到 map 后与当前位姿比距离。
 
         campus_route_planner 不发布“路线完成”话题，这里用几何距离近似判定；
-        ``tolerance`` 默认与规划器的 ``nav2_reach_tol_m`` 相近（3m）。
+        ``tolerance`` 默认与规划器终点精确逼近的容差同量级（``nav2_final_reach_tol_m``
+        0.5m / ``precise_goal_checker`` 0.6m），放宽后会在机器人仍在逼近终点时提前报到达。
         """
         if self._outdoor_goal is None or self.current_pose is None:
             return False

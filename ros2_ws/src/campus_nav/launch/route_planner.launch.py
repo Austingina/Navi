@@ -39,6 +39,11 @@ def generate_launch_description():
         os.path.join(pkg_root, "finetuned_road.gpkg"),
     )
     default_patrol_out = os.path.join(pkg_root, "patrol_routes")
+    # bt_navigator loads this by absolute path, so resolve it from the installed
+    # share tree rather than leaving it to the Nav2 default search path.
+    default_final_bt = os.path.join(
+        pkg_share, "config", "behavior_trees", "navigate_to_pose_precise_goal.xml"
+    )
 
     return LaunchDescription(
         [
@@ -147,8 +152,16 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "nav_waypoint_spacing_m",
-                default_value="10.0",
+                default_value="5.0",
                 description="Sampling distance for Nav2 waypoints along the campus route",
+            ),
+            DeclareLaunchArgument(
+                "nav2_final_behavior_tree",
+                default_value=default_final_bt,
+                description=(
+                    "Behavior tree for the precise final approach to the route "
+                    "end (tighter goal checker, no RemovePassedGoals)"
+                ),
             ),
             DeclareLaunchArgument(
                 "patrol_out_dir",
@@ -180,6 +193,9 @@ def generate_launch_description():
                         ),
                         "nav_waypoint_spacing_m": LaunchConfiguration(
                             "nav_waypoint_spacing_m"
+                        ),
+                        "nav2_final_behavior_tree": LaunchConfiguration(
+                            "nav2_final_behavior_tree"
                         ),
                         "patrol_out_dir": LaunchConfiguration("patrol_out_dir"),
                     },

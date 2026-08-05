@@ -1056,8 +1056,8 @@ class NavigationToolManager:
                 return {"success": False, "msg": f"设置目标失败: {str(e)}"}
 
         def set_goal_by_outdoor(target: str, lon: float = None, lat: float = None,
-                                tolerance: float = 3.0,
-                                direct_threshold: float = 30.0) -> Dict[str, Any]:
+                                tolerance: float = 1.0,
+                                direct_threshold: float = 50.0) -> Dict[str, Any]:
             """
             按语义点下发室外 GPS 导航目标（按距离自适应选择下发通道）。
 
@@ -1081,7 +1081,8 @@ class NavigationToolManager:
                     （GPS 无 Nav2 到达回调，按几何距离阈值判定）。
             lon: 目标点经度；仅 ``target == "tmp"`` 时使用且必填。
             lat: 目标点纬度；仅 ``target == "tmp"`` 时使用且必填。
-            tolerance: 到达判定距离阈值（米），默认 3.0；随目标记录并供 `wait_goal_reached` 使用。
+            tolerance: 到达判定距离阈值（米），默认 1.0（与路网规划器终点精确逼近的容差
+                       同量级）；随目标记录并供 `wait_goal_reached` 使用。
             direct_threshold: 直线距离阈值（米），默认 30.0；小于该值走 Nav2 直达，否则走路网规划。
 
             返回:

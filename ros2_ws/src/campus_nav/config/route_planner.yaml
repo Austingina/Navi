@@ -28,7 +28,8 @@
     robot_frame: base_link
     nav_waypoints_topic: campus_nav_waypoints
     nav_waypoint_markers_topic: campus_nav_waypoint_markers
-    nav_waypoint_spacing_m: 5.0
+    nav_waypoint_spacing_m: 4.0
+    nav_waypoint_marker_size_m: 0.8
     send_to_nav2: true
     nav2_action_name: navigate_through_poses
     nav2_behavior_tree: ""
@@ -39,6 +40,15 @@
     nav2_batch_advance_m: 5.0
     nav2_reach_tol_m: 2.0
     nav2_batch_period_s: 1.0
+    # Final goal specialization: the cursor stops one waypoint short of the route
+    # end and the last pose is driven as its own NavigateToPose goal, so
+    # nav2_reach_tol_m no longer ends the route metres out. nav2_final_behavior_tree
+    # is injected by route_planner.launch.py (an absolute path is required).
+    nav2_final_precise_enable: true
+    nav2_final_approach_m: 8.0
+    nav2_final_reach_tol_m: 0.5
+    nav2_final_action_name: navigate_to_pose
+    nav2_final_max_retry: 2
     patrol_enable: true
     patrol_name: patrol_01
     patrol_loop: true
