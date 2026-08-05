@@ -11,15 +11,15 @@ the output so the node layer survives the merge.
 
 Usage:
     /usr/bin/python3 scripts/merge_pbf_gpkg.py
-    /usr/bin/python3 scripts/merge_pbf_gpkg.py \\
-        --pbf ../../xili_5km_with_extra.osm.pbf \\
-        --gpkg ../finetuned_road.gpkg \\
+    /usr/bin/python3 scripts/merge_pbf_gpkg.py \
+        --pbf ../../xili_5km_with_extra.osm.pbf \
+        --gpkg ../finetuned_road.gpkg \
         --output ../../xili_5km_merged.osm.pbf
 
 After merge, run the planner on the merged pbf with dev overlay OFF:
-    /usr/bin/python3 route_planner_node.py --ros-args \\
-        -p pbf_path:=/home/navi/nav_test/xili_5km_merged.osm.pbf \\
-        -p dev_overlay:=false
+    /usr/bin/python3 route_planner_node.py --ros-args \
+        -p pbf_path:=/home/navi/nav_test/xili_5km_merged.osm.pbf \
+        -p dev_overlay:=false 
 """
 
 from __future__ import annotations

@@ -49,6 +49,24 @@
     nav2_final_reach_tol_m: 0.5
     nav2_final_action_name: navigate_to_pose
     nav2_final_max_retry: 2
+    # Off-network goals (plaza / courtyard behind a fence): the goal has no road
+    # under it, so it is reached through a hand-authored entry point instead of
+    # the geometrically nearest segment. Author the points in QGIS
+    # (scripts/make_entries_gpkg.py creates the empty layer); with no points the
+    # behavior is exactly as before. entry_gpkg is injected by
+    # route_planner.launch.py (an absolute path is required).
+    entry_enable: true
+    entry_table: entries
+    off_network_m: 5.0
+    # Also caps the access leg (entry -> goal), which Nav2 plans in one shot:
+    # global_costmap is a 100x100 m rolling window centred on the robot, and
+    # NavfnPlanner throws GoalOutsideMapBounds past its edge (50 m). If a goal
+    # is further than this from every opening the planner warns; add another
+    # entry point rather than raising the radius.
+    entry_search_radius_m: 40.0
+    entry_offroad_weight: 1.0
+    entry_markers_topic: campus_entry_markers
+    entry_marker_size_m: 1.0
     patrol_enable: true
     patrol_name: patrol_01
     patrol_loop: true

@@ -32,6 +32,8 @@ from campus_nav.route_graph import (
     extrude_ring_triangles,
     graph_edges_enu,
     load_building_footprints,
+    load_entry_points,
+    load_stub_entry_points,
     rasterize_occupancy,
     triangulate_fan,
 )
@@ -78,6 +80,13 @@ def _default_gpkg_overlay() -> str:
 
 def _default_gpkg_path() -> str:
     return os.path.join(_pkg_data_root(), "campus_nav.gpkg")
+
+
+def _default_entry_gpkg() -> str:
+    return os.environ.get(
+        "CAMPUS_ENTRY_GPKG",
+        os.path.join(_pkg_data_root(), "campus_entries.gpkg"),
+    )
 
 
 def _default_patrol_out_dir() -> str:
@@ -348,6 +357,134 @@ if HAVE_MARKERS:
         markers.append(m)
         return markers
 
+    def _entry_point_markers(enu_pts, frame_id, stamp, size=1.0,
+                             rgba=(0.1, 0.95, 0.9, 0.95)):
+        """Cubes + names at the off-network entry points.
+
+        enu_pts: list of (east, north, label) in map meters. Cyan cubes read
+        differently from the route/patrol spheres, so a misplaced entry stands
+        out against the road network in RViz.
+        """
+        label_z = size * 2.0
+        label_size = max(0.3, size * 0.6)
+        markers = []
+        clear = Marker()
+        clear.header.frame_id = frame_id
+        clear.header.stamp = stamp
+        clear.ns = "campus_entry_clear"
+        clear.action = Marker.DELETEALL
+        markers.append(clear)
+        for i, (e, n, label) in enumerate(enu_pts):
+            cube = Marker()
+            cube.header.frame_id = frame_id
+            cube.header.stamp = stamp
+            cube.ns = "campus_entry"
+            cube.id = i * 2
+            cube.type = Marker.CUBE
+            cube.action = Marker.ADD
+            cube.pose.position.x = float(e)
+            cube.pose.position.y = float(n)
+            cube.pose.position.z = size * 0.5
+            cube.pose.orientation.w = 1.0
+            cube.scale.x = cube.scale.y = cube.scale.z = float(size)
+            cube.color = ColorRGBA(r=rgba[0], g=rgba[1], b=rgba[2], a=rgba[3])
+            markers.append(cube)
+
+            txt = Marker()
+            txt.header.frame_id = frame_id
+            txt.header.stamp = stamp
+            txt.ns = "campus_entry"
+            txt.id = i * 2 + 1
+            txt.type = Marker.TEXT_VIEW_FACING
+            txt.action = Marker.ADD
+            txt.pose.position.x = float(e)
+            txt.pose.position.y = float(n)
+            txt.pose.position.z = label_z
+            txt.pose.orientation.w = 1.0
+            txt.scale.z = label_size
+            txt.color = ColorRGBA(r=0.8, g=1.0, b=1.0, a=1.0)
+            txt.text = str(label)
+            markers.append(txt)
+        return markers
+
+    # Nav2 route waypoints: amber ahead of the robot, green once driven past.
+    NAV_WP_NS = "nav_wp"
+    _NAV_WP_TODO = (1.0, 0.8, 0.05, 1.0)
+    _NAV_WP_DONE = (0.1, 0.85, 0.2, 1.0)
+
+    def _nav_waypoint_sphere(i, e, n, frame_id, stamp, size, reached):
+        """One route waypoint. Same ns/id on every publish, so recolouring a
+        waypoint is just an ADD that RViz overwrites in place."""
+        rgba = _NAV_WP_DONE if reached else _NAV_WP_TODO
+        m = Marker()
+        m.header.frame_id = frame_id
+        m.header.stamp = stamp
+        m.ns = NAV_WP_NS
+        m.id = i * 2
+        m.type = Marker.SPHERE
+        m.action = Marker.ADD
+        m.pose.position.x = float(e)
+        m.pose.position.y = float(n)
+        m.pose.position.z = size * 0.25
+        m.pose.orientation.w = 1.0
+        m.scale.x = m.scale.y = m.scale.z = float(size)
+        m.color = ColorRGBA(r=rgba[0], g=rgba[1], b=rgba[2], a=rgba[3])
+        return m
+
+    def _nav_waypoint_markers(enu_pts, frame_id, stamp, size=1.0, reached=0,
+                              stale_upto=0, clear_first=True):
+        """Spheres + numbers for the whole route, first `reached` of them green.
+
+        stale_upto is the waypoint count of the previous route: ids past the end
+        of this one are deleted explicitly. DELETEALL leads the array and would
+        normally suffice, but it is one dropped message away from leaving a
+        longer previous route on screen forever, since markers never expire.
+
+        clear_first=False repaints a route in place, for progress updates: the
+        ns/id are unchanged so RViz overwrites each marker, and skipping the
+        DELETEALL avoids a delete/re-add flicker on every waypoint passed.
+        """
+        label_z = size * 1.25
+        label_size = max(0.25, size * 0.125)
+        markers = []
+        if clear_first:
+            clear = Marker()
+            clear.header.frame_id = frame_id
+            clear.header.stamp = stamp
+            # Distinct ns/id from the waypoints below, which this must not cancel.
+            clear.ns = "nav_wp_clear"
+            clear.action = Marker.DELETEALL
+            markers.append(clear)
+        for i, (e, n, label) in enumerate(enu_pts):
+            markers.append(
+                _nav_waypoint_sphere(i, e, n, frame_id, stamp, size, i < reached)
+            )
+            txt = Marker()
+            txt.header.frame_id = frame_id
+            txt.header.stamp = stamp
+            txt.ns = NAV_WP_NS
+            txt.id = i * 2 + 1
+            txt.type = Marker.TEXT_VIEW_FACING
+            txt.action = Marker.ADD
+            txt.pose.position.x = float(e)
+            txt.pose.position.y = float(n)
+            txt.pose.position.z = label_z
+            txt.pose.orientation.w = 1.0
+            txt.scale.z = label_size
+            txt.color = ColorRGBA(r=1.0, g=1.0, b=1.0, a=1.0)
+            txt.text = str(label)
+            markers.append(txt)
+        for i in range(len(enu_pts), stale_upto):
+            for mid in (i * 2, i * 2 + 1):
+                gone = Marker()
+                gone.header.frame_id = frame_id
+                gone.header.stamp = stamp
+                gone.ns = NAV_WP_NS
+                gone.id = mid
+                gone.action = Marker.DELETE
+                markers.append(gone)
+        return markers
+
 
 class RoutePlanner(Node):
     def __init__(self):
@@ -459,6 +596,31 @@ class RoutePlanner(Node):
         self.declare_parameter("nav2_final_behavior_tree", "")
         # Re-sends of the final goal after a Nav2 failure before giving up.
         self.declare_parameter("nav2_final_max_retry", 2)
+        # -- off-network goals (plaza / courtyard behind a fence) --
+        # Such a goal has no road under it and the fence is not mapped, so
+        # snapping it to the geometrically nearest segment can pick the sidewalk
+        # on the wrong side. Instead the route ends at a hand-authored entry
+        # point and the last leg is driven as one Nav2 goal.
+        self.declare_parameter("entry_enable", True)
+        self.declare_parameter("entry_gpkg", _default_entry_gpkg())
+        self.declare_parameter("entry_table", "entries")
+        # A goal further than this (m) from any road counts as off-network.
+        self.declare_parameter("off_network_m", 5.0)
+        # Only entries this close (m) to the goal are considered; a per-entry
+        # radius_m column in the layer overrides it. This is also the cap on the
+        # access leg, so it must stay under the global costmap's reach: that
+        # costmap is a rolling window centred on the robot (100x100 m), and
+        # NavfnPlanner throws GoalOutsideMapBounds for a goal outside it, i.e.
+        # more than 50 m away. 40 leaves room for TF jitter and update lag; a
+        # goal further than this from every entry warns instead, which is the
+        # cue to add another entry point rather than to raise the radius.
+        self.declare_parameter("entry_search_radius_m", 40.0)
+        # Weight on the off-road leg when comparing entries. >1 favors the entry
+        # that leaves less driving outside the road network, even if the road
+        # detour to reach it is longer.
+        self.declare_parameter("entry_offroad_weight", 1.0)
+        self.declare_parameter("entry_markers_topic", "campus_entry_markers")
+        self.declare_parameter("entry_marker_size_m", 1.0)
         # -- patrol route picking (RViz "Publish Point" -> ordered waypoints) --
         self.declare_parameter("patrol_enable", True)
         self.declare_parameter("patrol_name", "patrol_01")
@@ -538,6 +700,16 @@ class RoutePlanner(Node):
                 self.get_parameter("nav_waypoint_markers_topic").value,
                 rviz_qos(),
             )
+            # Latched: entries are static, so RViz picks them up whenever it
+            # subscribes rather than only on the next route.
+            self.entry_marker_pub = self.create_publisher(
+                MarkerArray,
+                self.get_parameter("entry_markers_topic").value,
+                latched_qos(),
+            )
+        self.entries = []
+        if self.get_parameter("entry_enable").value:
+            self._load_entry_points()
         self.nav_action_client = None
         self.final_action_client = None
         # -- rolling waypoint batching state --
@@ -551,6 +723,12 @@ class RoutePlanner(Node):
         self._nav_batch_last_xy = None  # xy of last waypoint in the sent batch
         self._nav_sent_key = None       # (cursor, batch_end) of last sent batch
         self._nav_batch_timer = None
+        # Index of the entry pose when the route ends with an off-network access
+        # leg (entry -> goal); None for an ordinary on-road route.
+        self._nav_entry_index = None
+        # -- waypoint marker state (progress colouring) --
+        self._nav_marker_n = 0        # waypoints in the published marker array
+        self._nav_marker_reached = 0  # how many of them are already green
         # -- final-goal (precise approach) state --
         self._final_phase = False       # last pose is being driven on its own
         self._final_goal_active = False  # NavigateToPose sent, not yet finished
@@ -771,6 +949,52 @@ class RoutePlanner(Node):
                     f"footprints in {len(markers)} marker chunk(s), "
                     f"height {h_min:.1f}-{h_max:.1f} m."
                 )
+
+    # -- off-network entry points --------------------------------------------
+    def _load_entry_points(self):
+        """Collect the places where the robot may leave the road network."""
+        gpkg = self.get_parameter("entry_gpkg").value
+        table = self.get_parameter("entry_table").value
+        entries = load_entry_points(gpkg, table=table)
+        if entries:
+            self.get_logger().info(
+                f"Loaded {len(entries)} entry point(s) from {gpkg}:{table}: "
+                f"{', '.join(e['name'] for e in entries)}."
+            )
+        else:
+            self.get_logger().info(
+                f"No entry points in {gpkg}:{table} (layer missing or empty). "
+                "Off-network goals will snap to the nearest road as before."
+            )
+        stubs = []
+        if self.get_parameter("source").value == "pbf":
+            stubs = load_stub_entry_points(
+                self.get_parameter("pbf_path").value, self.graph
+            )
+            if stubs:
+                self.get_logger().info(
+                    f"Loaded {len(stubs)} entry anchor(s) from campus_entry stub "
+                    f"way(s): {', '.join(s['name'] for s in stubs)}."
+                )
+        self.entries = entries + stubs
+        self._publish_entry_markers()
+
+    def _publish_entry_markers(self):
+        if not (HAVE_MARKERS and hasattr(self, "entry_marker_pub")):
+            return
+        stamp = _latest_tf_stamp()
+        enu_pts = []
+        for e in self.entries:
+            east, north = self.enu.to_xy(e["lon"], e["lat"])
+            enu_pts.append((east, north, e["name"]))
+        size = float(self.get_parameter("entry_marker_size_m").value)
+        self.entry_marker_pub.publish(
+            MarkerArray(
+                markers=_entry_point_markers(
+                    enu_pts, self.frame_id, stamp, size=size
+                )
+            )
+        )
 
     # -- callbacks -----------------------------------------------------------
     def _on_campus_goal(self, msg: PoseStamped):
@@ -1069,13 +1293,38 @@ class RoutePlanner(Node):
             for i, p in enumerate(path_msg.poses)
         ]
         size = float(self.get_parameter("nav_waypoint_marker_size_m").value)
-        self.nav_wp_marker_pub.publish(
-            MarkerArray(
-                markers=_patrol_waypoint_markers(
-                    enu_pts, self.frame_id, path_msg.header.stamp, size=size
-                )
-            )
+        markers = _nav_waypoint_markers(
+            enu_pts, self.frame_id, path_msg.header.stamp, size=size,
+            reached=0, stale_upto=self._nav_marker_n,
         )
+        self._nav_marker_n = len(enu_pts)
+        self._nav_marker_reached = 0
+        self.nav_wp_marker_pub.publish(MarkerArray(markers=markers))
+
+    def _recolor_nav_waypoints(self, reached):
+        """Turn the waypoints the robot has passed green.
+
+        The whole route is republished rather than just the waypoints that
+        changed: the topic is latched with depth 1, so the last message has to
+        stand on its own for an RViz that connects mid-route.
+        """
+        if not (HAVE_MARKERS and hasattr(self, "nav_wp_marker_pub")):
+            return
+        n = min(self._nav_marker_n, len(self._nav_route_poses))
+        reached = max(0, min(reached, n))
+        if n == 0 or reached == self._nav_marker_reached:
+            return
+        enu_pts = [
+            (p.pose.position.x, p.pose.position.y, str(i + 1))
+            for i, p in enumerate(self._nav_route_poses[:n])
+        ]
+        size = float(self.get_parameter("nav_waypoint_marker_size_m").value)
+        markers = _nav_waypoint_markers(
+            enu_pts, self.frame_id, _latest_tf_stamp(), size=size,
+            reached=reached, clear_first=False,
+        )
+        self._nav_marker_reached = reached
+        self.nav_wp_marker_pub.publish(MarkerArray(markers=markers))
 
     def _patrol_save(self, close):
         built = self._patrol_build(close=close)
@@ -1237,15 +1486,41 @@ class RoutePlanner(Node):
         )
 
     def _plan_and_send_to_nav(self, start_lonlat, goal_lonlat):
-        result = self.graph.plan_points(
+        plan = self.graph.plan_to_goal(
             start_lonlat[0], start_lonlat[1],
             goal_lonlat[0], goal_lonlat[1],
+            entries=self.entries,
+            off_network_m=float(self.get_parameter("off_network_m").value),
+            search_radius_m=float(
+                self.get_parameter("entry_search_radius_m").value
+            ),
+            offroad_weight=float(self.get_parameter("entry_offroad_weight").value),
             respect_turns=self.respect_turns,
         )
-        if result is None:
+        if plan is None:
             self.get_logger().error("No path: start/goal not connected.")
             return
-        lonlat_path, length, _sp, _gp = result
+        lonlat_path = plan["path"]
+        length = plan["length_m"]
+        road_end_index = plan["road_end_index"]
+        if road_end_index is not None:
+            lead = plan["entry_lead_m"]
+            road_m = length - lead - plan["offroad_m"]
+            through = f"{lead:.0f} m through the opening + " if lead else ""
+            self.get_logger().info(
+                f"Goal is {plan['goal_offnetwork_m']:.1f} m off-network -> entering "
+                f"via '{plan['entry_name']}' ({road_m:.0f} m on roads + "
+                f"{through}{plan['offroad_m']:.0f} m access leg)."
+            )
+        elif plan["entry_missing"] and self.get_parameter("entry_enable").value:
+            self.get_logger().warn(
+                f"Goal is {plan['goal_offnetwork_m']:.1f} m off-network but no entry "
+                f"point is within {self.get_parameter('entry_search_radius_m').value:.0f} m "
+                f"of it (none authored, or the nearest opening is too far); snapping "
+                f"to the nearest road, which may sit on the wrong side of a fence. "
+                f"Add a point closer to the goal in "
+                f"{self.get_parameter('entry_gpkg').value}."
+            )
         # Match road-network marker height for RViz; keep Nav2 goals at z=0.
         path_z = float(self.get_parameter("network_z").value)
         self._publish_path_msg(
@@ -1253,20 +1528,42 @@ class RoutePlanner(Node):
         )
 
         step = self.get_parameter("nav_waypoint_spacing_m").value
-        nav_lonlat = self._densify(lonlat_path, step)
+        nav_lonlat, nav_entry_index = self._densify_route(
+            lonlat_path, step, road_end_index
+        )
         # The first point is the current robot position; Nav2 should drive to
         # upcoming waypoints, not re-goal itself at its current pose.
         if len(nav_lonlat) > 1:
             nav_lonlat = nav_lonlat[1:]
+            if nav_entry_index is not None:
+                nav_entry_index = max(0, nav_entry_index - 1)
         nav_msg = self._publish_path_msg(
             self.nav_waypoints_pub, nav_lonlat, length, label="nav waypoints", z=0.0
         )
         self._publish_nav_waypoint_markers(nav_msg)
         if self.get_parameter("send_to_nav2").value:
             if self.get_parameter("nav2_batch_enable").value:
-                self._start_batched_route(nav_msg.poses)
+                self._start_batched_route(
+                    nav_msg.poses, entry_index=nav_entry_index
+                )
             else:
                 self._send_nav2_waypoints(nav_msg.poses)
+
+    def _densify_route(self, lonlat_path, step_m, road_end_index):
+        """Densify the on-road part only; return (points, entry_index).
+
+        Everything past road_end_index is off the road: the hop through the
+        opening to the authored entry point (when there is one), then the hop to
+        the goal. Both are straight lines that may cut across the very fence they
+        exist to get around, so nothing is interpolated along them — Nav2 plans
+        each one itself, with the fence in its costmap. The returned index is the
+        hand-over pose, which is the second to last either way.
+        """
+        if road_end_index is None:
+            return self._densify(lonlat_path, step_m), None
+        head = self._densify(lonlat_path[: road_end_index + 1], step_m)
+        out = head + list(lonlat_path[road_end_index + 1:])
+        return out, len(out) - 2
 
     # -- rolling waypoint batching ------------------------------------------
     @staticmethod
@@ -1322,7 +1619,7 @@ class RoutePlanner(Node):
             return None
         return tf.transform.translation.x, tf.transform.translation.y
 
-    def _start_batched_route(self, poses):
+    def _start_batched_route(self, poses, entry_index=None):
         """Store the full route and let the timer feed it to Nav2 in batches."""
         self._cancel_nav2_goal()
         self._cancel_final_goal()
@@ -1330,6 +1627,7 @@ class RoutePlanner(Node):
         self._final_retry = 0
         self._final_cancel_pending = False
         self._final_wait_ticks = 0
+        self._nav_entry_index = entry_index
         self._nav_route_poses = list(poses)
         self._nav_cursor = 0
         self._nav_goal_active = False
@@ -1381,11 +1679,16 @@ class RoutePlanner(Node):
                 f"Nav cursor advanced {prev_cursor} -> {self._nav_cursor} "
                 f"(dropped {self._nav_cursor - prev_cursor} reached/overshot waypoint(s))."
             )
+            self._recolor_nav_waypoints(self._nav_cursor)
 
         if precise_final and self._nav_cursor >= n - 1:
             approach = float(self.get_parameter("nav2_final_approach_m").value)
-            if dist(n - 1) <= approach:
-                self._enter_final_phase(poses[n - 1], dist(n - 1))
+            final_dist = dist(n - 1)
+            # On an access leg the goal sits off the road network, normally well
+            # beyond the approach window: the handover happens the moment the
+            # entry point is reached instead.
+            if self._nav_entry_index is not None or final_dist <= approach:
+                self._enter_final_phase(poses[n - 1], final_dist)
                 return
 
         if self._nav_cursor >= n:
@@ -1471,9 +1774,16 @@ class RoutePlanner(Node):
         self._final_phase = True
         self._final_retry = 0
         self._final_wait_ticks = 0
+        # Everything up to the hand-over pose is behind us now; only the goal
+        # itself stays amber until it is reached.
+        self._recolor_nav_waypoints(len(self._nav_route_poses) - 1)
+        what = (
+            "access leg from the entry point"
+            if self._nav_entry_index is not None else "route end"
+        )
         self.get_logger().info(
-            f"Final approach: {distance:.1f} m to the route end, switching from "
-            f"batched waypoints to '{self.get_parameter('nav2_final_action_name').value}'."
+            f"Final approach: {distance:.1f} m of {what}, switching from batched "
+            f"waypoints to '{self.get_parameter('nav2_final_action_name').value}'."
         )
         # bt_navigator rejects a second navigator while the through-poses goal is
         # still running, and cancel_goal_async only *requests* the cancel. Wait
@@ -1606,6 +1916,8 @@ class RoutePlanner(Node):
         self._nav_running = False
         self._final_phase = False
         self._final_cancel_pending = False
+        if not warn:
+            self._recolor_nav_waypoints(len(self._nav_route_poses))
         log = self.get_logger().warn if warn else self.get_logger().info
         log(f"Campus route complete: {reason}")
 

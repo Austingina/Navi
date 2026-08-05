@@ -38,6 +38,10 @@ def generate_launch_description():
         "CAMPUS_GPKG_OVERLAY",
         os.path.join(pkg_root, "finetuned_road.gpkg"),
     )
+    default_entry_gpkg = os.environ.get(
+        "CAMPUS_ENTRY_GPKG",
+        os.path.join(pkg_root, "campus_entries.gpkg"),
+    )
     default_patrol_out = os.path.join(pkg_root, "patrol_routes")
     # bt_navigator loads this by absolute path, so resolve it from the installed
     # share tree rather than leaving it to the Nav2 default search path.
@@ -164,6 +168,16 @@ def generate_launch_description():
                 ),
             ),
             DeclareLaunchArgument(
+                "entry_gpkg",
+                default_value=default_entry_gpkg,
+                description=(
+                    "GeoPackage POINT layer of off-network entry points: where "
+                    "the robot may leave the road for a goal on a plaza or in a "
+                    "courtyard. Author it in QGIS; empty/missing keeps the old "
+                    "nearest-road behavior"
+                ),
+            ),
+            DeclareLaunchArgument(
                 "patrol_out_dir",
                 default_value=default_patrol_out,
                 description="Directory for exported patrol routes",
@@ -197,6 +211,7 @@ def generate_launch_description():
                         "nav2_final_behavior_tree": LaunchConfiguration(
                             "nav2_final_behavior_tree"
                         ),
+                        "entry_gpkg": LaunchConfiguration("entry_gpkg"),
                         "patrol_out_dir": LaunchConfiguration("patrol_out_dir"),
                     },
                 ],
