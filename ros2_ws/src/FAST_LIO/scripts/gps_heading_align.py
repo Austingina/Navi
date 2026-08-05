@@ -48,6 +48,7 @@ Optional exit_after_lock: shut down after first lock (heading_calib mode).
 
 from __future__ import annotations
 
+import copy
 import math
 from typing import Optional, Tuple
 
@@ -454,7 +455,12 @@ class GpsHeadingAlign(Node):
         out = Odometry()
         out.header = odom.header
         out.child_frame_id = odom.child_frame_id
-        out.pose = odom.pose
+        # Deep-copy pose so writing the absolute yaw below does NOT mutate the
+        # cached self.latest_odom in place. Otherwise (timer @publish_rate faster
+        # than LIO) the same latest_odom is re-published across ticks and each
+        # tick re-reads its already-corrected orientation and adds yaw_offset
+        # AGAIN, producing a yaw_offset-spaced staircase (lio+k*offset).
+        out.pose = copy.deepcopy(odom.pose)
         out.twist = odom.twist
         abs_yaw = wrap_pi(quat_to_yaw(odom.pose.pose.orientation) + self.yaw_offset)
         out.pose.pose.orientation = yaw_to_quat(abs_yaw)

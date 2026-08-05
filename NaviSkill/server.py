@@ -1057,7 +1057,7 @@ class NavigationToolManager:
 
         def set_goal_by_outdoor(target: str, lon: float = None, lat: float = None,
                                 tolerance: float = 10.0,
-                                direct_threshold: float = 50.0) -> Dict[str, Any]:
+                                direct_threshold: float = 150.0) -> Dict[str, Any]:
             """
             按语义点下发室外 GPS 导航目标（按距离自适应选择下发通道）。
 
