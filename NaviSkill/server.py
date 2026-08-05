@@ -867,6 +867,13 @@ class NavigationToolManager:
                     "msg": portal_nav.get('msg', "传送门导航失败，未切换模式")}
 
         # ── 2) 到达传送门后重启目标模式导航栈 ──
+        # 传送门“到达”是几何判定（进入 tol 半径即返回），机器人此刻可能仍在移动。
+        # 拆栈前必须先停车，否则切换期间会溜车：cancel_navigation 只能取消本节点持有
+        # handle 的目标，而室外近距目标是发到 /goal_pose 的（nav_node 无其 handle），
+        # 故还需 cancel_all_nav_goals 走 action 底层 CancelGoal 服务取消全部目标——
+        # Nav2 取消目标时 controller 会主动发零速停车，无需自行持续刷零速。
+        self.ros_node.cancel_navigation()
+        self.ros_node.cancel_all_nav_goals()
         if target_mode == NavNode.NAV_MODE_SLAM:
             launch = self._launch_slam_stack()
         else:
@@ -930,6 +937,12 @@ class NavigationToolManager:
                     if mode_switch.get("nav_mode") != NavNode.NAV_MODE_SLAM:
                         return {"success": False,
                                 "msg": mode_switch.get("msg", "切换到 SLAM 模式失败"),
+                                "mode_switch": mode_switch}
+                    # 定位未就绪就下发会把目标发给尚未启动完成的新栈而丢失，
+                    # 必须等 _ensure_nav_mode 确认新栈 map→base_link 稳定后再发。
+                    if not mode_switch.get("localized"):
+                        return {"success": False,
+                                "msg": "切换到 SLAM 模式后定位未就绪，已放弃下发目标",
                                 "mode_switch": mode_switch}
                     if x is None or y is None:
                         return {"success": False, "msg": "target 为 tmp 时必须提供 x、y 坐标",
@@ -1005,6 +1018,12 @@ class NavigationToolManager:
                     if mode_switch.get("nav_mode") != NavNode.NAV_MODE_SLAM:
                         return {"success": False,
                                 "msg": mode_switch.get("msg", "切换到 SLAM 模式失败"),
+                                "mode_switch": mode_switch}
+                    # 定位未就绪就下发会把目标发给尚未启动完成的新栈而丢失，
+                    # 必须等 _ensure_nav_mode 确认新栈 map→base_link 稳定后再发。
+                    if not mode_switch.get("localized"):
+                        return {"success": False,
+                                "msg": "切换到 SLAM 模式后定位未就绪，已放弃下发目标",
                                 "mode_switch": mode_switch}
                 else:
                     # 已在 SLAM 模式：若目标 submap 与当前不一致，先导航到传送门再换图。

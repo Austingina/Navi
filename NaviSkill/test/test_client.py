@@ -486,28 +486,50 @@ class SimplePatrolClient:
                         goal_params["slam_map"] = target_slam_map
                     if target_submap:
                         goal_params["submap"] = target_submap
-                goal_data = await client.call("set_goal_by_slam", goal_params)
+                # 下发 + 等待，最多 2 次：当返回“导航目标未被接受”（Nav2 在接受
+                # 阶段拒绝，常因导航栈刚启动/忙）时自动重发一次；其它失败（超时/卡住/
+                # 语义错误）重发无益，不重试。
+                max_send_attempts = 2
+                goal_data: Dict[str, Any] = {}
+                wait_data: Dict[str, Any] = {"success": False, "msg": "未下发"}
+                for send_attempt in range(max_send_attempts):
+                    goal_data = await client.call("set_goal_by_slam", goal_params)
+                    if not goal_data.get("success"):
+                        logger.error(f"❌ 下发目标失败: {goal_data.get('msg')}")
+                        break  # 语义性失败（不在白名单/切换失败等），重发无益
 
+                    logger.info(f"✅ 目标点下发成功: {goal_data.get('msg')}")
+
+                    logger.info("⏳ 等待导航系统响应...")
+                    await asyncio.sleep(2)
+
+                    post_status_data = await client.call("get_status")
+                    if post_status_data.get("success"):
+                        post_pos = post_status_data["position"]
+                        logger.info(f"📍 响应后位置: x={post_pos['x']:.3f}, y={post_pos['y']:.3f}")
+
+                    logger.info(
+                        "⏳ 等待到达目标点 (超时: 120秒)... [按空格键暂停/恢复]"
+                    )
+                    wait_data = await self.wait_goal_with_pause(
+                        client, target_name, timeout=120.0, xy_tolerance=0.04, yaw_tolerance=0.03
+                    )
+                    if wait_data.get("success"):
+                        break
+                    # 仅“导航目标未被接受”重发一次；其它失败原因重发无益。
+                    msg = wait_data.get("msg") or ""
+                    if "未被接受" in msg and send_attempt < max_send_attempts - 1:
+                        logger.warning(
+                            f"⚠️ 导航目标未被接受，重发一次 "
+                            f"({send_attempt + 2}/{max_send_attempts})…"
+                        )
+                        await asyncio.sleep(2)
+                        continue
+                    break
+
+                # 语义性下发失败：跳过该点位（保持原行为）。
                 if not goal_data.get("success"):
-                    logger.error(f"❌ 下发目标失败: {goal_data.get('msg')}")
                     continue
-
-                logger.info(f"✅ 目标点下发成功: {goal_data.get('msg')}")
-
-                logger.info("⏳ 等待导航系统响应...")
-                await asyncio.sleep(2)
-
-                post_status_data = await client.call("get_status")
-                if post_status_data.get("success"):
-                    post_pos = post_status_data["position"]
-                    logger.info(f"📍 响应后位置: x={post_pos['x']:.3f}, y={post_pos['y']:.3f}")
-
-                logger.info(
-                    "⏳ 等待到达目标点 (超时: 120秒)... [按空格键暂停/恢复]"
-                )
-                wait_data = await self.wait_goal_with_pause(
-                    client, target_name, timeout=120.0, xy_tolerance=0.04, yaw_tolerance=0.03
-                )
 
                 duration = time.time() - start_time
 

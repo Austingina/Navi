@@ -30,6 +30,7 @@ import tf2_geometry_msgs
 # 导入action相关库
 from nav2_msgs.action import NavigateToPose
 from rclpy.action import ActionClient
+from action_msgs.srv import CancelGoal
 
 
 class NavNode(Node):
@@ -880,6 +881,12 @@ class NavNode(Node):
                 if (self.nav_mode == self.NAV_MODE_GPS
                         and not self.is_gps_available()):
                     return
+                # SLAM 模式：切换后 map_received 被复位，只有新 SLAM 栈重新发布 /map
+                # 才会置回 True。以此确保“定位就绪”对应的是新栈（而非旧栈残留 TF），
+                # 避免在 SLAM 栈启动完成前就误报就绪、把目标发给未就绪的栈而丢失。
+                if (self.nav_mode == self.NAV_MODE_SLAM
+                        and not self.map_received):
+                    return
                 self.tf_ready = True
                 self.get_logger().info("✓ TF定位成功，进入ready状态")
                 self.play_audio("success.mp3")
@@ -944,6 +951,29 @@ class NavNode(Node):
             self.tf_ready = False
             self.tf_fail_count = 0
             self.current_pose = None
+            # 关键：清空 tf2 buffer，丢弃旧模式残留的 map→odom / map→base_link 缓存帧。
+            # 否则切换后（新栈还在启动）update_robot_pose 会立刻用旧 GPS 的
+            # map→odom 合成出 map→base_link，把 tf_ready 拉回 True，使上层
+            # (_wait_localized) 误判“已定位”，在新栈就绪前就 publish_goal，导致
+            # 目标发给旧/未就绪的栈而丢失。静态变换由 BufferCore 单独保存，clear 不影响。
+            try:
+                self.tf_buffer.clear()
+            except Exception as e:
+                self.get_logger().warning(f"清空 tf buffer 失败(忽略): {e}")
+            # 时间戳门控：只接受切换时刻之后产生的新 map→base_link 帧再置 ready，
+            # 与换图 (_on_relocalization_request) 同机制，双保险。
+            try:
+                self._min_tf_stamp_for_ready_ns = self.get_clock().now().nanoseconds
+            except Exception:
+                self._min_tf_stamp_for_ready_ns = 0
+            # 切到 SLAM：仅靠 TF 无法区分“旧 GPS 栈仍在发的 map→odom”和“新 SLAM 栈的
+            # map→odom”（旧栈被 start_slam.sh 异步 kill 前会继续发新时间戳帧，清 buffer
+            # 也会被立刻重新填满）。因此额外要求新栈重新发布过 /map（OccupancyGrid，
+            # 仅 SLAM 栈发布）才认定就绪：复位 map_received，令其只能被新栈的 /map 置回
+            # True（见 update_robot_pose 的就绪门控）。
+            if mode == self.NAV_MODE_SLAM:
+                self.map_received = False
+                self.current_map = None
             self._publish_nav_mode()
             self.get_logger().info(f"✓ 导航模式已切换: {old} → {mode}")
         return True, f"已切换到 {mode} 模式"
@@ -1554,6 +1584,37 @@ class NavNode(Node):
                 return False
         else:
             self.get_logger().warn("没有活跃的导航目标可取消")
+
+    def cancel_all_nav_goals(self, timeout_sec: float = 3.0) -> bool:
+        """取消 ``navigate_to_pose`` action server 上的**全部**目标。
+
+        与 ``cancel_navigation`` 不同：后者只能取消本节点持有 handle 的目标；而室外
+        近距目标是别处发到 /goal_pose 再由 Nav2 执行的，本节点没有其 goal handle，
+        必须直接调用 action 底层的 CancelGoal 服务。空请求（goal_id/stamp 全 0）按
+        action 语义即“取消全部目标”，从而真正让室外 controller 停止驱动 /cmd_vel。
+        """
+        try:
+            client = self._get_cached_client(
+                CancelGoal, '/navigate_to_pose/_action/cancel_goal')
+            if not client.wait_for_service(timeout_sec=timeout_sec):
+                self.get_logger().warning(
+                    '取消服务不可用: /navigate_to_pose/_action/cancel_goal')
+                return False
+            request = CancelGoal.Request()  # 全 0 → 取消全部目标
+            future = client.call_async(request)
+            start = time.time()
+            while not future.done():
+                if time.time() - start > timeout_sec:
+                    self.get_logger().warning('取消全部导航目标超时')
+                    return False
+                time.sleep(0.05)
+            resp = future.result()
+            n = len(resp.goals_canceling) if resp is not None else 0
+            self.get_logger().info(f'已请求取消全部导航目标（{n} 个正在取消）')
+            return True
+        except Exception as e:
+            self.get_logger().error(f'取消全部导航目标失败: {e}')
+            return False
 
     def quaternion_to_euler(self, x, y, z, w):
         """
