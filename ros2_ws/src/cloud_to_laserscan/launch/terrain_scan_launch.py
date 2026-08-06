@@ -20,7 +20,7 @@ def generate_launch_description():
         'obstacle_min_height': 0.03,
         'obstacle_max_height': 1.6,
         # 地面未知时回退到脚底高度带
-        'fallback_on_unknown_elevation': True,
+        'fallback_on_unknown_elevation': False,
         'fallback_min_height': 0.05,
         'fallback_max_height': 1.6,
         # 坡度 -> 分级代价 OccupancyGrid(/slope_costmap)
