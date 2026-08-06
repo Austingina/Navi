@@ -161,7 +161,7 @@ def generate_launch_description():
 
     # t=3 —— Nav2（等 localization 立起 map->odom->base_link）
     nav2 = TimerAction(
-        period=3.0,
+        period=8.0,
         actions=[IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(fast_lio_launch, 'outdoor_nav2.launch.py')),

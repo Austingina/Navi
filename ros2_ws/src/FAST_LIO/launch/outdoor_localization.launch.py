@@ -147,7 +147,9 @@ def generate_launch_description():
                      'process_noise': 0.05,       # LIO 漂移速率(m^2/s)
                      'gps_variance_default': 1.0,  # GPS 消息无协方差时的兜底
                      'use_msg_covariance': True,   # 优先用 GPS 自带协方差当 R
-                     'gps_gate_sigma': 5.0}],      # 突跳门限(sigma)，0=关
+                     'gps_gate_sigma': 5.0,        # 突跳门限(sigma)，0=关
+                     'datum_lat': datum_lat,        # 与 gps_heading_align / campus_nav 一致
+                     'datum_lon': datum_lon}],
         condition=use_gps_simple,
     )
 

@@ -41,6 +41,7 @@ import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import TransformStamped
+from sensor_msgs.msg import NavSatFix
 from std_msgs.msg import Float64
 import tf2_ros
 
@@ -69,6 +70,13 @@ class MapOdomFromGps(Node):
         # Initial state covariance (large => first GPS snaps the estimate in).
         self.declare_parameter('initial_variance', 10.0)
         self.declare_parameter('publish_identity_until_gps', True)
+        # Fixed campus datum: same values used by gps_heading_align and campus_nav.
+        # map_odom_from_gps subscribes to /gps/fix and converts lat/lon -> ENU
+        # directly so GPS position is available immediately, before navsat can
+        # produce /odometry/gps (which requires heading lock first).
+        self.declare_parameter('datum_lat', 22.574357630323675)
+        self.declare_parameter('datum_lon', 113.93507078035577)
+        self.declare_parameter('raw_gps_topic', '/gps/fix')
 
         self.map_frame = self.get_parameter('map_frame').value
         self.odom_frame = self.get_parameter('odom_frame').value
@@ -83,6 +91,14 @@ class MapOdomFromGps(Node):
         self.p0 = float(self.get_parameter('initial_variance').value)
         self.publish_identity_until_gps = bool(
             self.get_parameter('publish_identity_until_gps').value)
+
+        # ENU conversion constants for the raw /gps/fix path
+        _datum_lat_deg = self.get_parameter('datum_lat').value
+        _datum_lon_deg = self.get_parameter('datum_lon').value
+        self._datum_lat_deg = _datum_lat_deg
+        self._datum_lon_deg = _datum_lon_deg
+        self._cos_datum_lat = math.cos(math.radians(_datum_lat_deg))
+        self._R_earth = 6_371_000.0
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
@@ -109,11 +125,15 @@ class MapOdomFromGps(Node):
 
         self.create_subscription(Odometry, gps_topic, self.gps_cb, 10)
         self.create_subscription(Float64, yaw_offset_topic, self.offset_cb, 10)
+        raw_gps_topic = self.get_parameter('raw_gps_topic').value
+        self.create_subscription(NavSatFix, raw_gps_topic, self._raw_gps_cb, 10)
         self.timer = self.create_timer(1.0 / rate, self.on_timer)
         self.get_logger().info(
             f'map_odom_from_gps: 2D position KF (x,y) + ENU yaw from '
             f'{yaw_offset_topic} (identity until first offset). '
-            f'q={self.q}, gate={self.gate} sigma')
+            f'q={self.q}, gate={self.gate} sigma. '
+            f'Pre-lock GPS position from {raw_gps_topic} (datum '
+            f'{_datum_lat_deg:.6f}, {_datum_lon_deg:.6f})')
 
     def offset_cb(self, msg: Float64):
         self.yaw_offset = float(msg.data)
@@ -124,6 +144,38 @@ class MapOdomFromGps(Node):
             self.get_logger().info(
                 f'yaw_offset locked: {math.degrees(self.yaw_offset):.1f} deg; '
                 f'map->odom now rotates odom(LIO) into ENU/north')
+
+    def _latlon_to_enu(self, lat, lon):
+        """Flat-earth ENU relative to the campus datum (identical formula to
+        gps_heading_align and campus_nav.ENU — kept inline to avoid cross-package
+        imports)."""
+        east = self._R_earth * self._cos_datum_lat * math.radians(lon - self._datum_lon_deg)
+        north = self._R_earth * math.radians(lat - self._datum_lat_deg)
+        return east, north
+
+    def _raw_gps_cb(self, msg: NavSatFix):
+        """Pre-lock GPS position path: convert raw fix -> ENU using the fixed datum.
+
+        Active only before heading lock (have_offset=False), i.e. while navsat
+        has not yet established its datum and /odometry/gps is silent. Once
+        heading is locked, offset_cb sets have_offset=True and this callback
+        becomes a no-op; gps_cb (from /odometry/gps) takes over from then on.
+        """
+        if self.have_offset:
+            return
+        if msg.status.status < 0:  # STATUS_NO_FIX
+            return
+        east, north = self._latlon_to_enu(msg.latitude, msg.longitude)
+        rx = ry = self.r_default
+        # NavSatFix position_covariance is [xx, xy, xz, yx, yy, yz, zx, zy, zz]
+        # (east variance = [0], north variance = [4]).
+        if (self.use_msg_cov
+                and msg.position_covariance_type >= 2  # DIAGONAL_KNOWN or KNOWN
+                and msg.position_covariance[0] > 0.0):
+            rx = msg.position_covariance[0]
+            ry = msg.position_covariance[4]
+        self.gps = (east, north, rx, ry)
+        self.gps_new = True
 
     def gps_cb(self, msg: Odometry):
         rx = ry = self.r_default
