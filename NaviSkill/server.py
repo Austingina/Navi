@@ -65,9 +65,6 @@ class NavigationToolManager:
         """
         # 方法名 -> 可调用（同步或 async），由 register_tools 填充
         self._handlers = {}
-        # 可视化（rerun）引用；server.py main() 在创建 NaviRerunViz 后会注入。
-        # 为 None 时所有 viz_* RPC 静默 no-op。
-        self.viz = None
         # 多楼层地图管理器
         self.map_manager = map_manager
         # 初始化经纬度转换器
@@ -1429,46 +1426,6 @@ class NavigationToolManager:
             except Exception as e:
                 return {"success": False, "msg": f"获取路线失败: {str(e)}"}
 
-        def viz_set_active_route(route_name: str) -> Dict[str, Any]:
-            """告诉可视化（rerun）当前正在导航的 route。
-
-            客户端在开始按 route 巡检时调用此方法；viz 会画出这条 route 的
-            折线与 waypoints。未启动 viz（即未带 ``-v``）时静默成功。
-
-            Args:
-                route_name: 路线名称（必须在 map_manager 中存在）
-
-            Returns:
-                Dict: ``{"success": True}`` 或 ``{"success": False, "msg": ...}``
-            """
-            if not route_name or not isinstance(route_name, str):
-                return {"success": False, "msg": "route_name 不能为空"}
-            try:
-                is_global = route_name in self.map_manager.get_global_route_names()
-                if not is_global and self.map_manager.get_route_by_name(route_name) is None:
-                    return {"success": False, "msg": f"路线不存在: {route_name}"}
-            except Exception as e:
-                return {"success": False, "msg": f"校验路线失败: {e}"}
-            if self.viz is not None:
-                try:
-                    self.viz.set_active_route(route_name)
-                except Exception as e:
-                    return {"success": False, "msg": f"viz set_active_route 失败: {e}"}
-            return {"success": True, "route_name": route_name, "viz_enabled": self.viz is not None}
-
-        def viz_clear_active_route() -> Dict[str, Any]:
-            """通知可视化清掉当前导航 route 的显示（导航结束 / 取消时调用）。
-
-            未启动 viz 时静默成功。
-            """
-            if self.viz is not None:
-                try:
-                    self.viz.set_active_route(None)
-                except Exception as e:
-                    return {"success": False, "msg": f"viz clear 失败: {e}"}
-            return {"success": True, "viz_enabled": self.viz is not None}
-
-
         def get_status() -> Dict[str, Any]:
             """
             获取小车实时状态（含导航模式与按模式判定的定位状态）。
@@ -1759,8 +1716,6 @@ class NavigationToolManager:
             "get_route_names": get_route_names,
             "get_default_route": get_default_route,
             "get_route": get_route,
-            "viz_set_active_route": viz_set_active_route,
-            "viz_clear_active_route": viz_clear_active_route,
             "get_status": get_status,
             "wait_goal_reached": wait_goal_reached,
             "get_navigation_plan": get_navigation_plan,
@@ -2055,8 +2010,6 @@ async def main():
                     save_path=args.viz_save_path,
                 )
                 viz.start()
-                # 注入给 mgr，让 viz_set_active_route / viz_clear_active_route 能用
-                mgr.viz = viz
             except Exception as e:
                 logging.error(f"启动可视化失败（继续运行 server）: {e}", exc_info=True)
                 viz = None
