@@ -280,49 +280,51 @@ class RouteGraph:
                      off_network_m=5.0, search_radius_m=40.0,
                      offroad_weight=1.0, respect_turns=False,
                      max_candidates=8):
-        """Plan to a goal that may sit off the road network.
+        """Plan between two points either of which may sit off the road network.
 
-        A goal inside a fenced area (plaza, courtyard) has no road under it, and
-        snapping it to the geometrically nearest segment happily picks a
-        sidewalk on the wrong side of the fence. So when the goal is further
-        than off_network_m from any road and entry points are known, the road
-        part of the route ends at the entry minimizing
+        A point inside a fenced area (plaza, courtyard) has no road under it.
+        When start or goal is further than off_network_m from any road and
+        entry points are known, the route uses the entry minimising
 
-            network_dist(start, entry) + offroad_weight * straight(entry, goal)
+            offroad_weight * straight_access_leg + road_network_cost
 
-        and the goal is appended after it. An entry authored off the road (a
-        click a few metres inside the opening, to say which way to head in) is
-        kept as a via point in between, so the robot is really driven through the
-        opening instead of being handed a straight line from the roadside. The
-        tail of the path is therefore
+        for that end. An entry authored off the road is kept as a via point so
+        the robot is driven through the opening rather than handed a straight
+        line from the roadside. The full path structure is:
 
-            ... -> road_end (the entry projected onto the road)
-                -> via (the entry as authored; absent when it sits on the road)
-                -> goal
+            start -> (start_via) -> road_start -> ... -> road_end -> (via) -> goal
 
-        Each of those off-network hops gets planned by the caller's planner in
-        one shot, so search_radius_m caps them both: a hop reaching outside the
-        global costmap is rejected before the robot drives anywhere.
+        where start_via / via are absent when the entry sits on the road.
+        Off-network hops are never densified; Nav2 plans each hop locally.
 
         Returns a dict, or None when nothing is reachable:
-            path              [(lon, lat), ...]
-            length_m          road length + both off-network hops
-            start_proj        projection dict of the start
-            goal_proj         projection of the goal onto the nearest road
-            road_end_index    last on-road point (None when no entry was used)
-            via_index         the authored entry point (None when on the road)
-            entry_name        name of the chosen entry
-            entry_lead_m      road_end -> via (0 when there is no via point)
-            offroad_m         hand-over point -> goal
-            goal_offnetwork_m goal distance to the nearest road
-            entry_missing     goal is off-network but no entry covers it
+            path               [(lon, lat), ...]
+            length_m           total length including all off-network hops
+            start_proj         road projection of the start-side entry (or start)
+            goal_proj          road projection of the goal-side entry (or goal)
+            road_start_index   index of the first on-road point; None if start on-network
+            start_via_index    index of the start-side via entry; None if on the road
+            road_end_index     index of the last on-road point; None if goal on-network
+            via_index          index of the goal-side via entry; None if on the road
+            start_entry_name   name of the chosen start entry (None if not used)
+            entry_name         name of the chosen goal entry (None if not used)
+            start_entry_lead_m road_proj -> start_via distance (0 when no via)
+            entry_lead_m       road_proj -> goal_via distance (0 when no via)
+            start_offroad_m    start -> start_via (or road_proj) distance
+            offroad_m          goal_via (or road_proj) -> goal distance
+            start_offnetwork_m start distance to the nearest road
+            goal_offnetwork_m  goal distance to the nearest road
+            start_entry_missing  start is off-network but no entry covers it
+            entry_missing        goal is off-network but no entry covers it
         """
+        sp0 = self.project_to_edge(slon, slat)
         gp0 = self.project_to_edge(glon, glat)
-        if gp0 is None:
+        if sp0 is None or gp0 is None:
             return None
-        off_network = gp0["dist"]
+        start_off_network = sp0["dist"]
+        goal_off_network = gp0["dist"]
 
-        def _plain(entry_missing):
+        def _plain(start_entry_missing=False, entry_missing=False):
             res = self.plan_points(slon, slat, glon, glat,
                                    respect_turns=respect_turns)
             if res is None:
@@ -331,71 +333,194 @@ class RouteGraph:
             return {
                 "path": lonlat, "length_m": length,
                 "start_proj": sp, "goal_proj": gp,
+                "road_start_index": None, "start_via_index": None,
                 "road_end_index": None, "via_index": None,
-                "entry_name": None,
-                "entry_lead_m": 0.0, "offroad_m": 0.0,
-                "goal_offnetwork_m": off_network,
+                "start_entry_name": None, "entry_name": None,
+                "start_entry_lead_m": 0.0, "entry_lead_m": 0.0,
+                "start_offroad_m": 0.0, "offroad_m": 0.0,
+                "start_offnetwork_m": start_off_network,
+                "goal_offnetwork_m": goal_off_network,
+                "start_entry_missing": start_entry_missing,
                 "entry_missing": entry_missing,
             }
 
-        if off_network <= off_network_m or not entries:
-            return _plain(off_network > off_network_m)
+        start_is_off = start_off_network > off_network_m and bool(entries)
+        goal_is_off = goal_off_network > off_network_m and bool(entries)
+
+        if not start_is_off and not goal_is_off:
+            return _plain(
+                start_entry_missing=start_off_network > off_network_m,
+                entry_missing=goal_off_network > off_network_m,
+            )
 
         # Pre-filter on the authored coordinate, with slack, only to bound how
         # many searches a campus-wide layer costs. The radius itself is enforced
         # below on the real access leg.
-        cands = []
-        for e in entries:
-            radius = e.get("radius_m") or search_radius_m
-            rough = haversine(e["lon"], e["lat"], glon, glat)
-            if rough > radius + _ENTRY_PREFILTER_SLACK_M:
-                continue
-            cands.append((rough, radius, e))
-        cands.sort(key=lambda c: c[0])
+        def _prefilter(ref_lon, ref_lat):
+            cands = []
+            for e in entries:
+                radius = e.get("radius_m") or search_radius_m
+                rough = haversine(e["lon"], e["lat"], ref_lon, ref_lat)
+                if rough <= radius + _ENTRY_PREFILTER_SLACK_M:
+                    cands.append((rough, radius, e))
+            cands.sort(key=lambda c: c[0])
+            return cands[:max_candidates]
 
-        best = None
-        for _rough, radius, e in cands[:max_candidates]:
-            res = self.plan_points(slon, slat, e["lon"], e["lat"],
-                                   respect_turns=respect_turns)
-            if res is None:
-                continue
-            lonlat, length, sp, gp = res
-            # The road part can only end where the entry meets the road, so every
-            # off-network distance is measured from that projection outwards.
-            # Measuring from the authored click instead would under-report the
-            # legs by however far it was placed off the road, letting an
-            # over-long hop through the radius check.
-            lead = haversine(gp["lon"], gp["lat"], e["lon"], e["lat"])
+        goal_cands = _prefilter(glon, glat) if goal_is_off else []
+        start_cands = _prefilter(slon, slat) if start_is_off else []
+
+        def _offroad_legs(road_proj, entry, point_lon, point_lat):
+            """Return (lead, straight) for one entry relative to an off-network point.
+
+            lead     = road_proj -> entry (0 when the entry sits on the road)
+            straight = entry (or road_proj) -> off-network point
+            All off-network distances are measured from the road projection
+            outwards so an over-long hop cannot slip through the radius check.
+            """
+            lead = haversine(road_proj["lon"], road_proj["lat"],
+                             entry["lon"], entry["lat"])
             if lead < _ENTRY_VIA_MIN_M:
                 lead = 0.0
-                handover = (gp["lon"], gp["lat"])
+                straight = haversine(road_proj["lon"], road_proj["lat"],
+                                     point_lon, point_lat)
             else:
-                handover = (e["lon"], e["lat"])
-            straight = haversine(handover[0], handover[1], glon, glat)
-            if straight > radius or lead > radius:
-                continue
-            cost = length + offroad_weight * (lead + straight)
-            if best is None or cost < best[0]:
-                best = (cost, lonlat, length, sp, gp, lead, straight, e)
-        if best is None:
-            return _plain(True)
+                straight = haversine(entry["lon"], entry["lat"],
+                                     point_lon, point_lat)
+            return lead, straight
 
-        _cost, lonlat, road_len, sp, gp, lead, straight, e = best
-        path = list(lonlat)
+        # ── goal off-network only ─────────────────────────────────────────────
+        if goal_is_off and not start_is_off:
+            best = None
+            for _rough, radius, e in goal_cands:
+                res = self.plan_points(slon, slat, e["lon"], e["lat"],
+                                       respect_turns=respect_turns)
+                if res is None:
+                    continue
+                lonlat, length, sp, gp = res
+                lead, straight = _offroad_legs(gp, e, glon, glat)
+                if straight > radius or lead > radius:
+                    continue
+                cost = length + offroad_weight * (lead + straight)
+                if best is None or cost < best[0]:
+                    best = (cost, lonlat, length, sp, gp, lead, straight, e)
+            if best is None:
+                return _plain(entry_missing=True)
+            _cost, lonlat, road_len, sp, gp, lead, straight, e = best
+            path = list(lonlat)
+            road_end_index = len(path) - 1
+            via_index = None
+            if lead:
+                via_index = len(path)
+                path.append((e["lon"], e["lat"]))
+            path.append((glon, glat))
+            return {
+                "path": path, "length_m": road_len + lead + straight,
+                "start_proj": sp, "goal_proj": gp,
+                "road_start_index": None, "start_via_index": None,
+                "road_end_index": road_end_index, "via_index": via_index,
+                "start_entry_name": None, "entry_name": e.get("name"),
+                "start_entry_lead_m": 0.0, "entry_lead_m": lead,
+                "start_offroad_m": 0.0, "offroad_m": straight,
+                "start_offnetwork_m": start_off_network,
+                "goal_offnetwork_m": goal_off_network,
+                "start_entry_missing": False, "entry_missing": False,
+            }
+
+        # ── start off-network only ────────────────────────────────────────────
+        if start_is_off and not goal_is_off:
+            best = None
+            for _rough, radius, e in start_cands:
+                res = self.plan_points(e["lon"], e["lat"], glon, glat,
+                                       respect_turns=respect_turns)
+                if res is None:
+                    continue
+                lonlat, length, sp, gp = res
+                # sp is the road projection of the entry; measure the off-road
+                # legs from it, the same way goal-side measures from gp.
+                lead, straight = _offroad_legs(sp, e, slon, slat)
+                if straight > radius or lead > radius:
+                    continue
+                cost = offroad_weight * (straight + lead) + length
+                if best is None or cost < best[0]:
+                    best = (cost, lonlat, length, sp, gp, lead, straight, e)
+            if best is None:
+                return _plain(start_entry_missing=True)
+            _cost, lonlat, road_len, sp, gp, lead, straight, e = best
+            # Build: start -> (start_via) -> road_start -> ... -> goal_proj
+            path = [(slon, slat)]
+            start_via_index = None
+            if lead:
+                start_via_index = len(path)
+                path.append((e["lon"], e["lat"]))
+            road_start_index = len(path)
+            path.extend(lonlat)
+            return {
+                "path": path, "length_m": straight + lead + road_len,
+                "start_proj": sp, "goal_proj": gp,
+                "road_start_index": road_start_index,
+                "start_via_index": start_via_index,
+                "road_end_index": None, "via_index": None,
+                "start_entry_name": e.get("name"), "entry_name": None,
+                "start_entry_lead_m": lead, "entry_lead_m": 0.0,
+                "start_offroad_m": straight, "offroad_m": 0.0,
+                "start_offnetwork_m": start_off_network,
+                "goal_offnetwork_m": goal_off_network,
+                "start_entry_missing": False, "entry_missing": False,
+            }
+
+        # ── both off-network ──────────────────────────────────────────────────
+        best = None
+        for _rough_s, radius_s, e_s in start_cands:
+            for _rough_g, radius_g, e_g in goal_cands:
+                res = self.plan_points(e_s["lon"], e_s["lat"],
+                                       e_g["lon"], e_g["lat"],
+                                       respect_turns=respect_turns)
+                if res is None:
+                    continue
+                lonlat, length, sp, gp = res
+                s_lead, s_straight = _offroad_legs(sp, e_s, slon, slat)
+                g_lead, g_straight = _offroad_legs(gp, e_g, glon, glat)
+                if s_straight > radius_s or s_lead > radius_s:
+                    continue
+                if g_straight > radius_g or g_lead > radius_g:
+                    continue
+                cost = (offroad_weight * (s_straight + s_lead)
+                        + length
+                        + offroad_weight * (g_lead + g_straight))
+                if best is None or cost < best[0]:
+                    best = (cost, lonlat, length, sp, gp,
+                            s_lead, s_straight, e_s,
+                            g_lead, g_straight, e_g)
+        if best is None:
+            return _plain(start_entry_missing=True, entry_missing=True)
+        (_cost, lonlat, road_len, sp, gp,
+         s_lead, s_straight, e_s, g_lead, g_straight, e_g) = best
+        path = [(slon, slat)]
+        start_via_index = None
+        if s_lead:
+            start_via_index = len(path)
+            path.append((e_s["lon"], e_s["lat"]))
+        road_start_index = len(path)
+        path.extend(lonlat)
         road_end_index = len(path) - 1
         via_index = None
-        if lead:
+        if g_lead:
             via_index = len(path)
-            path.append((e["lon"], e["lat"]))
+            path.append((e_g["lon"], e_g["lat"]))
         path.append((glon, glat))
         return {
-            "path": path, "length_m": road_len + lead + straight,
+            "path": path,
+            "length_m": s_straight + s_lead + road_len + g_lead + g_straight,
             "start_proj": sp, "goal_proj": gp,
+            "road_start_index": road_start_index,
+            "start_via_index": start_via_index,
             "road_end_index": road_end_index, "via_index": via_index,
-            "entry_name": e.get("name"),
-            "entry_lead_m": lead, "offroad_m": straight,
-            "goal_offnetwork_m": off_network,
-            "entry_missing": False,
+            "start_entry_name": e_s.get("name"), "entry_name": e_g.get("name"),
+            "start_entry_lead_m": s_lead, "entry_lead_m": g_lead,
+            "start_offroad_m": s_straight, "offroad_m": g_straight,
+            "start_offnetwork_m": start_off_network,
+            "goal_offnetwork_m": goal_off_network,
+            "start_entry_missing": False, "entry_missing": False,
         }
 
     def astar(self, start, goal, respect_turns=False):

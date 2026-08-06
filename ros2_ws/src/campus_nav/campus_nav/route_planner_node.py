@@ -1502,20 +1502,40 @@ class RoutePlanner(Node):
             return
         lonlat_path = plan["path"]
         length = plan["length_m"]
+        road_start_index = plan["road_start_index"]
         road_end_index = plan["road_end_index"]
+        entry_enable = self.get_parameter("entry_enable").value
+        radius_str = f"{self.get_parameter('entry_search_radius_m').value:.0f}"
+        if road_start_index is not None:
+            s_lead = plan["start_entry_lead_m"]
+            s_through = f"{s_lead:.0f} m through the opening + " if s_lead else ""
+            self.get_logger().info(
+                f"Start is {plan['start_offnetwork_m']:.1f} m off-network -> "
+                f"exiting via '{plan['start_entry_name']}' "
+                f"({s_through}{plan['start_offroad_m']:.0f} m to road network)."
+            )
+        elif plan["start_entry_missing"] and entry_enable:
+            self.get_logger().warn(
+                f"Start is {plan['start_offnetwork_m']:.1f} m off-network but no "
+                f"entry point is within {radius_str} m of it; snapping to the "
+                f"nearest road, which may sit on the wrong side of a fence. "
+                f"Add a point closer to the start in "
+                f"{self.get_parameter('entry_gpkg').value}."
+            )
         if road_end_index is not None:
             lead = plan["entry_lead_m"]
-            road_m = length - lead - plan["offroad_m"]
+            road_m = (length - plan["start_offroad_m"] - plan["start_entry_lead_m"]
+                      - lead - plan["offroad_m"])
             through = f"{lead:.0f} m through the opening + " if lead else ""
             self.get_logger().info(
                 f"Goal is {plan['goal_offnetwork_m']:.1f} m off-network -> entering "
                 f"via '{plan['entry_name']}' ({road_m:.0f} m on roads + "
                 f"{through}{plan['offroad_m']:.0f} m access leg)."
             )
-        elif plan["entry_missing"] and self.get_parameter("entry_enable").value:
+        elif plan["entry_missing"] and entry_enable:
             self.get_logger().warn(
                 f"Goal is {plan['goal_offnetwork_m']:.1f} m off-network but no entry "
-                f"point is within {self.get_parameter('entry_search_radius_m').value:.0f} m "
+                f"point is within {radius_str} m "
                 f"of it (none authored, or the nearest opening is too far); snapping "
                 f"to the nearest road, which may sit on the wrong side of a fence. "
                 f"Add a point closer to the goal in "
@@ -1529,7 +1549,8 @@ class RoutePlanner(Node):
 
         step = self.get_parameter("nav_waypoint_spacing_m").value
         nav_lonlat, nav_entry_index = self._densify_route(
-            lonlat_path, step, road_end_index
+            lonlat_path, step, road_end_index,
+            road_start_index=road_start_index,
         )
         # The first point is the current robot position; Nav2 should drive to
         # upcoming waypoints, not re-goal itself at its current pose.
@@ -1549,21 +1570,24 @@ class RoutePlanner(Node):
             else:
                 self._send_nav2_waypoints(nav_msg.poses)
 
-    def _densify_route(self, lonlat_path, step_m, road_end_index):
-        """Densify the on-road part only; return (points, entry_index).
+    def _densify_route(self, lonlat_path, step_m, road_end_index,
+                       road_start_index=None):
+        """Densify the on-road segment only; return (points, goal_entry_index).
 
-        Everything past road_end_index is off the road: the hop through the
-        opening to the authored entry point (when there is one), then the hop to
-        the goal. Both are straight lines that may cut across the very fence they
-        exist to get around, so nothing is interpolated along them — Nav2 plans
-        each one itself, with the fence in its costmap. The returned index is the
-        hand-over pose, which is the second to last either way.
+        Segments before road_start_index (start off-road prefix) and after
+        road_end_index (goal off-road tail) are left un-densified — Nav2 plans
+        each off-road hop through its local costmap. goal_entry_index is the
+        handover pose for the precise final approach (second-to-last waypoint),
+        or None when there is no goal-side off-road tail.
         """
-        if road_end_index is None:
-            return self._densify(lonlat_path, step_m), None
-        head = self._densify(lonlat_path[: road_end_index + 1], step_m)
-        out = head + list(lonlat_path[road_end_index + 1:])
-        return out, len(out) - 2
+        start_idx = road_start_index if road_start_index is not None else 0
+        end_idx = road_end_index if road_end_index is not None else len(lonlat_path) - 1
+        prefix = list(lonlat_path[:start_idx])
+        road_part = lonlat_path[start_idx:end_idx + 1]
+        suffix = list(lonlat_path[end_idx + 1:])
+        out = prefix + self._densify(road_part, step_m) + suffix
+        goal_entry_index = len(out) - 2 if suffix else None
+        return out, goal_entry_index
 
     # -- rolling waypoint batching ------------------------------------------
     @staticmethod

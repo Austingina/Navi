@@ -57,7 +57,7 @@
     # route_planner.launch.py (an absolute path is required).
     entry_enable: true
     entry_table: entries
-    off_network_m: 5.0
+    off_network_m: 3.0
     # Also caps the access leg (entry -> goal), which Nav2 plans in one shot:
     # global_costmap is a 100x100 m rolling window centred on the robot, and
     # NavfnPlanner throws GoalOutsideMapBounds past its edge (50 m). If a goal
