@@ -211,8 +211,12 @@ def generate_launch_description():
             launch_arguments={
                 'use_sim_time': use_sim_time,
                 'send_to_nav2': send_to_nav2,
-                # 首锁前 map 未对北，挡住 campus GPS 目标下发，避免朝错方向跑。
-                'require_heading_lock': 'true',
+                # 不扣住目标：首锁需要走够 3m 直线 baseline，而扣住目标机器人就永远
+                # 不动、也就永远锁不上（鸡生蛋）。所以放行，让它先走起来 —— 未锁时 map
+                # 未对北，前几米方向可能是错的，走够 3m 自动锁定并纠正航向。
+                # route_planner 收到 locked 后会清两遍 costmap 并重发当前批次。
+                # 想要旧行为（锁定前扣住）传 require_heading_lock:=true。
+                'require_heading_lock': 'false',
                 # 同一个 datum 透传给 route_planner，保证与 map 原点严格一致。
                 'datum_lat': datum_lat,
                 'datum_lon': datum_lon,

@@ -138,6 +138,9 @@ class GpsHeadingAlign(Node):
         # Re-anchor if the path loops back and the chord collapses below this
         # fraction of the largest baseline reached (chord direction unreliable).
         self.declare_parameter('shrink_ratio', 0.6)
+        # Loop-back re-anchors before we call out the circling case explicitly.
+        # A couple are normal (a turn early on); a run of them is not.
+        self.declare_parameter('loop_reanchor_warn_count', 3)
         # Drop+re-anchor if |d_lio|/|d_gps| leaves this band (GPS jump or LIO
         # slip -- the two must measure the same physical motion).
         self.declare_parameter('mag_ratio_tol', 2.0)
@@ -169,6 +172,8 @@ class GpsHeadingAlign(Node):
         self.lock_stable_tol = math.radians(
             float(self.get_parameter('lock_stable_tol_deg').value))
         self.shrink_ratio = float(self.get_parameter('shrink_ratio').value)
+        self.loop_reanchor_warn_count = int(
+            self.get_parameter('loop_reanchor_warn_count').value)
         self.mag_ratio_tol = float(self.get_parameter('mag_ratio_tol').value)
         self.max_h_var = float(self.get_parameter('max_h_var').value)
         self.min_fix_status = int(self.get_parameter('min_fix_status').value)
@@ -194,6 +199,7 @@ class GpsHeadingAlign(Node):
         # anchor: (lat, lon, t, lio_x, lio_y) fixed while the baseline grows.
         self.anchor_fix: Optional[Tuple[float, float, float, float, float]] = None
         self._max_baseline = 0.0            # largest chord reached this anchor [m]
+        self._loop_reanchors = 0            # consecutive loop-back re-anchors
         self._last_theta: Optional[float] = None
         self.latest_fix: Optional[NavSatFix] = None
         self.latest_odom: Optional[Odometry] = None
@@ -320,6 +326,23 @@ class GpsHeadingAlign(Node):
                 f'path looped (baseline {dgps:.1f} < '
                 f'{self.shrink_ratio:.1f}x peak {self._max_baseline:.1f} m); '
                 f're-anchor')
+            self._loop_reanchors += 1
+            # Repeated collapses are the signature of driving in circles, and
+            # circles are what a Nav2 goal produces while the heading is still
+            # unlocked: the reported heading is off by yaw_offset but GPS keeps
+            # correcting the position, so the controller steers by a constant
+            # error and closes an arc. That resets the baseline every lap, and
+            # there is no timeout here — it can go on forever. Say so, with the
+            # way out, instead of only logging one more 're-anchor'.
+            if self._loop_reanchors >= self.loop_reanchor_warn_count:
+                self.get_logger().warn(
+                    f'heading NOT locking: the baseline has collapsed '
+                    f'{self._loop_reanchors} times. The robot is most likely '
+                    f'driving in circles on a wrong heading, which resets the '
+                    f'baseline every lap. Drive it straight by hand for ~'
+                    f'{self.min_total_distance + 2.0:.0f} m to break out of it.',
+                    throttle_duration_sec=10.0,
+                )
             self._set_anchor(msg.latitude, msg.longitude, t1)
             return
         # NOTE: no speed gate. Speed is irrelevant to a displacement-alignment
@@ -366,6 +389,7 @@ class GpsHeadingAlign(Node):
         # First lock
         self.yaw_offset = theta
         self.locked = True
+        self._loop_reanchors = 0
         self.get_logger().info(
             f'LOCKED yaw_offset={self.yaw_offset:.3f} rad '
             f'({math.degrees(self.yaw_offset):.1f} deg) '
