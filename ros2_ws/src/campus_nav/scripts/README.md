@@ -106,7 +106,7 @@ Goal is 26.6 m off-network -> entering via 'plaza_west'
 | 参数 | 默认 | 说明 |
 |------|------|------|
 | `entry_enable` | `true` | 关掉即完全回到旧行为 |
-| `off_network_m` | `5.0` | 终点离最近路段超过这个距离才启用入口模式 |
+| `off_network_m` | `3.0` | 终点离最近路段超过这个距离才启用入口模式 |
 | `entry_search_radius_m` | `40.0` | 只考虑离终点这么近的入口，同时也是接入段长度上限（见下） |
 | `entry_offroad_weight` | `1.0` | 大于 1 更偏向离网段短的入口，即使路网要绕远 |
 

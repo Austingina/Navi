@@ -189,7 +189,7 @@ local_costmap:
       plugins: ["terrain_layer", "obstacle_layer", "inflation_layer"]
 
       # 自定义地形代价层：读 terrain_scan 的 /terrain_cost_cloud（cost=0..100, odom 系）。
-      # cost<lethal_cost_threshold -> 渐变代价(缓坡软避让)；>= -> LETHAL(陡坡/路沿)。
+      # cost<lethal_cost_threshold -> 渐变代价(z缓坡软避让)；>= -> LETHAL(陡坡/路沿)。
       # 自带滚动栅格,随窗口累积持久(60m 内不遗忘),取代旧 StaticLayer(不持久+刷屏)。
       terrain_layer:
         plugin: "terrain_costmap_layer::TerrainLayer"
@@ -216,7 +216,7 @@ local_costmap:
           data_type: "LaserScan"
           clearing: True
           marking: True
-          inf_is_valid: false
+          inf_is_valid: True
           observation_persistence: 0.3
           raytrace_max_range: 10.0
           raytrace_min_range: 0.0
@@ -288,7 +288,7 @@ global_costmap:
           data_type: "LaserScan"
           clearing: True
           marking: True
-          inf_is_valid: false
+          inf_is_valid: True
           observation_persistence: 0.0
           raytrace_max_range: 12.0
           raytrace_min_range: 0.0

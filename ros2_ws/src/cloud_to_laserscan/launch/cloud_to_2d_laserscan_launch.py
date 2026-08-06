@@ -10,7 +10,7 @@ def generate_launch_description():
         'publish_filtered_pcd': False,
         'ground_tolerance': 0.05,
         'max_height': 2.0,
-        'fallback_on_unknown_elevation': True,
+        'fallback_on_unknown_elevation': False,
         'fallback_min_height': -0.4,
         'fallback_max_height': 1.6,
         'angle_min': -3.141592653589793,

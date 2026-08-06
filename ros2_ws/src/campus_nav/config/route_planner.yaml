@@ -57,7 +57,7 @@
     # route_planner.launch.py (an absolute path is required).
     entry_enable: true
     entry_table: entries
-    off_network_m: 5.0
+    off_network_m: 3.0
     # Also caps the access leg (entry -> goal), which Nav2 plans in one shot:
     # global_costmap is a 100x100 m rolling window centred on the robot, and
     # NavfnPlanner throws GoalOutsideMapBounds past its edge (50 m). If a goal
@@ -67,6 +67,32 @@
     entry_offroad_weight: 1.0
     entry_markers_topic: campus_entry_markers
     entry_marker_size_m: 1.0
+
+    # -- road network vs. direct drive ---------------------------------------
+    # Following the roads is the safe default: the graph encodes topology the
+    # robot cannot see, so it never drives into a fenced dead end. But for a goal
+    # a few metres away, or one the roads only reach by going around the block,
+    # snapping to the network is a pointless excursion. plan_auto weighs the two
+    # by comparing the road route against the straight line; see
+    # RouteGraph.plan_auto for the ordered rules. Set false to always follow the
+    # road network (behaviour before this was added).
+    auto_channel_enable: true
+    # Hard ceiling on any hop handed to Nav2 as a single goal. Same 50 m costmap
+    # limit that bounds entry_search_radius_m above — keep the two in step.
+    direct_max_m: 40.0
+    # Below this, drive straight there unconditionally: projecting onto a road
+    # and back off it costs more than the trip itself.
+    always_direct_m: 8.0
+    # Drive direct once the road route is this many times the straight line.
+    # 1.0 would always go direct; a very large value always follows the roads.
+    detour_ratio_threshold: 1.6
+    # An on-road leg no longer than this means both ends attach to the road at
+    # the same place, i.e. the route would leave and re-enter through a single
+    # opening. Then it is either a straight shot, or — when that exceeds
+    # direct_max_m — two hops with the entry as the waypoint between them.
+    same_entry_road_m: 2.0
+    decision_topic: campus_route_decision
+
     patrol_enable: true
     patrol_name: patrol_01
     patrol_loop: true

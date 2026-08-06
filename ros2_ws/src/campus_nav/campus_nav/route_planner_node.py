@@ -557,6 +557,13 @@ class RoutePlanner(Node):
         # costmap obstacle marks, persistent terrain cost) is now misplaced.
         # Clear the costmaps once at that moment so they rebuild north-aligned.
         self.declare_parameter("clear_costmaps_on_lock", True)
+        # Delay before the second clear. gps_heading_align sends the status
+        # ahead of the yaw_offset in the same tick, and map_odom_from_gps only
+        # broadcasts the rotated map->odom one tick later still, so the first
+        # clear always lands before the snap and the costmaps keep writing under
+        # the old transform for up to a TF period. One more clear once that has
+        # settled removes what slipped through. 0 disables the second pass.
+        self.declare_parameter("clear_costmaps_settle_s", 1.0)
         self.declare_parameter(
             "global_costmap_clear_service",
             "/global_costmap/clear_entirely_global_costmap",
@@ -621,6 +628,32 @@ class RoutePlanner(Node):
         self.declare_parameter("entry_offroad_weight", 1.0)
         self.declare_parameter("entry_markers_topic", "campus_entry_markers")
         self.declare_parameter("entry_marker_size_m", 1.0)
+        # -- road network vs. direct drive --------------------------------------
+        # Following the roads is the safe default: the graph encodes topology the
+        # robot cannot see, so it never drives into a fenced dead end. But for a
+        # goal a few metres away, or one the roads only reach by going around the
+        # block, snapping to the network is a pointless excursion. plan_auto
+        # weighs the two; see RouteGraph.plan_auto for the ordered rules.
+        self.declare_parameter("auto_channel_enable", True)
+        # Hard ceiling on any hop handed to Nav2 as a single goal. The global
+        # costmap is a rolling 100x100 m window centred on the robot, so
+        # NavfnPlanner throws GoalOutsideMapBounds past ~50 m; 40 leaves room for
+        # TF jitter and update lag. Same reasoning as entry_search_radius_m —
+        # keep the two in step.
+        self.declare_parameter("direct_max_m", 40.0)
+        # Below this, drive straight there unconditionally: projecting onto a road
+        # and back off it costs more than the trip itself.
+        self.declare_parameter("always_direct_m", 8.0)
+        # Drive direct once the road route is this many times the straight line.
+        # 1.0 would always go direct; very large values always follow the roads.
+        self.declare_parameter("detour_ratio_threshold", 1.6)
+        # An on-road leg no longer than this means both ends attach to the road
+        # at the same place, i.e. the route would leave and re-enter through one
+        # opening. Kept as a length rather than an entry-name match: names are
+        # neither unique nor required, and two entries a metre apart should
+        # behave identically.
+        self.declare_parameter("same_entry_road_m", 2.0)
+        self.declare_parameter("decision_topic", "campus_route_decision")
         # -- patrol route picking (RViz "Publish Point" -> ordered waypoints) --
         self.declare_parameter("patrol_enable", True)
         self.declare_parameter("patrol_name", "patrol_01")
@@ -707,6 +740,11 @@ class RoutePlanner(Node):
                 self.get_parameter("entry_markers_topic").value,
                 latched_qos(),
             )
+        # Latched: the last decision stays readable for anything that subscribes
+        # after the goal was already dispatched.
+        self.decision_pub = self.create_publisher(
+            String, self.get_parameter("decision_topic").value, latched_qos()
+        )
         self.entries = []
         if self.get_parameter("entry_enable").value:
             self._load_entry_points()
@@ -726,6 +764,9 @@ class RoutePlanner(Node):
         # Index of the entry pose when the route ends with an off-network access
         # leg (entry -> goal); None for an ordinary on-road route.
         self._nav_entry_index = None
+        # Which channel plan_auto picked for the route being driven:
+        # 'road' | 'direct' | 'direct_via_entry'. Only affects log wording.
+        self._nav_mode = "road"
         # -- waypoint marker state (progress colouring) --
         self._nav_marker_n = 0        # waypoints in the published marker array
         self._nav_marker_reached = 0  # how many of them are already green
@@ -737,29 +778,54 @@ class RoutePlanner(Node):
         self._final_retry = 0
         self._final_cancel_pending = False  # waiting for the batch goal to end
         self._final_wait_ticks = 0
-        # -- heading-lock gate state --
+        # -- heading-lock state --
+        # Two separate things, deliberately not one flag:
+        #   _heading_locked      the physical fact — has the heading aligned yet
+        #   _require_heading_lock the policy — do we hold goals until it does
+        # Conflating them breaks the costmap clear: with the gate off, a flag
+        # pre-set to "locked" means the lock transition never fires.
         self._require_heading_lock = bool(
             self.get_parameter("require_heading_lock").value
         )
         # Latch: once aligned it stays aligned (gps_heading_align never unlocks;
         # frozen_bad_gps still keeps a valid frozen heading offset).
-        self._heading_locked = not self._require_heading_lock
+        self._heading_locked = False
+        # Whether any heading status has arrived at all. Distinguishes "waiting
+        # for a lock that is coming" from "no gps_heading_align in this stack"
+        # (the sim), so the drive-before-lock warning does not spam the latter.
+        self._heading_status_seen = False
         # Costmap-clear service clients (created lazily so we don't pay for them
         # when the feature is off). Populated on first use in _clear_costmaps().
         self._clear_costmaps_on_lock = bool(
             self.get_parameter("clear_costmaps_on_lock").value
         )
+        # One-shot timer for the post-snap clear; cancelled as soon as it fires.
+        self._settle_clear_timer = None
         self._global_clear_cli = None
         self._local_clear_cli = None
-        if self._require_heading_lock:
-            status_topic = self.get_parameter("heading_status_topic").value
+        # Subscribe whenever the topic is configured, independent of the gate
+        # policy: the lock transition is what triggers the costmap clear, and
+        # that is needed *more* when goals are allowed through early — the robot
+        # will have driven on a wrong heading and filled the costmaps with data
+        # the snap then displaces.
+        status_topic = self.get_parameter("heading_status_topic").value
+        if status_topic:
             self.create_subscription(
                 String, status_topic, self._on_heading_status, 10
             )
-            self.get_logger().warn(
-                f"require_heading_lock: campus goals will be held from Nav2 until "
-                f"'{status_topic}' reports locked."
-            )
+            if self._require_heading_lock:
+                self.get_logger().warn(
+                    f"require_heading_lock: campus goals will be held from Nav2 "
+                    f"until '{status_topic}' reports locked."
+                )
+            else:
+                self.get_logger().warn(
+                    f"require_heading_lock=false: campus goals go to Nav2 even "
+                    f"before '{status_topic}' reports locked. The robot may "
+                    f"initially drive the wrong way — the heading needs ~3 m of "
+                    f"motion to lock, which holding the goals would prevent. "
+                    f"Costmaps are cleared on lock."
+                )
         if self.get_parameter("send_to_nav2").value:
             self.nav_action_client = ActionClient(
                 self,
@@ -1486,9 +1552,7 @@ class RoutePlanner(Node):
         )
 
     def _plan_and_send_to_nav(self, start_lonlat, goal_lonlat):
-        plan = self.graph.plan_to_goal(
-            start_lonlat[0], start_lonlat[1],
-            goal_lonlat[0], goal_lonlat[1],
+        road_kwargs = dict(
             entries=self.entries,
             off_network_m=float(self.get_parameter("off_network_m").value),
             search_radius_m=float(
@@ -1497,30 +1561,88 @@ class RoutePlanner(Node):
             offroad_weight=float(self.get_parameter("entry_offroad_weight").value),
             respect_turns=self.respect_turns,
         )
+        if self.get_parameter("auto_channel_enable").value:
+            plan = self.graph.plan_auto(
+                start_lonlat[0], start_lonlat[1],
+                goal_lonlat[0], goal_lonlat[1],
+                direct_max_m=float(self.get_parameter("direct_max_m").value),
+                always_direct_m=float(
+                    self.get_parameter("always_direct_m").value
+                ),
+                detour_ratio_threshold=float(
+                    self.get_parameter("detour_ratio_threshold").value
+                ),
+                same_entry_road_m=float(
+                    self.get_parameter("same_entry_road_m").value
+                ),
+                **road_kwargs,
+            )
+        else:
+            plan = self.graph.plan_to_goal(
+                start_lonlat[0], start_lonlat[1],
+                goal_lonlat[0], goal_lonlat[1], **road_kwargs
+            )
+            if plan is not None:
+                plan = dict(plan, mode="road", decision_reason="auto_disabled")
         if plan is None:
-            self.get_logger().error("No path: start/goal not connected.")
+            self.get_logger().error(
+                "No path: the goal is beyond the direct-drive limit "
+                f"({self.get_parameter('direct_max_m').value:.0f} m) and not "
+                "reachable on the road network either. If both ends sit inside "
+                "a fenced area, add an entry point in "
+                f"{self.get_parameter('entry_gpkg').value}."
+            )
             return
         lonlat_path = plan["path"]
         length = plan["length_m"]
+        road_start_index = plan["road_start_index"]
         road_end_index = plan["road_end_index"]
-        if road_end_index is not None:
-            lead = plan["entry_lead_m"]
-            road_m = length - lead - plan["offroad_m"]
-            through = f"{lead:.0f} m through the opening + " if lead else ""
-            self.get_logger().info(
-                f"Goal is {plan['goal_offnetwork_m']:.1f} m off-network -> entering "
-                f"via '{plan['entry_name']}' ({road_m:.0f} m on roads + "
-                f"{through}{plan['offroad_m']:.0f} m access leg)."
-            )
-        elif plan["entry_missing"] and self.get_parameter("entry_enable").value:
-            self.get_logger().warn(
-                f"Goal is {plan['goal_offnetwork_m']:.1f} m off-network but no entry "
-                f"point is within {self.get_parameter('entry_search_radius_m').value:.0f} m "
-                f"of it (none authored, or the nearest opening is too far); snapping "
-                f"to the nearest road, which may sit on the wrong side of a fence. "
-                f"Add a point closer to the goal in "
-                f"{self.get_parameter('entry_gpkg').value}."
-            )
+        mode = plan["mode"]
+        entry_enable = self.get_parameter("entry_enable").value
+        radius_str = f"{self.get_parameter('entry_search_radius_m').value:.0f}"
+        self._log_channel_decision(plan)
+        self._publish_channel_decision(plan)
+        # Entry / off-network narration describes a road route only. Both direct
+        # modes reuse road_end_index to mark their un-densified hops, so without
+        # this guard they would trip the same branches and report driving through
+        # an opening they never touch.
+        if mode == "road":
+            if road_start_index is not None:
+                s_lead = plan["start_entry_lead_m"]
+                s_through = (
+                    f"{s_lead:.0f} m through the opening + " if s_lead else ""
+                )
+                self.get_logger().info(
+                    f"Start is {plan['start_offnetwork_m']:.1f} m off-network -> "
+                    f"exiting via '{plan['start_entry_name']}' "
+                    f"({s_through}{plan['start_offroad_m']:.0f} m to road network)."
+                )
+            elif plan["start_entry_missing"] and entry_enable:
+                self.get_logger().warn(
+                    f"Start is {plan['start_offnetwork_m']:.1f} m off-network but "
+                    f"no entry point is within {radius_str} m of it; snapping to "
+                    f"the nearest road, which may sit on the wrong side of a "
+                    f"fence. Add a point closer to the start in "
+                    f"{self.get_parameter('entry_gpkg').value}."
+                )
+            if road_end_index is not None:
+                lead = plan["entry_lead_m"]
+                through = f"{lead:.0f} m through the opening + " if lead else ""
+                self.get_logger().info(
+                    f"Goal is {plan['goal_offnetwork_m']:.1f} m off-network -> "
+                    f"entering via '{plan['entry_name']}' "
+                    f"({plan['road_m']:.0f} m on roads + "
+                    f"{through}{plan['offroad_m']:.0f} m access leg)."
+                )
+            elif plan["entry_missing"] and entry_enable:
+                self.get_logger().warn(
+                    f"Goal is {plan['goal_offnetwork_m']:.1f} m off-network but no "
+                    f"entry point is within {radius_str} m "
+                    f"of it (none authored, or the nearest opening is too far); "
+                    f"snapping to the nearest road, which may sit on the wrong "
+                    f"side of a fence. Add a point closer to the goal in "
+                    f"{self.get_parameter('entry_gpkg').value}."
+                )
         # Match road-network marker height for RViz; keep Nav2 goals at z=0.
         path_z = float(self.get_parameter("network_z").value)
         self._publish_path_msg(
@@ -1529,7 +1651,8 @@ class RoutePlanner(Node):
 
         step = self.get_parameter("nav_waypoint_spacing_m").value
         nav_lonlat, nav_entry_index = self._densify_route(
-            lonlat_path, step, road_end_index
+            lonlat_path, step, road_end_index,
+            road_start_index=road_start_index,
         )
         # The first point is the current robot position; Nav2 should drive to
         # upcoming waypoints, not re-goal itself at its current pose.
@@ -1544,26 +1667,68 @@ class RoutePlanner(Node):
         if self.get_parameter("send_to_nav2").value:
             if self.get_parameter("nav2_batch_enable").value:
                 self._start_batched_route(
-                    nav_msg.poses, entry_index=nav_entry_index
+                    nav_msg.poses, entry_index=nav_entry_index, mode=mode
                 )
             else:
                 self._send_nav2_waypoints(nav_msg.poses)
 
-    def _densify_route(self, lonlat_path, step_m, road_end_index):
-        """Densify the on-road part only; return (points, entry_index).
+    # -- channel decision reporting -----------------------------------------
+    def _log_channel_decision(self, plan):
+        """One line saying which way we are going and what decided it."""
+        rt = plan["road_total_m"]
+        ratio = plan["detour_ratio"]
+        rt_s = "unreachable" if rt is None else f"{rt:.0f} m"
+        ratio_s = "n/a" if ratio is None else f"{ratio:.2f}x"
+        head = (
+            f"straight {plan['straight_m']:.0f} m, road route {rt_s} "
+            f"({ratio_s}) -> "
+        )
+        mode = plan["mode"]
+        reason = plan["decision_reason"]
+        if mode == "road":
+            self.get_logger().info(f"{head}following the road network [{reason}]")
+        elif mode == "direct":
+            self.get_logger().info(
+                f"{head}driving straight to the goal, bypassing the road "
+                f"network [{reason}]"
+            )
+        else:  # direct_via_entry
+            self.get_logger().info(
+                f"{head}too far for one hop, so driving it in two via "
+                f"'{plan['entry_name']}' [{reason}]"
+            )
 
-        Everything past road_end_index is off the road: the hop through the
-        opening to the authored entry point (when there is one), then the hop to
-        the goal. Both are straight lines that may cut across the very fence they
-        exist to get around, so nothing is interpolated along them — Nav2 plans
-        each one itself, with the fence in its costmap. The returned index is the
-        hand-over pose, which is the second to last either way.
+    def _publish_channel_decision(self, plan):
+        if not hasattr(self, "decision_pub"):
+            return
+        rt = plan["road_total_m"]
+        ratio = plan["detour_ratio"]
+        self.decision_pub.publish(String(data=(
+            f"mode={plan['mode']} reason={plan['decision_reason']} "
+            f"straight_m={plan['straight_m']:.1f} "
+            f"road_total_m={'' if rt is None else f'{rt:.1f}'} "
+            f"road_m={plan['road_m']:.1f} "
+            f"detour_ratio={'' if ratio is None else f'{ratio:.3f}'}"
+        )))
+
+    def _densify_route(self, lonlat_path, step_m, road_end_index,
+                       road_start_index=None):
+        """Densify the on-road segment only; return (points, goal_entry_index).
+
+        Segments before road_start_index (start off-road prefix) and after
+        road_end_index (goal off-road tail) are left un-densified — Nav2 plans
+        each off-road hop through its local costmap. goal_entry_index is the
+        handover pose for the precise final approach (second-to-last waypoint),
+        or None when there is no goal-side off-road tail.
         """
-        if road_end_index is None:
-            return self._densify(lonlat_path, step_m), None
-        head = self._densify(lonlat_path[: road_end_index + 1], step_m)
-        out = head + list(lonlat_path[road_end_index + 1:])
-        return out, len(out) - 2
+        start_idx = road_start_index if road_start_index is not None else 0
+        end_idx = road_end_index if road_end_index is not None else len(lonlat_path) - 1
+        prefix = list(lonlat_path[:start_idx])
+        road_part = lonlat_path[start_idx:end_idx + 1]
+        suffix = list(lonlat_path[end_idx + 1:])
+        out = prefix + self._densify(road_part, step_m) + suffix
+        goal_entry_index = len(out) - 2 if suffix else None
+        return out, goal_entry_index
 
     # -- rolling waypoint batching ------------------------------------------
     @staticmethod
@@ -1619,7 +1784,7 @@ class RoutePlanner(Node):
             return None
         return tf.transform.translation.x, tf.transform.translation.y
 
-    def _start_batched_route(self, poses, entry_index=None):
+    def _start_batched_route(self, poses, entry_index=None, mode="road"):
         """Store the full route and let the timer feed it to Nav2 in batches."""
         self._cancel_nav2_goal()
         self._cancel_final_goal()
@@ -1627,6 +1792,7 @@ class RoutePlanner(Node):
         self._final_retry = 0
         self._final_cancel_pending = False
         self._final_wait_ticks = 0
+        self._nav_mode = mode
         self._nav_entry_index = entry_index
         self._nav_route_poses = list(poses)
         self._nav_cursor = 0
@@ -1777,10 +1943,14 @@ class RoutePlanner(Node):
         # Everything up to the hand-over pose is behind us now; only the goal
         # itself stays amber until it is reached.
         self._recolor_nav_waypoints(len(self._nav_route_poses) - 1)
-        what = (
-            "access leg from the entry point"
-            if self._nav_entry_index is not None else "route end"
-        )
+        if self._nav_mode == "direct":
+            what = "direct drive to the goal"
+        elif self._nav_mode == "direct_via_entry":
+            what = "second hop, from the entry to the goal"
+        elif self._nav_entry_index is not None:
+            what = "access leg from the entry point"
+        else:
+            what = "route end"
         self.get_logger().info(
             f"Final approach: {distance:.1f} m of {what}, switching from batched "
             f"waypoints to '{self.get_parameter('nav2_final_action_name').value}'."
@@ -1823,18 +1993,40 @@ class RoutePlanner(Node):
             return
         self._send_final_goal(self._nav_route_poses[-1])
 
+    def _goals_allowed(self):
+        """Whether Nav2 may be driven right now.
+
+        Locked is always fine. Unlocked is fine too unless the policy says to
+        hold: the heading only locks after ~3 m of motion, so holding every goal
+        until then means the robot never moves and never locks.
+        """
+        return self._heading_locked or not self._require_heading_lock
+
+    def _warn_if_driving_unlocked(self, what):
+        """Say out loud that this is going out on an unaligned map frame."""
+        if self._heading_locked or not self._heading_status_seen:
+            return
+        self.get_logger().warn(
+            f"{what} before the GPS heading locked: the map frame is not "
+            f"north-aligned yet, so the robot may drive the wrong way until it "
+            f"has moved ~3 m. If it circles without locking, drive it straight "
+            f"by hand for ~5 m.",
+            throttle_duration_sec=10.0,
+        )
+
     def _send_final_goal(self, pose):
         if self.final_action_client is None:
             return
         if self._final_goal_active or self._nav_send_pending:
             return
-        if not self._heading_locked:
+        if not self._goals_allowed():
             self.get_logger().warn(
                 "Holding the final campus goal: GPS heading not locked yet "
                 "(/heading_align/status).",
                 throttle_duration_sec=5.0,
             )
             return
+        self._warn_if_driving_unlocked("Driving the final campus pose")
         action_name = self.get_parameter("nav2_final_action_name").value
         if not self.final_action_client.wait_for_server(timeout_sec=0.2):
             self.get_logger().warn(
@@ -1942,22 +2134,64 @@ class RoutePlanner(Node):
     def _on_heading_status(self, msg: String):
         # 'locked' or 'frozen_bad_gps' both mean the heading offset is valid and
         # the map frame is north-aligned; 'unlocked' means not yet aligned.
+        self._heading_status_seen = True
         aligned = msg.data.strip() in ("locked", "frozen_bad_gps")
         if aligned and not self._heading_locked:
             self._heading_locked = True
             self.get_logger().info(
-                "GPS heading locked; campus waypoints will now flow to Nav2."
+                "GPS heading locked; the map frame is north-aligned now."
             )
-            # The map->odom TF just snapped to north; wipe pre-snap map-frame
-            # costmap data so it rebuilds correctly.
+            # The map->odom TF is about to snap to north; wipe pre-snap
+            # map-frame costmap data so it rebuilds correctly. Twice: see
+            # _settle_clear_costmaps for why once is not enough.
             if self._clear_costmaps_on_lock:
-                self._clear_costmaps()
+                self._clear_costmaps(pass_label="immediate")
+                settle = float(
+                    self.get_parameter("clear_costmaps_settle_s").value
+                )
+                if settle > 0.0:
+                    self._settle_clear_timer = self.create_timer(
+                        settle, self._settle_clear_costmaps
+                    )
+            self._recover_heading_from_snap()
 
-    def _clear_costmaps(self):
-        """Best-effort one-shot clear of the Nav2 global/local costmaps.
+    def _recover_heading_from_snap(self):
+        """Re-issue whatever Nav2 is driving, now that the TF is north-aligned.
 
-        Fire-and-forget: if the services are not up (e.g. Nav2 not running) we
-        just warn and move on — never block the heading-status callback.
+        The stored route poses are in campus_map and their ENU coordinates never
+        changed, so the route itself is still right. What is stale is Nav2's own
+        plan: it was built through the pre-snap transform. Rather than replan
+        here, drop the sent-batch key so the batch timer re-sends on its next
+        tick (with preempt=True, cancelling the stale goal first) — the existing
+        machinery, no new driving path.
+
+        Only relevant when goals were allowed out before the lock; with the gate
+        on there is nothing in flight to correct.
+        """
+        if not self._nav_running:
+            return
+        if self._final_phase:
+            # The final approach owns the goal; cancel it and _final_phase_tick
+            # re-sends on its next tick.
+            self.get_logger().info(
+                "heading snap: re-issuing the final campus pose on the "
+                "north-aligned frame."
+            )
+            self._cancel_final_goal()
+            return
+        self.get_logger().info(
+            "heading snap: re-issuing the current waypoint batch on the "
+            "north-aligned frame."
+        )
+        self._nav_sent_key = None
+
+    def _clear_costmaps(self, pass_label="immediate"):
+        """Best-effort clear of the Nav2 global/local costmaps.
+
+        Never blocks the caller: if a service is not up (e.g. Nav2 not running)
+        we warn and move on. The result is reported from a done-callback rather
+        than assumed, so a server-side failure is visible instead of being
+        logged as a success.
         """
         if self._global_clear_cli is None:
             self._global_clear_cli = self.create_client(
@@ -1973,13 +2207,47 @@ class RoutePlanner(Node):
             ("local", self._local_clear_cli),
         ):
             if cli.service_is_ready() or cli.wait_for_service(timeout_sec=1.0):
-                cli.call_async(ClearEntireCostmap.Request())
-                self.get_logger().info(f"heading snap: cleared {name} costmap.")
+                future = cli.call_async(ClearEntireCostmap.Request())
+                self.get_logger().info(
+                    f"heading snap [{pass_label}]: requested {name} costmap clear."
+                )
+                future.add_done_callback(
+                    lambda f, n=name, p=pass_label: self._on_clear_done(f, n, p)
+                )
             else:
                 self.get_logger().warn(
-                    f"heading snap: {name} costmap clear service "
+                    f"heading snap [{pass_label}]: {name} costmap clear service "
                     f"'{cli.srv_name}' unavailable; skipping."
                 )
+
+    def _on_clear_done(self, future, name, pass_label):
+        try:
+            future.result()
+        except Exception as exc:  # noqa: BLE001 — report, never propagate
+            self.get_logger().error(
+                f"heading snap [{pass_label}]: {name} costmap clear FAILED: {exc}"
+            )
+            return
+        self.get_logger().info(
+            f"heading snap [{pass_label}]: {name} costmap cleared."
+        )
+
+    def _settle_clear_costmaps(self):
+        """Second clear, once the rotated map->odom TF has definitely landed.
+
+        gps_heading_align publishes /heading_align/status before
+        /heading_align/yaw_offset in the same tick, and map_odom_from_gps only
+        broadcasts the rotated map->odom on its *next* timer tick after that. So
+        the first clear provably runs before the snap, and whatever the costmaps
+        write in the interval (global 10 Hz, local 5 Hz vs. a TF period of up to
+        50 ms) is laid down under the old, unrotated transform and then displaced
+        by it. TerrainLayer accumulates persistently, so a single such cycle
+        leaves a lasting ghost. Clearing again after the dust settles removes it.
+        """
+        if self._settle_clear_timer is not None:
+            self._settle_clear_timer.cancel()
+            self._settle_clear_timer = None
+        self._clear_costmaps(pass_label="post-snap")
 
     def _send_nav2_waypoints(self, poses, preempt=False):
         if not poses:
@@ -1987,7 +2255,7 @@ class RoutePlanner(Node):
             return
         if self.nav_action_client is None:
             return
-        if not self._heading_locked:
+        if not self._goals_allowed():
             # Route is still computed/published for RViz; we just hold it back
             # from Nav2 until the map frame is north-aligned. The batch timer
             # keeps retrying, so it flushes automatically once locked.
@@ -1997,6 +2265,7 @@ class RoutePlanner(Node):
                 throttle_duration_sec=5.0,
             )
             return
+        self._warn_if_driving_unlocked("Sending campus waypoints")
         if not self.nav_action_client.wait_for_server(timeout_sec=0.2):
             self.get_logger().warn(
                 f"Nav2 action server '{self.get_parameter('nav2_action_name').value}' "
