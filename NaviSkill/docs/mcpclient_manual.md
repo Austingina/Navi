@@ -118,10 +118,10 @@ bash scripts/start_navigation.bash
 ```bash
 bash scripts/start_mcp.sh                       # 默认地图 maps/408/408.json，端口 9000
 bash scripts/start_mcp.sh -m /home/navi/Navi/maps/408/408.json   # 显式指定地图
-bash scripts/start_mcp.sh -s underground        # 指定初始 submap
+bash scripts/start_mcp.sh --ss caihong/2f       # SLAM 室内模式，指定初始 slam_map/submap
 bash scripts/start_mcp.sh -t                    # 测试模式，端口改为 9999
 ```
-`start_mcp.sh` 把参数原样透传给 `server.py`（`-m/--map`、`-s/--submap`、`--image_topic`、`--vpr_device`、`-v/--viz` 等）。
+`start_mcp.sh` 把参数原样透传给 `server.py`（`-m/--map`、`--ss`、`--image_topic`、`--vpr_device`、`-v/--viz` 等）。
 启动成功会打印：`FastAPI WebSocket: ws://0.0.0.0:9000/ws | GET /health`。
 
 ---
@@ -173,7 +173,7 @@ bash scripts/start_mcpclient.sh [参数...]
 | 从路线**第 N 个点**开始（N 从 1 起） | `bash scripts/start_mcpclient.sh -p -r 线路A 3` |
 | **断点续跑**：从距当前最近的途经点继续（容差 2m） | `bash scripts/start_mcpclient.sh -p -c 2.0` |
 | **自动确认**电梯提示（无人值守） | `bash scripts/start_mcpclient.sh -p -Y -r 线路A` |
-| 先**切到指定子地图**再执行 | `bash scripts/start_mcpclient.sh -s underground -p -r 线路A` |
+| 先**切到指定子地图**再执行 | `bash scripts/start_mcpclient.sh -s underground -p -r 线路A`（客户端 `-s` 仅影响首个 SLAM 点位的 submap 参数；server 侧初始模式由 `--ss` 决定） |
 | 自定义**目的地序列**（同层点位名） | `bash scripts/start_mcpclient.sh -p 点位A 点位B 点位C` |
 | 连测试端口的服务（server 用了 `-t`=9999） | `bash scripts/start_mcpclient.sh --ws ws://127.0.0.1:9999/ws -p -r 线路A` |
 | 单点坐标导航自测（不走路线） | `bash scripts/start_mcpclient.sh --set-xy 12.3 -4.5` |
@@ -186,7 +186,7 @@ bash scripts/start_mcpclient.sh [参数...]
 - `-p [DEST...]`：开启巡检；不给 DEST 时用 `-r` 指定路线或服务器默认路线。
 - `-c TOL`：从距当前位置最近的途经点续跑，`TOL` 为容差（米）。
 - `-Y`：自动确认 `elevator_wait/elevator_in/elevator_out` 三类电梯提示。
-- `-s ID`：执行前先 `change_map` 切到该子地图。
+- `-s ID`：执行前把该子地图作为目标（换图会在首个带 `submap` 的 `set_goal_by_slam` 时自动完成，`change_map` 已无独立接口）。
 
 ### 6.2 运行中的交互
 
@@ -205,13 +205,11 @@ bash scripts/start_mcpclient.sh [参数...]
 2. **确定路线**：
    - 有 `-p DEST...` → 直接用该序列；
    - 否则 `get_route_names` 取全部路线 → 用 `-r` 指定，或 `get_default_route`，否则取第一条 → `get_route` 拉出 `waypoints`。
-3. **准备**：`get_status`（当前位置）、`get_nearest_point`；`-c` 模式据此选起点。
-4. **逐个途经点**（`{submap, semantic_point}`）：
-   - **需要跨子地图**（`get_current_map_id` ≠ 目标 submap）时：
-     `get_portal_to_submap` 取传送门 → `set_goal_by_xy` 导到传送门 → `wait_goal_reached`
-     → `change_map` 切图 → 等待 3s。
-   - **到点**：读 `get_pose_in_submap`（电梯类型会提示确认）→ `set_goal_by_name` 下发目标
-     → `wait_goal_reached` 轮询到达（支持空格暂停；单点默认超时 120s，最多重试 2 轮）。
+3. **准备**：`get_status`（当前位置、nav_mode）、`get_nearest_point`；`-c` 模式据此选起点。
+4. **逐个途经点**（统一 waypoint：`type` 为 `slam` / `gps` / `instruction`）：
+   - **`type == "gps"`**：`set_goal_by_outdoor` → `wait_goal_reached`（室外到达容差由下发时的 `tolerance` 决定）。
+   - **`type == "slam"`**：读 `get_pose_in_submap`（电梯类型会提示确认）→ `set_goal_by_slam`（可带 `slam_map`/`submap`/`xy_tolerance`/`yaw_tolerance`；跨 submap 时服务端 `_ensure_submap` 自动走传送门换图）→ `wait_goal_reached`（容差由下发时记录，不再在 wait 传入）。
+   - **`type == "instruction"`**：VLN 指令，简单客户端跳过。
    - 任一途经点失败即**中止**并出报告。
 
 涉及的 RPC 方法细节见 `NAVIGATION_WEBSOCKET_API.md`。
@@ -225,7 +223,7 @@ bash scripts/start_mcpclient.sh [参数...]
 | 客户端连不上 / `/health` 不通 | server 未起，或端口不对 | 确认 `start_mcp.sh` 在跑；核对端口（9000；`-t` 为 9999，客户端要 `--ws ...9999`） |
 | `❌ 服务器未配置任何路线` / 途经点为空 | 地图 `routes` 为空 | 用 MapEditor 给该地图添加路线（见配套手册）并重启 server |
 | `get_status` 失败 / 位置乱跳 | 定位未收敛 | 检查 `start_navigation.bash`、LiDAR/传感器、初始 `submap` 是否正确 |
-| `change_map` 超时 | 栅格地图服务未运行 / 目标 PCD 路径问题 | 确认 `start_gridmap.bash` 在跑；检查目标子地图 `map_file` |
+| 自动换图超时（`set_goal_by_slam` 带 `submap`） | 栅格地图服务未运行 / 目标 PCD 路径问题 | 确认 `start_gridmap.bash` 在跑；检查目标子地图 `map_file` |
 | 找不到传送门、跨层失败 | 传送门只配了单向 | 在两个子地图各配一条传送门（见 `submap_system.md`） |
 | 卡在电梯点位不动 | 未确认电梯提示 | 手动回车确认，或加 `-Y` 无人值守 |
 | tmux 会话找不到服务 | 一键脚本未成功加载 | `tmux attach -t navi` 看各 pane 报错；或用第 4 节手动逐个启动排障 |

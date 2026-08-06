@@ -644,7 +644,7 @@ class NaviRerunViz:
         world_pts: List[np.ndarray] = []
         for wp in wps:
             sub_id = wp.get("submap")
-            pt_name = wp.get("semantic_point")
+            pt_name = wp.get("name") or wp.get("semantic_point")
             if not sub_id or not pt_name:
                 continue
             p = self._resolve_waypoint_world(sub_id, pt_name)

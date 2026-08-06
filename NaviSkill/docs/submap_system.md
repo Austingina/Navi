@@ -186,23 +186,23 @@ NaviAgent 是一个基于 ROS2 和 MCP（Model Context Protocol）的智能导�
                           │   LLM / AI Agent │
                           │  (Claude, GPT等)  │
                           └────────┬─────────┘
-                                   │ MCP Protocol (HTTP/SSE)
+                                   │ WebSocket JSON-RPC (ws://host:9000/ws)
                                    ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                            server.py                                     │
 │  ┌─────────────────────────────────────────────────────────────────┐   │
 │  │                   NavigationToolManager                          │   │
 │  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │   │
-│  │  │   FastMCP    │  │  MapManager  │  │   WGS84Converter     │  │   │
-│  │  │ (HTTP服务器)  │  │  (地图管理)   │  │   (经纬度转换)        │  │   │
+│  │  │ WebSocket RPC│  │  MapManager  │  │   WGS84Converter     │  │   │
+│  │  │ (FastAPI/ws) │  │  (地图管理)   │  │   (经纬度转换)        │  │   │
 │  │  └──────────────┘  └──────────────┘  └──────────────────────┘  │   │
 │  │                           │                                      │   │
-│  │  MCP Tools:               │                                      │   │
-│  │  • set_goal              • get_submap_list                       │   │
-│  │  • get_status            • change_map                            │   │
-│  │  • wait_goal             • get_portal_to_submap                  │   │
-│  │  • pause / resume        • get_route / get_route_names           │   │
-│  │  • get_nearest_point     • ...                                   │   │
+│  │  RPC 方法（节选）:         │                                      │   │
+│  │  • set_goal_by_slam/outdoor • get_submap_list                    │   │
+│  │  • get_status              • (换图自动，无 change_map RPC)          │   │
+│  │  • wait_goal_reached       • (传送门自动，无 get_portal_to_submap)  │   │
+│  │  • pause / resume          • get_route / get_route_names           │   │
+│  │  • get_nav_mode / set_nav_mode • ...                               │   │
 │  └─────────────────────────────────────────────────────────────────┘   │
 │                                   │                                     │
 └───────────────────────────────────┼─────────────────────────────────────┘
@@ -239,7 +239,7 @@ NaviAgent 是一个基于 ROS2 和 MCP（Model Context Protocol）的智能导�
 
 | 模块 | 文件 | 职责 |
 |------|------|------|
-| **NavigationToolManager** | `server.py` | MCP 服务入口，注册所有导航工具，管理 ROS 线程 |
+| **NavigationToolManager** | `server.py` | WebSocket RPC 服务入口，注册所有导航方法，管理 ROS 线程 |
 | **NavNode** | `nav_node.py` | ROS2 节点，与导航栈交互，发布目标、监听状态 |
 | **MapManager** | `map_manager.py` | 多楼层地图配置管理，语义点位、传送门、路线管理 |
 | **WGS84Converter** | `wgs84.py` | GPS 经纬度与地图坐标的相互转换 |
@@ -370,25 +370,26 @@ def find_path_between_submaps(from_submap: str, to_submap: str) -> Optional[List
 
 ---
 
-## 5. MCP 工具接口
+## 5. WebSocket RPC 接口（submap 相关）
 
-NaviAgent 通过 FastMCP 暴露以下 submap 相关工具：
+服务端通过 **WebSocket JSON-RPC**（`NaviSkill/server.py`，见 `NAVIGATION_WEBSOCKET_API.md`）暴露以下 submap 相关方法：
 
 ### 5.1 子地图查询
 
-| 工具名称 | 参数 | 返回值 | 说明 |
+| 方法 | 参数 | 返回值 | 说明 |
 |---------|------|--------|------|
-| `get_submap_list` | 无 | `{submaps: [...], count: N}` | 获取所有子地图 ID |
-| `get_submap_info` | `submap_id` | `{submap_id, info: {...}}` | 获取子地图详细信息 |
-| `get_current_map_id` | 无 | `{map_id, map_path}` | 获取当前加载的地图 |
+| `get_submap_list` | 可选 `slam_map` | `{submaps, count, slam_map, slam_maps}` | 获取子地图 ID 列表 |
+| `get_submap_info` | `submap_id`, 可选 `slam_map` | `{submap_id, slam_map, info}` | 子地图详细信息 |
+| `get_current_map_id` | 无 | `{nav_mode, map_id, slam_map, map_path, msg}` | 当前 SLAM submap；GPS 模式下 `map_id` 为 null |
 
 ### 5.2 地图切换
 
-| 工具名称 | 参数 | 返回值 | 说明 |
-|---------|------|--------|------|
-| `change_map` | `map_id`, `timeout=30.0` | `{map_id, pose_in_source, pose_in_target}` | 切换到指定地图 |
+> **注意**：`change_map` 已不再作为对外 RPC。换图由 `set_goal_by_slam` 在**已处于 slam
+> 模式**、且目标 `slam_map`/`submap` 与当前不一致时**内部自动完成**（复用下述内部
+> `_change_map` 流程）；从室外 GPS 切到 SLAM 时则由 `_ensure_nav_mode` 用目标
+> `slam_map`/`submap` 重启 SLAM 栈直接加载正确 pcd。以下流程描述的是内部 `_change_map` 机制。
 
-**change_map 详细流程**：
+**内部 `_change_map` 详细流程**：
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -496,9 +497,9 @@ NaviAgent (server.py)                    ROS2 节点
 
 ### 5.3 传送门查询
 
-| 工具名称 | 参数 | 返回值 | 说明 |
-|---------|------|--------|------|
-| `get_portal_to_submap` | `target_submap` | `{portal, portal_pose, from_submap, target_submap}` | 获取到目标子地图的传送门 |
+传送门查询**无对外 RPC**：跨子图切换由 `set_goal_by_slam(submap=...)` 内部
+（`_ensure_submap`）自动完成——先用 `MapManager.get_portal_to_submap()` 找传送门、
+导航到传送门、到达后换图。MapManager 的 `get_portal_to_submap()` 仅供服务端内部使用。
 
 ### 5.4 路线管理
 
@@ -581,23 +582,18 @@ python test_client_mf.py
    │
    ├─► 跨子地图导航（如需要）
    │   │
-   │   ├─► get_current_map_id()            获取当前子地图 ID
-   │   │
-   │   ├─► get_portal_to_submap()          获取传送门信息
-   │   │
-   │   ├─► set_goal_by_xy()                导航到传送门位置
-   │   │
-   │   ├─► wait_goal_with_pause()          等待到达传送门
-   │   │
-   │   └─► change_map()                    切换地图
-   │       │
-   │       ├── 发送 /change_map
-   │       ├── 轮询等待切换完成
-   │       └── 发布 /pose_in_target
+   │   └─► set_goal_by_slam(submap=...)   下发目标即自动换图（客户端无需手动处理传送门）
+   │       │  内部 _ensure_submap：
+   │       ├── get_portal_to_submap()      找当前→目标 submap 传送门（MapManager，内部）
+   │       ├── publish_goal() + 等待到达     先导航到传送门（不到达不换图）
+   │       └── _change_map()                到达后换图
+   │           ├── 发送 /change_map
+   │           ├── 轮询等待切换完成
+   │           └── 发布 /pose_in_target
    │
    ├─► 导航到目标点
    │   │
-   │   ├─► set_goal()                      下发导航目标
+   │   ├─► set_goal_by_slam / set_goal_by_outdoor   下发导航目标
    │   │
    │   └─► wait_goal_with_pause()          等待到达（支持暂停/恢复）
    │
@@ -693,7 +689,7 @@ maps/
 | 地图切换超时 | ROS 服务不可用 | 检查 `/grid_map_pcl_loader_node` 是否运行 |
 | 切换后位置错误 | transform 配置错误 | 重新测量并校准 transform |
 | 找不到传送门 | portal 未在两边定义 | 在两个子地图中都添加传送门配置 |
-| 点位不存在 | submap 未切换 | 确认 `change_map` 成功执行 |
+| 点位不存在 | submap 未切换 | 下发目标时带上正确的 `submap`（服务端会自动换图） |
 
 ### 10.2 调试命令
 
@@ -751,8 +747,9 @@ async with Client("http://localhost:9999/mcp") as client:
     # 获取子地图列表
     result = await client.call_tool("get_submap_list")
     
-    # 切换地图
-    result = await client.call_tool("change_map", {"map_id": "underground"})
+    # 切换地图：无独立接口，下发目标时带 submap 即自动换图
+    result = await client.call_tool(
+        "set_goal_by_slam", {"target": "某点位", "submap": "underground"})
     
     # 获取路线
     result = await client.call_tool("get_route", {"route_name": "线路A"})

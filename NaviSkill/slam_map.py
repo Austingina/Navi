@@ -290,7 +290,7 @@ class SlamMap:
         - "multi_pose": 多位姿点（一串按顺序经过的位姿，用 `poses` 数组）；当前无专用下发接口。
         - "elevator_call": 电梯呼叫点；机器人到达该点后应等待外部 agent 执行呼叫电梯的动作。
         - "elevator_wait": 电梯等待点；机器人到达该点后应等待外部 agent 确认电梯已到达且车门已打开。
-        - "elevator_in": 进梯后/新楼层落位点；`wait_goal_reached` 在到达后轮询 map 定位（`get_status.localized`），就绪即继续。
+        - "elevator_in": 进梯点；`set_goal_by_slam` 下发时自动锁 Z（内部处理），并自动放宽容差。
         """
         semantic_points = self.get_semantic_points_in_submap(submap_id, slam_map_id)
         point_info = semantic_points.get(pose_name)

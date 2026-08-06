@@ -11,8 +11,8 @@
 ## 1. 背景与目标
 
 当前 `server.py`（`NavigationToolManager`）只实现了一种导航能力：**基于 SLAM 点云地图
-（FAST-LIO + nav2）的定点 / 路线导航**，对外通过 WebSocket RPC 暴露 `set_goal_by_name`、
-`set_goal_by_lonlat`、`change_map`、`get_route` 等方法。它隐含的假设是：
+（FAST-LIO + nav2）的定点 / 路线导航**，对外通过 WebSocket RPC 暴露 `set_goal_by_slam`、
+`set_goal_by_outdoor`、`get_route` 等方法（换图无独立 RPC，由 `set_goal_by_slam` 内部自动完成）。它隐含的假设是：
 
 - 机器人始终运行在一张已建好的 SLAM 点云地图（submap）里；
 - 目标点都来自地图配置文件中预定义的语义点位 / 路线；
@@ -72,8 +72,8 @@
 | `vpr_bootstrap.py` | VPR 子进程 + 重定位编排 | 启动引导 submap、`tf_ready` 丢失后触发共识重定位。 |
 | nav2 + FAST-LIO（`ros2_ws`） | 底层导航栈 | `r1pro_nav2.launch.py` 起 bringup；点云地图定位；costmap / controller。 |
 
-现有逻辑里已有一个**隐式的「指令路由」**雏形：`set_goal_by_name`（语义点）/
-`set_goal_by_lonlat`（经纬度）/ `get_route`（路线）。本设计把这种「按入参选择行为」的零散逻辑
+现有逻辑里已有一个**隐式的「指令路由」**雏形：`set_goal_by_slam`（语义点）/
+`set_goal_by_outdoor`（经纬度）/ `get_route`（路线）。本设计把这种「按入参选择行为」的零散逻辑
 **收敛进一个显式的 FSM**，并在其之上挂三套导航后端。
 
 ---
@@ -124,7 +124,7 @@ flowchart TB
 
 1. **后端可插拔**：三种导航各自实现统一的 `NavBackend` 接口，FSM 只与接口交互。
 2. **单一活跃后端**：任一时刻最多一个后端处于 `RUNNING`，切换时先停旧后端再起新后端。
-3. **向后兼容**：现有 RPC（`set_goal_by_name` 等）保持可用，内部转调 SLAM 后端，不破坏老客户端。
+3. **向后兼容**：现有 RPC（`set_goal_by_slam` 等）保持可用，内部转调 SLAM 后端，不破坏老客户端。
 4. **逐 waypoint 路由 + 混合路线**：一条路线可混用三种导航；按 waypoint 类型切分为段，段间自动
    切换后端。返回结构化的 `segments` 计划（每段 mode/type/waypoints），便于上层与排障。
 
@@ -565,7 +565,7 @@ class NavTask:                  # 后端只感知「当前要执行的一段」
 **适用**：waypoint 类型为 `map`（语义点 / `{x,y}`）的段。本质是把现有能力封装进后端。
 
 - **目标来源**：本段的 map 坐标 waypoint 列表（由 `map_manager.get_route_by_name` 展开中
-  `type==map` 的部分），逐点导航；或单点 `set_goal_by_name`。
+  `type==map` 的部分），逐点导航；或单点 `set_goal_by_slam`。
 - **执行**：复用 `NavNode.publish_goal` + `navigate_to_pose` action；到达判定复用
   `wait_goal_reached` / `check_goal_reached`。
 - **多子地图切换**：路线跨 submap 时，用 `get_portal_to_submap` 找传送门 →
@@ -576,7 +576,7 @@ class NavTask:                  # 后端只感知「当前要执行的一段」
   SLAM 地图 `map` 系的初始位姿（经 `/pose_in_target`），完成跨 SLAM 地图的定位衔接。
 - **定位**：依赖 `map→base_link`；丢失时由现有 VPR watchdog 重定位（不变）。
 
-> 该后端是对现有代码的**重构封装**而非重写：`set_goal_by_*`、`change_map`、路线相关 handler
+> 该后端是对现有代码的**重构封装**而非重写：`set_goal_by_*`、内部 `_change_map`、路线相关 handler
 > 全部委托到 `SlamBackend`，对外 RPC 行为不变。
 
 ### 8.2 GNSS 导航（GnssBackend）
@@ -673,7 +673,7 @@ flowchart LR
 | `navigate(command)` | **新统一入口**：传入指令对象，解析为 waypoint 序列→切分为段→逐段执行（段间自动切换后端），返回 `route_name` 与 `segments` 计划。 |
 | `get_nav_state()` | 返回 FSM 当前状态、活跃后端、当前段索引/进度、整条路线的 `segments` 计划。 |
 | `pause_navigation` / `resume_navigation` / `cancel_navigation` | 改为转发给 FSM（对所有后端生效）；语义对老客户端保持兼容。 |
-| `set_goal_by_name` / `set_goal_by_lonlat` / `set_goal_by_xy` / `change_map` / `get_route*` | **保留**，内部直达 `SlamBackend`（向后兼容）。 |
+| `set_goal_by_slam` / `set_goal_by_outdoor` / `get_route*` | **保留**，内部直达 `SlamBackend`（向后兼容；换图由 `set_goal_by_slam` 内部 `_change_map` 自动完成）。 |
 
 ### 9.3 调度与并发
 

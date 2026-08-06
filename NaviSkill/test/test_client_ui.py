@@ -8,7 +8,7 @@
 1. 显示栅格地图
 2. 实时显示机器人位置
 3. 路线巡检（开始/暂停/继续/停止）
-4. 单点导航（set_goal_by_name / set_goal_by_xy）
+4. 单点导航（set_goal_by_slam：命名点位 / target=tmp + x,y）
 """
 
 import argparse
@@ -292,7 +292,7 @@ class NavClientUI:
         goal_frame = ttk.Frame(nav_frame)
         goal_frame.pack(fill=tk.X, pady=(0, 10))
         self.set_goal_btn = ttk.Button(
-            goal_frame, text="set_goal_by_name", command=self.on_set_goal, width=18
+            goal_frame, text="set_goal_by_slam", command=self.on_set_goal, width=18
         )
         self.set_goal_btn.pack(side=tk.LEFT)
         self.goal_var = tk.StringVar()
@@ -302,7 +302,7 @@ class NavClientUI:
         xy_frame = ttk.Frame(nav_frame)
         xy_frame.pack(fill=tk.X, pady=(0, 10))
         self.set_goal_xy_btn = ttk.Button(
-            xy_frame, text="set_goal_by_xy", command=self.on_set_goal_xy, width=18
+            xy_frame, text="set_goal_by_slam(tmp)", command=self.on_set_goal_xy, width=18
         )
         self.set_goal_xy_btn.pack(side=tk.LEFT)
         self.xy_status_var = tk.StringVar(value="点击按钮后在地图选点")
@@ -716,11 +716,13 @@ class NavClientUI:
                 logger.info("巡检点 %d/%d: %s", idx, total, self._wp_name(waypoint))
 
                 start_time = time.time()
+                # 到达容差在下发时确定（wait_goal_reached 不再传容差）。
                 goal_resp = await self.client.call(
-                    "set_goal_by_name", {"target": target_name}
+                    "set_goal_by_slam",
+                    {"target": target_name, "xy_tolerance": 0.6, "yaw_tolerance": 3.14},
                 )
                 if not goal_resp.get("success"):
-                    logger.error("set_goal_by_name 失败: %s", goal_resp.get("msg"))
+                    logger.error("set_goal_by_slam 失败: %s", goal_resp.get("msg"))
                     self.current_waypoint_idx += 1
                     continue
 
@@ -780,8 +782,6 @@ class NavClientUI:
                 {
                     "target": target_name,
                     "timeout": 1.0,
-                    "xy_tolerance": 0.6,
-                    "yaw_tolerance": 3.14,
                 },
                 timeout=10.0,
             )
@@ -810,12 +810,12 @@ class NavClientUI:
 
     async def _async_set_goal(self, target: str) -> None:
         self.root.after(0, lambda: self.nav_status_var.set(f"导航状态: 前往 {target}..."))
-        resp = await self.client.call("set_goal_by_name", {"target": target})
+        resp = await self.client.call("set_goal_by_slam", {"target": target})
         if resp.get("success"):
-            logger.info("set_goal_by_name 成功: %s", target)
+            logger.info("set_goal_by_slam 成功: %s", target)
             self.root.after(0, lambda: self.nav_status_var.set(f"导航状态: 正在前往 {target}"))
         else:
-            logger.error("set_goal_by_name 失败: %s", resp.get("msg"))
+            logger.error("set_goal_by_slam 失败: %s", resp.get("msg"))
             self.root.after(
                 0, lambda m=resp.get("msg"): self.nav_status_var.set(f"导航状态: 失败 - {m}")
             )
@@ -824,7 +824,7 @@ class NavClientUI:
         if self.xy_select_mode:
             self.xy_select_mode = False
             self.xy_status_var.set("点击按钮后在地图选点")
-            self.set_goal_xy_btn.configure(text="set_goal_by_xy")
+            self.set_goal_xy_btn.configure(text="set_goal_by_slam(tmp)")
             return
         self.xy_select_mode = True
         self.xy_status_var.set("请在地图上点击选择目标点...")
@@ -841,7 +841,7 @@ class NavClientUI:
 
         self.xy_select_mode = False
         self.xy_status_var.set("点击按钮后在地图选点")
-        self.set_goal_xy_btn.configure(text="set_goal_by_xy")
+        self.set_goal_xy_btn.configure(text="set_goal_by_slam(tmp)")
 
         if self.target_marker is not None:
             try:
@@ -858,15 +858,15 @@ class NavClientUI:
             0, lambda: self.nav_status_var.set(f"导航状态: 前往 ({x:.2f}, {y:.2f})...")
         )
         resp = await self.client.call(
-            "set_goal_by_xy", {"x": x, "y": y, "distance": 0.5}
+            "set_goal_by_slam", {"target": "tmp", "x": x, "y": y}
         )
         if resp.get("success"):
-            logger.info("set_goal_by_xy 成功: (%.2f, %.2f)", x, y)
+            logger.info("set_goal_by_slam(tmp) 成功: (%.2f, %.2f)", x, y)
             self.root.after(
                 0, lambda: self.nav_status_var.set(f"导航状态: 正在前往 ({x:.2f}, {y:.2f})")
             )
         else:
-            logger.error("set_goal_by_xy 失败: %s", resp.get("msg"))
+            logger.error("set_goal_by_slam(tmp) 失败: %s", resp.get("msg"))
             self.root.after(
                 0, lambda m=resp.get("msg"): self.nav_status_var.set(f"导航状态: 失败 - {m}")
             )
