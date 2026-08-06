@@ -899,7 +899,8 @@ class NavigationToolManager:
         """
         def set_goal_by_slam(target: str, x: float = None, y: float = None,
                              slam_map: str = None, submap: str = None,
-                             distance: float = 0.5) -> Dict[str, Any]:
+                             xy_tolerance: float = 0.1,
+                             yaw_tolerance: float = 0.1) -> Dict[str, Any]:
             """
             下发导航目标（SLAM 模式）。两种用法：
 
@@ -907,14 +908,18 @@ class NavigationToolManager:
                从 MapManager 取该点位姿下发，支持 ``slam_map``/``submap`` 跨图切换与
                ``elevator_*`` 类型处理。
             2. **临时坐标点**（``target == "tmp"``）：不查 MapManager，直接以入参 ``x``/``y``
-               为目标（原 set_goal_by_xy 逻辑：在距目标 ``distance`` 米处停下并面向目标）。
+               为目标；朝向取「当前位置指向目标」的接近方向。到达精度由
+               ``xy_tolerance``/``yaw_tolerance`` 控制。
 
             参数:
             target: 目标点名称；传 ``"tmp"`` 表示使用 ``x``/``y`` 临时坐标。
             x, y: 当 ``target == "tmp"`` 时必填，地图(odom)系坐标。
             slam_map: 可选（仅命名点位），目标所在 SLAM 地图 id；与当前不同会自动切换。
             submap: 可选（仅命名点位），目标所在 submap id；与当前不同会自动换图。
-            distance: 仅 ``target == "tmp"`` 时生效，停靠在距目标的距离（米），默认 0.5。
+            xy_tolerance: 到达判定的位置容差（米），默认 0.1；下发时随目标记录，供
+                          `wait_goal_reached` 取回使用（wait 时不再传容差）。
+            yaw_tolerance: 到达判定的朝向容差（弧度），默认 0.1；含义同上。
+                           注：``elevator_in``/``LowPrecision_pose`` 类点位会在此自动放宽。
 
             说明（命名语义点）:
             - 语义点属于 SLAM 导航：本接口会自动确保处于 `slam` 模式（若当前为 `gps` 室外模式则切回）。
@@ -925,7 +930,7 @@ class NavigationToolManager:
             - 如果点位 `type` 为 `elevator_out`：`wait_goal_reached` 在判定到达后自动调用 `exit_elevator`（解锁 Z 轴）。
 
             返回:
-            Dict: 包含操作结果的字典
+            Dict: 包含操作结果的字典（含 ``xy_tolerance``/``yaw_tolerance`` 实际生效值）
             """
             try:
                 cur_mode = self.ros_node.get_nav_mode()
@@ -958,49 +963,36 @@ class NavigationToolManager:
                     curr_x = odom.pose.position.x
                     curr_y = odom.pose.position.y
 
-                    # 计算距目标 distance 米、面向目标的实际停靠位姿
-                    dx = x - curr_x
-                    dy = y - curr_y
-                    target_distance = (dx**2 + dy**2) ** 0.5
-                    if target_distance <= distance:
-                        actual_x, actual_y = curr_x, curr_y
-                    else:
-                        unit_dx = dx / target_distance
-                        unit_dy = dy / target_distance
-                        actual_x = x - unit_dx * distance
-                        actual_y = y - unit_dy * distance
-
-                    if not (self.ros_node.map_bound["xmin"] <= actual_x <= self.ros_node.map_bound["xmax"] and
-                            self.ros_node.map_bound["ymin"] <= actual_y <= self.ros_node.map_bound["ymax"]):
-                        return {"success": False, "msg": f"计算的实际目标位置({actual_x:.2f}, {actual_y:.2f})超出地图边界"}
-
-                    face_dx = x - actual_x
-                    face_dy = y - actual_y
-                    yaw = np.arctan2(face_dy, face_dx)
+                    # 直接以 (x, y) 为目标；朝向取「当前位置→目标」的接近方向。
+                    # 到达精度不再用 distance 提前停车，改由 xy_tolerance/yaw_tolerance 控制。
+                    yaw = np.arctan2(y - curr_y, x - curr_x)
                     qz = np.sin(yaw / 2)
                     qw = np.cos(yaw / 2)
 
                     pose = PoseStamped()
                     pose.header.frame_id = "odom"
-                    pose.pose.position.x = actual_x
-                    pose.pose.position.y = actual_y
+                    pose.pose.position.x = x
+                    pose.pose.position.y = y
                     pose.pose.position.z = 0.0
                     pose.pose.orientation.x = 0.0
                     pose.pose.orientation.y = 0.0
                     pose.pose.orientation.z = qz
                     pose.pose.orientation.w = qw
 
-                    target_str = f"tmp({x},{y})_dist_{distance}"
+                    target_str = f"tmp({x},{y})"
+                    # 到达容差在下发时确定并记录，wait_goal_reached 取回使用。
+                    self.ros_node.set_slam_goal_tolerance(xy_tolerance, yaw_tolerance)
                     self.ros_node.publish_goal(pose, target_str)
                     return {
                         "success": True,
                         "target": "tmp",
                         "target_str": target_str,
                         "mode_switch": mode_switch,
-                        "msg": f"已下发临时目标，将在距离({x}, {y})约{distance}米处停下并面向目标点",
-                        "original_target": {"x": x, "y": y},
-                        "actual_target": {"x": actual_x, "y": actual_y},
-                        "distance": distance,
+                        "msg": (f"已下发临时目标({x}, {y})，到达精度 "
+                                f"xy≤{xy_tolerance}m / yaw≤{yaw_tolerance}rad"),
+                        "target_point": {"x": x, "y": y},
+                        "xy_tolerance": xy_tolerance,
+                        "yaw_tolerance": yaw_tolerance,
                     }
 
                 # ── 命名语义点：从 MapManager 取位姿 ──
@@ -1068,9 +1060,17 @@ class NavigationToolManager:
                     ok, emsg = self.ros_node.set_elevator_mode(enter=True)
                     logging.info("前往 elevator_in 点位 %s，enter_elevator: %s %s", target, ok, emsg)
 
+                # elevator_in / LowPrecision_pose：到达无需精确，强制放宽容差
+                # （原先在 wait_goal_reached 里做，现随目标一并在下发时确定）。
+                if point_info.get("type") in ("elevator_in", "LowPrecision_pose"):
+                    xy_tolerance = max(xy_tolerance, 0.6)
+                    yaw_tolerance = max(yaw_tolerance, 3.14)
+                self.ros_node.set_slam_goal_tolerance(xy_tolerance, yaw_tolerance)
+
                 self.ros_node.publish_goal(pose, target)
                 return {"success": True, "msg": f"目标 {target} 已下发", "target": target,
-                        "mode_switch": mode_switch}
+                        "mode_switch": mode_switch,
+                        "xy_tolerance": xy_tolerance, "yaw_tolerance": yaw_tolerance}
             except Exception as e:
                 return {"success": False, "msg": f"设置目标失败: {str(e)}"}
 
@@ -1521,14 +1521,18 @@ class NavigationToolManager:
             except Exception as e:
                 return {"success": False, "msg": f"获取状态失败: {str(e)}"}
 
-        async def wait_goal_reached(target: str, timeout: float = 120.0, xy_tolerance: float = 0.1, yaw_tolerance: float = 0.1) -> Dict[str, Any]:
+        async def wait_goal_reached(target: str, timeout: float = 120.0) -> Dict[str, Any]:
             """
             阻塞直到到达目标点或超时
 
             - 室外 GPS 模式：按 target 关联的室外目标做几何距离判定
               （campus 规划器无“到达”回调，用 `is_outdoor_goal_reached` 的距离阈值，
               阈值取 `set_goal_by_outdoor` 时记录的 tolerance）。
-            - SLAM 模式：按 Nav2 + PID 精调结果判定（`check_goal_reached`）。
+            - SLAM 模式：按 Nav2 + PID 精调结果判定（`check_goal_reached`），
+              容差取 `set_goal_by_slam` 下发时记录的 xy/yaw 容差。
+
+            到达容差不再由本接口传入：室外由 `set_goal_by_outdoor(tolerance=...)`、
+            SLAM 由 `set_goal_by_slam(xy_tolerance=..., yaw_tolerance=...)` 在下发时确定。
 
             参数:
             target: 目标点名称（GPS 模式下即 `set_goal_by_outdoor` 传入的语义点名称）
@@ -1551,12 +1555,8 @@ class NavigationToolManager:
                 except Exception as e:
                     return {"success": False, "msg": f"等待目标失败: {str(e)}"}
 
-            # elevator_in / LowPrecision_pose 强制宽松容差（SLAM）
-            if self.map_manager:
-                pt = self.map_manager.get_pose_in_submap(target)
-                if pt and pt.get("type") in ("elevator_in", "LowPrecision_pose"):
-                    xy_tolerance = max(xy_tolerance, 0.6)
-                    yaw_tolerance = max(yaw_tolerance, 3.14)
+            # SLAM 到达容差取下发时记录的值（含 elevator_in/LowPrecision_pose 的放宽）。
+            xy_tolerance, yaw_tolerance = self.ros_node.get_slam_goal_tolerance()
             try:
                 start_time = time.time()
                 while time.time() - start_time < timeout:

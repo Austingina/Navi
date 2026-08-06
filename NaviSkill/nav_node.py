@@ -329,6 +329,10 @@ class NavNode(Node):
             # 关联的语义点名称 + 到达判定距离阈值（供 wait_goal_reached 按 target 判定）。
             self._outdoor_goal_name: Optional[str] = None
             self._outdoor_goal_tol: float = 3.0
+            # SLAM 目标到达判定容差：与室外对称，下发目标时设定、供 wait_goal_reached
+            # 取回（不再在 wait 时传入）。xy 单位米、yaw 单位弧度。
+            self._slam_goal_xy_tol: float = 0.1
+            self._slam_goal_yaw_tol: float = 0.1
 
             # 音频文件路径
             self.audio_dir = os.path.join(os.path.dirname(__file__), 'audio')
@@ -1271,6 +1275,15 @@ class NavNode(Node):
     def get_outdoor_goal_tolerance(self) -> float:
         """当前室外目标的到达判定距离阈值（米）。"""
         return self._outdoor_goal_tol
+
+    def set_slam_goal_tolerance(self, xy_tolerance: float, yaw_tolerance: float) -> None:
+        """记录 SLAM 目标到达判定容差（下发目标时设定，供 wait_goal_reached 取回）。"""
+        self._slam_goal_xy_tol = float(xy_tolerance)
+        self._slam_goal_yaw_tol = float(yaw_tolerance)
+
+    def get_slam_goal_tolerance(self) -> Tuple[float, float]:
+        """当前 SLAM 目标的到达判定容差 (xy 米, yaw 弧度)。"""
+        return self._slam_goal_xy_tol, self._slam_goal_yaw_tol
 
     def chassis_speed_callback(self, msg: TwistStamped):
         """

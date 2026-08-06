@@ -478,7 +478,9 @@ class SimplePatrolClient:
                     logger.info(
                         f"🎯 下发目标点: {target_name}, type: {pt_type} (无 pose 坐标)"
                     )
-                goal_params = {"target": target_name}
+                # 到达容差在下发时确定（wait_goal_reached 不再传容差）。
+                goal_params = {"target": target_name,
+                               "xy_tolerance": 0.04, "yaw_tolerance": 0.03}
                 if is_route_dict:
                     # 携带目标 slam_map/submap：与当前不一致时，服务端会在下发前
                     # 自动切换导航模式（outdoor→slam）并换图/走传送门。
@@ -512,7 +514,7 @@ class SimplePatrolClient:
                         "⏳ 等待到达目标点 (超时: 120秒)... [按空格键暂停/恢复]"
                     )
                     wait_data = await self.wait_goal_with_pause(
-                        client, target_name, timeout=120.0, xy_tolerance=0.04, yaw_tolerance=0.03
+                        client, target_name, timeout=120.0
                     )
                     if wait_data.get("success"):
                         break
@@ -566,10 +568,11 @@ class SimplePatrolClient:
         client: WsNavClient,
         waypoint: str,
         timeout: float = 120.0,
-        xy_tolerance: float = 0.6,
-        yaw_tolerance: float = 3.14,
     ) -> Dict[str, Any]:
-        """等待到达目标点，支持空格键暂停/恢复。单轮超时后自动再等待一轮（共最多 2 轮）。"""
+        """等待到达目标点，支持空格键暂停/恢复。单轮超时后自动再等待一轮（共最多 2 轮）。
+
+        到达容差不在此传入：由 set_goal_by_slam / set_goal_by_outdoor 下发时确定。
+        """
         last_result: Dict[str, Any] = {"success": False, "msg": "等待超时或未到达"}
 
         for attempt in range(2):
@@ -625,8 +628,6 @@ class SimplePatrolClient:
                             {
                                 "target": waypoint,
                                 "timeout": 0.5,
-                                "xy_tolerance": xy_tolerance,
-                                "yaw_tolerance": yaw_tolerance,
                             },
                         )
                         if wait_data.get("success"):
@@ -724,7 +725,7 @@ async def main() -> int:
             x, y = args.set_xy
             logger.info(f"🔬 Running set_goal_by_slam(target=tmp) test to x={x}, y={y} on {args.ws}")
             async with WsNavClient(args.ws) as client:
-                res = await client.call("set_goal_by_slam", {"target": "tmp", "x": float(x), "y": float(y), "distance": 0.05})
+                res = await client.call("set_goal_by_slam", {"target": "tmp", "x": float(x), "y": float(y), "xy_tolerance": 0.05})
                 logger.info(f"set_goal_by_slam response: {res}")
                 if not res.get("success", True):
                     return 1
