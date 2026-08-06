@@ -926,8 +926,8 @@ class NavigationToolManager:
             - 适用于 `type` 为 `single_pose` 的点位；调用此接口会使用普通导航下发目标。
             - 如果点位 `type` 为 `elevator_call`：机器人到达该点后应等待 agent 执行呼叫电梯的操作（本接口只负责下发导航）。
             - 如果点位 `type` 为 `elevator_wait`：机器人到达该点后应等待 agent 确认电梯已经到达并开门。
-            - 如果点位 `type` 为 `elevator_in`：下发目标时自动调用 `enter_elevator`（锁定 Z 轴），在前往电梯途中即生效。
-            - 如果点位 `type` 为 `elevator_out`：`wait_goal_reached` 在判定到达后自动调用 `exit_elevator`（解锁 Z 轴）。
+            - 如果点位 `type` 为 `elevator_in`：下发目标时自动锁定 Z 轴（内部 `set_elevator_mode`），在前往电梯途中即生效，无需外部调用。
+            - 如果点位 `type` 为 `elevator_out`：出梯后随即换图，Z 锁状态会被重置，无需单独解锁。
 
             返回:
             Dict: 包含操作结果的字典（含 ``xy_tolerance``/``yaw_tolerance`` 实际生效值）
@@ -1058,7 +1058,7 @@ class NavigationToolManager:
                 point_info = self.map_manager.pose_map_current_submap[target]
                 if point_info.get("type") == "elevator_in":
                     ok, emsg = self.ros_node.set_elevator_mode(enter=True)
-                    logging.info("前往 elevator_in 点位 %s，enter_elevator: %s %s", target, ok, emsg)
+                    logging.info("前往 elevator_in 点位 %s，自动锁 Z: %s %s", target, ok, emsg)
 
                 # elevator_in / LowPrecision_pose：到达无需精确，强制放宽容差
                 # （原先在 wait_goal_reached 里做，现随目标一并在下发时确定）。
@@ -1221,8 +1221,8 @@ class NavigationToolManager:
             - "LowPrecision_pose": 低精度点位；到达后不要求位置和朝向精确，使用较大容差即可。
             - "elevator_call": 电梯呼叫点；机器人到达该点后应等待外部 agent 执行呼叫电梯的动作。
             - "elevator_wait": 电梯等待点；机器人到达该点后应等待外部 agent 确认电梯已到达且车门已打开。
-            - "elevator_in": 进梯点；`set_goal_by_slam` 下发目标时自动调用 `enter_elevator`（锁 Z）。
-            - "elevator_out": 出梯点；`wait_goal_reached` 到达后自动调用 `exit_elevator`（解锁 Z）。
+            - "elevator_in": 进梯点；`set_goal_by_slam` 下发目标时自动锁 Z（内部处理，无需外部调用）。
+            - "elevator_out": 出梯点；出梯后随即换图会重置 Z 锁状态，无需单独解锁。
             - "door_open": 开门点；机器人到达该点后需要执行开门动作。
             """
             try:
@@ -1730,34 +1730,6 @@ class NavigationToolManager:
             except Exception as e:
                 return {"success": False, "msg": f"设置 xy_goal_tolerance 失败: {str(e)}"}
 
-        def enter_elevator() -> Dict[str, Any]:
-            """
-            进入电梯模式：锁定 Z 轴，防止电梯升降导致定位漂移。
-            应在机器人进入电梯前调用。
-
-            返回:
-            Dict: {success, msg}
-            """
-            try:
-                ok, msg = self.ros_node.set_elevator_mode(enter=True)
-                return {"success": ok, "msg": msg}
-            except Exception as e:
-                return {"success": False, "msg": f"进入电梯模式失败: {str(e)}"}
-
-        def exit_elevator() -> Dict[str, Any]:
-            """
-            退出电梯模式：解锁 Z 轴，恢复正常 3D 里程计。
-            应在机器人出电梯后调用。
-
-            返回:
-            Dict: {success, msg}
-            """
-            try:
-                ok, msg = self.ros_node.set_elevator_mode(enter=False)
-                return {"success": ok, "msg": msg}
-            except Exception as e:
-                return {"success": False, "msg": f"退出电梯模式失败: {str(e)}"}
-
         def get_nav_mode() -> Dict[str, Any]:
             """获取当前导航模式（``slam`` 室内点云定位 / ``gps`` 室外 GNSS）。"""
             try:
@@ -1794,8 +1766,6 @@ class NavigationToolManager:
             "get_navigation_plan": get_navigation_plan,
             "get_nearest_point": get_nearest_point,
             "get_map": get_map,
-            "enter_elevator": enter_elevator,
-            "exit_elevator": exit_elevator,
             "set_xy_goal_tolerance": set_xy_goal_tolerance,
             "get_nav_mode": get_nav_mode,
             "set_nav_mode": set_nav_mode,
