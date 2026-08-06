@@ -17,8 +17,8 @@ for arg in "$@"; do
     esac
 done
 
-# 只重启 navi（base）会话本身，不动 slam / outdoor 会话。
-tmux kill-session -t navi 2>/dev/null
+# 启动前先清理环境：退出所有 Navi 相关 tmux 会话（navi / slam / outdoor）。
+bash "$NAVI_SCRIPT_DIR/stop_navi.sh"
 
 # 将关键环境变量注入 tmux 全局环境，确保所有 pane 都能继承（yaml 里用 $NAVI_SCRIPT_DIR）。
 # 注意：set-environment -g 需要 tmux server 已在运行，否则静默失败。此处 server 常还

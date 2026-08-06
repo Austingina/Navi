@@ -393,11 +393,13 @@ class SimplePatrolClient:
                         await asyncio.sleep(2)
                     continue
 
-                # ── SLAM（map 类型 / 裸字符串点名）：解析目标点与所在 submap ──
+                # ── SLAM（map 类型 / 裸字符串点名）：解析目标点与所在 slam_map/submap ──
                 target_name = None
                 target_submap = None
+                target_slam_map = None
                 if is_route_dict:
                     target_submap = waypoint.get("submap")
+                    target_slam_map = waypoint.get("slam_map")
                     target_name = waypoint.get("name")
                     if not target_name:
                         logger.error(f"❌ 路线点格式不正确: {waypoint}")
@@ -418,7 +420,15 @@ class SimplePatrolClient:
                 # submap，服务端内部（_ensure_submap）会先导航到当前→目标 submap 的
                 # 传送门、到达后换图，客户端无需自行判断/取传送门/换图。
 
-                point_meta = await client.call("get_pose_in_submap", {"pose_name": target_name})
+                pose_query = {"pose_name": target_name}
+                if is_route_dict:
+                    # 带上 slam_map/submap，室外模式下也能查到目标图的点位详情
+                    # （否则会去当前/默认 submap 里找而返回 null）。
+                    if target_slam_map:
+                        pose_query["slam_map"] = target_slam_map
+                    if target_submap:
+                        pose_query["submap_id"] = target_submap
+                point_meta = await client.call("get_pose_in_submap", pose_query)
                 pt_type = point_meta.get("point_info", {}).get("type") if point_meta.get("success") else None
                 logger.info(
                     f"📋 点位详细信息 [{target_name}]: "
@@ -469,31 +479,57 @@ class SimplePatrolClient:
                         f"🎯 下发目标点: {target_name}, type: {pt_type} (无 pose 坐标)"
                     )
                 goal_params = {"target": target_name}
-                if is_route_dict and target_submap:
-                    # 携带目标 submap：若与当前不一致，服务端会在下发前自动换图。
-                    goal_params["submap"] = target_submap
-                goal_data = await client.call("set_goal_by_slam", goal_params)
+                if is_route_dict:
+                    # 携带目标 slam_map/submap：与当前不一致时，服务端会在下发前
+                    # 自动切换导航模式（outdoor→slam）并换图/走传送门。
+                    if target_slam_map:
+                        goal_params["slam_map"] = target_slam_map
+                    if target_submap:
+                        goal_params["submap"] = target_submap
+                # 下发 + 等待，最多 2 次：当返回“导航目标未被接受”（Nav2 在接受
+                # 阶段拒绝，常因导航栈刚启动/忙）时自动重发一次；其它失败（超时/卡住/
+                # 语义错误）重发无益，不重试。
+                max_send_attempts = 2
+                goal_data: Dict[str, Any] = {}
+                wait_data: Dict[str, Any] = {"success": False, "msg": "未下发"}
+                for send_attempt in range(max_send_attempts):
+                    goal_data = await client.call("set_goal_by_slam", goal_params)
+                    if not goal_data.get("success"):
+                        logger.error(f"❌ 下发目标失败: {goal_data.get('msg')}")
+                        break  # 语义性失败（不在白名单/切换失败等），重发无益
 
+                    logger.info(f"✅ 目标点下发成功: {goal_data.get('msg')}")
+
+                    logger.info("⏳ 等待导航系统响应...")
+                    await asyncio.sleep(2)
+
+                    post_status_data = await client.call("get_status")
+                    if post_status_data.get("success"):
+                        post_pos = post_status_data["position"]
+                        logger.info(f"📍 响应后位置: x={post_pos['x']:.3f}, y={post_pos['y']:.3f}")
+
+                    logger.info(
+                        "⏳ 等待到达目标点 (超时: 120秒)... [按空格键暂停/恢复]"
+                    )
+                    wait_data = await self.wait_goal_with_pause(
+                        client, target_name, timeout=120.0, xy_tolerance=0.04, yaw_tolerance=0.03
+                    )
+                    if wait_data.get("success"):
+                        break
+                    # 仅“导航目标未被接受”重发一次；其它失败原因重发无益。
+                    msg = wait_data.get("msg") or ""
+                    if "未被接受" in msg and send_attempt < max_send_attempts - 1:
+                        logger.warning(
+                            f"⚠️ 导航目标未被接受，重发一次 "
+                            f"({send_attempt + 2}/{max_send_attempts})…"
+                        )
+                        await asyncio.sleep(2)
+                        continue
+                    break
+
+                # 语义性下发失败：跳过该点位（保持原行为）。
                 if not goal_data.get("success"):
-                    logger.error(f"❌ 下发目标失败: {goal_data.get('msg')}")
                     continue
-
-                logger.info(f"✅ 目标点下发成功: {goal_data.get('msg')}")
-
-                logger.info("⏳ 等待导航系统响应...")
-                await asyncio.sleep(2)
-
-                post_status_data = await client.call("get_status")
-                if post_status_data.get("success"):
-                    post_pos = post_status_data["position"]
-                    logger.info(f"📍 响应后位置: x={post_pos['x']:.3f}, y={post_pos['y']:.3f}")
-
-                logger.info(
-                    "⏳ 等待到达目标点 (超时: 120秒)... [按空格键暂停/恢复]"
-                )
-                wait_data = await self.wait_goal_with_pause(
-                    client, target_name, timeout=120.0, xy_tolerance=0.04, yaw_tolerance=0.03
-                )
 
                 duration = time.time() - start_time
 
