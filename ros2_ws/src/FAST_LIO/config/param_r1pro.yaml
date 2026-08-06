@@ -2,16 +2,22 @@ bt_navigator:
   ros__parameters:
     use_sim_time: False
     transform_tolerance: 0.1 #变换容差
-    goal_reached_tol: 0.25 #接受姿势作为目标的容忍度(m)
     global_frame: map
     robot_base_frame: base_link
-    # 添加以下配置启用详细日志
-    enable_groot_monitoring: true
-    groot_zmq_publisher_port: 1666
-    groot_zmq_server_port: 1667
     odom_topic: /odom
     bt_loop_duration: 100        #BT 执行每次迭代的持续时间（以毫秒为单位
     default_server_timeout: 20  #BT 操作节点等待操作服务器确认时的默认超时值（以毫秒为单位）
+    # Jazzy: 等待 action/service 上线的超时（ms）。
+    wait_for_service_timeout: 1000
+    # Jazzy: rcl 默认的 action result 超时只有 10s，长距离导航会让 goal 结果过期，
+    # 客户端拿不到结果。nav2 官方默认 900s。
+    action_server_result_timeout: 900.0
+    # Jazzy: navigator 改为插件式，必须显式列出，否则只有默认的两个可用。
+    navigators: ["navigate_to_pose", "navigate_through_poses"]
+    navigate_to_pose:
+      plugin: "nav2_bt_navigator::NavigateToPoseNavigator"
+    navigate_through_poses:
+      plugin: "nav2_bt_navigator::NavigateThroughPosesNavigator"
     # 'default_nav_through_poses_bt_xml' and 'default_nav_to_pose_bt_xml' are use defaults:
     # nav2_bt_navigator/navigate_to_pose_w_replanning_and_recovery.xml
     # nav2_bt_navigator/navigate_through_poses_w_replanning_and_recovery.xml
@@ -23,11 +29,22 @@ bt_navigator:
     # nav2 ones here makes bt_navigator abort with "ID [...] already registered".
       # - slope_bt_nodes  #自定义BT节点示例
     error_code_names:
-      - compute_path_error_code 
+      - compute_path_error_code
       - follow_path_error_code
 # bt_navigator参数说明：https://docs.nav2.org/configuration/packages/configuring-bt-navigator.html?highlight=bt_navigator
+# Jazzy 已移除 enable_groot_monitoring / groot_zmq_*_port（Groot2 改用 BT 自带的
+# 监控接口）和 goal_reached_tol（不是 bt_navigator 的参数），故删除。
 
 bt_navigator_rclcpp_node:
+  ros__parameters:
+    use_sim_time: False
+
+# Jazzy: 每个 navigator 各有自己的内部节点，需要单独给 use_sim_time。
+bt_navigator_navigate_through_poses_rclcpp_node:
+  ros__parameters:
+    use_sim_time: False
+
+bt_navigator_navigate_to_pose_rclcpp_node:
   ros__parameters:
     use_sim_time: False
 
@@ -39,7 +56,10 @@ controller_server:
     min_y_velocity_threshold: 0.01 # y方向最小速度阈值
     min_theta_velocity_threshold: 0.08 # 角速度最小阈值
     failure_tolerance: 0.3 # 允许失败的容忍度
-    progress_checker_plugin: "progress_checker" # 进度检查插件名称
+    # Jazzy: 单数 progress_checker_plugin 已改为复数列表 progress_checker_plugins。
+    # 旧名在 Jazzy 里是未声明参数（被忽略），恰好因为默认值就是 ["progress_checker"]
+    # 才没出事 —— 一旦想换检查器名字，旧写法就会静默失效。
+    progress_checker_plugins: ["progress_checker"] # 进度检查插件列表
     goal_checker_plugins: ["general_goal_checker"] # 目标检查插件列表
     controller_plugins: ["FollowPath"] # 控制器插件列表
 
@@ -360,6 +380,64 @@ velocity_smoother:
     deadband_velocity: [0.0, 0.0, 0.0]
     velocity_timeout: 1.0
 
+# -----------------------------------------------------------------------------
+# 碰撞监视器：速度链的最后一跳 cmd_vel_smoothed -> cmd_vel。
+#
+#   controller_server ──(重映射 cmd_vel->cmd_vel_nav)──> /cmd_vel_nav
+#     └─> velocity_smoother ──> /cmd_vel_smoothed
+#           └─> collision_monitor ──> /cmd_vel ──> cmd_vel_bridge
+#                                                   └─> /motion_target/target_speed_chassis
+#
+# 重映射见 navigation_launch.py（controller_server / behavior_server /
+# velocity_smoother 三处 cmd_vel->cmd_vel_nav），所以 collision_monitor 是 /cmd_vel
+# 的唯一发布者。它同时也在 navigation_launch.py 的 lifecycle_nodes 里，之前本文件
+# 完全没有这一段 —— 节点起来后拿默认值、observation_sources 为空，configure 阶段
+# 就会失败并拖崩整个 bringup。
+# -----------------------------------------------------------------------------
+collision_monitor:
+  ros__parameters:
+    use_sim_time: False
+    # 本仓库没有 base_footprint 帧（静态 TF 只有 body->base_link），
+    # 所以用 base_link，与两张 costmap 的 robot_base_frame 一致。
+    base_frame_id: base_link
+    odom_frame_id: odom
+    cmd_vel_in_topic: cmd_vel_smoothed
+    cmd_vel_out_topic: cmd_vel
+    state_topic: collision_monitor_state
+    transform_tolerance: 0.3
+    # /livox_scan2 约 10 Hz，1 s 内收不到就认为传感器失效并刹停。
+    source_timeout: 1.0
+    base_shift_correction: True
+    stop_pub_timeout: 2.0
+    # approach 型：按当前速度前推 time_before_collision 秒，footprint 撞上点就减速/停，
+    # 不需要手调几何。硬性 stop 区见下方注释（默认不开以免原地锁死）。
+    polygons: ["FootprintApproach"]
+    FootprintApproach:
+      type: "polygon"
+      action_type: "approach"
+      # 取的是 local_costmap 的 footprint（0.8x0.8），不是 global 的（0.4x0.4）。
+      footprint_topic: /local_costmap/published_footprint
+      time_before_collision: 1.5
+      simulation_time_step: 0.1
+      min_points: 4
+      visualize: False
+      enabled: True
+    # PolygonStop:
+    #   type: "polygon"
+    #   action_type: "stop"
+    #   # 略大于 0.8x0.8 的 footprint，进入即刹停。
+    #   points: "[[0.55, 0.45], [0.55, -0.45], [-0.45, -0.45], [-0.45, 0.45]]"
+    #   min_points: 4
+    #   visualize: True
+    #   polygon_pub_topic: collision_monitor_stop_zone
+    #   enabled: True
+    # 与两张 costmap 的 obstacle_layer 同源，保证“看得见的障碍”和“会刹车的障碍”一致。
+    observation_sources: ["scan"]
+    scan:
+      type: "scan"
+      topic: /livox_scan2
+      enabled: True
+
 local_costmap:
   local_costmap:
     ros__parameters:
@@ -617,18 +695,27 @@ smoother_server:
 
 behavior_server:
   ros__parameters:
-    costmap_topic: local_costmap/costmap_raw           #用于在局部代价地图上进行碰撞检查的原始代价地图主题。
-    footprint_topic: local_costmap/published_footprint #局部代价地图框架中的足迹主题。
+    # Jazzy: 单个 costmap_topic / footprint_topic 已拆成 local_* 与 global_* 四个。
+    # 旧名在 Jazzy 里未声明会被忽略，于是碰撞检查静默退回默认话题名。
+    local_costmap_topic: local_costmap/costmap_raw       #局部代价地图（原始）
+    global_costmap_topic: global_costmap/costmap_raw     #全局代价地图（原始）
+    local_footprint_topic: local_costmap/published_footprint
+    global_footprint_topic: global_costmap/published_footprint
     cycle_frequency: 20.0 #运行行为插件的频率。
-    behavior_plugins: ["spin", "backup", "drive_on_heading", "wait"] #插件包括：{“旋转”、“备份”、“前进”、“等待”}
+    #插件包括：{“旋转”、“备份”、“前进”、“辅助遥控”、“等待”}
+    behavior_plugins: ["spin", "backup", "drive_on_heading", "assisted_teleop", "wait"]
     spin:
       plugin: "nav2_behaviors::Spin"
     backup:
       plugin: "nav2_behaviors::BackUp"
     drive_on_heading:
       plugin: "nav2_behaviors::DriveOnHeading"
+    assisted_teleop:
+      plugin: "nav2_behaviors::AssistedTeleop"
     wait:
       plugin: "nav2_behaviors::Wait"
+    # Jazzy: 新增 local_frame（局部行为在里面做碰撞推演），global_frame 保留。
+    local_frame: odom
     global_frame: map
     robot_base_frame: base_link
     transform_tolerance: 0.3 #TF 变换容差
@@ -646,6 +733,8 @@ waypoint_follower:
   ros__parameters:
     loop_rate: 20 #循环速率
     stop_on_failure: false #如果单个航点失败，是否使操作任务失败。如果为 false，将继续到下一个航点。
+    # Jazzy: 同 bt_navigator，rcl 默认 10s 的 action result 超时对多航点任务太短。
+    action_server_result_timeout: 900.0
     waypoint_task_executor_plugin: "wait_at_waypoint"
     wait_at_waypoint:
       plugin: "nav2_waypoint_follower::WaitAtWaypoint"
