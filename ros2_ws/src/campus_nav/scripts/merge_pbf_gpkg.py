@@ -6,18 +6,20 @@ replaced by the GPKG roads. Buildings and relations (multipolygon buildings,
 turn restrictions) are kept from the base pbf; a base highway is only kept when
 a kept relation still references it and the overlay does not re-supply that
 osm_id. Nodes are reused when coordinates match; new vertices get new node ids.
+Tagged nodes (crossings, traffic signals, bus stops, POIs) keep their tags in
+the output so the node layer survives the merge.
 
 Usage:
     /usr/bin/python3 scripts/merge_pbf_gpkg.py
-    /usr/bin/python3 scripts/merge_pbf_gpkg.py \\
-        --pbf ../../xili_5km_with_extra.osm.pbf \\
-        --gpkg ../finetuned_road.gpkg \\
+    /usr/bin/python3 scripts/merge_pbf_gpkg.py \
+        --pbf ../../xili_5km_with_extra.osm.pbf \
+        --gpkg ../finetuned_road.gpkg \
         --output ../../xili_5km_merged.osm.pbf
 
 After merge, run the planner on the merged pbf with dev overlay OFF:
-    /usr/bin/python3 route_planner_node.py --ros-args \\
-        -p pbf_path:=/home/navi/nav_test/xili_5km_merged.osm.pbf \\
-        -p dev_overlay:=false
+    /usr/bin/python3 route_planner_node.py --ros-args \
+        -p pbf_path:=/home/navi/nav_test/xili_5km_merged.osm.pbf \
+        -p dev_overlay:=false 
 """
 
 from __future__ import annotations
@@ -138,6 +140,7 @@ class _Collector(osmium.SimpleHandler):
         self.keep_rel_ids = keep_rel_ids
         self.keep_member_ways = keep_member_ways
         self.nodes: dict[int, tuple[float, float]] = {}
+        self.node_tags: dict[int, dict] = {}
         self.coord_index: dict[tuple[int, int], int] = {}
         self.ways: dict[int, Way] = {}
         self.relations: dict[int, Relation] = {}
@@ -145,7 +148,7 @@ class _Collector(osmium.SimpleHandler):
         self._next_node_id = None
         self.max_way_id = 0
         self.stats = {
-            "nodes": 0, "ways_kept": 0, "ways_building": 0,
+            "nodes": 0, "nodes_tagged": 0, "ways_kept": 0, "ways_building": 0,
             "ways_dropped": 0, "ways_added": 0, "relations": 0, "new_nodes": 0,
         }
 
@@ -171,6 +174,10 @@ class _Collector(osmium.SimpleHandler):
         if n.id not in self.nodes:
             self._register_node(n.id, n.location.lon, n.location.lat)
             self.stats["nodes"] += 1
+            tags = _tags_dict(n)
+            if tags:
+                self.node_tags[n.id] = tags
+                self.stats["nodes_tagged"] += 1
 
     def way(self, w):
         if w.id > self.max_way_id:
@@ -339,10 +346,19 @@ class _Collector(osmium.SimpleHandler):
 
 
 def write_pbf(collector: _Collector, output_path: str):
-    writer = osmium.SimpleWriter(str(output_path), overwrite=True)
+    try:
+        writer = osmium.SimpleWriter(str(output_path), overwrite=True)
+    except TypeError:
+        # pyosmium < 4 has no overwrite kwarg and refuses an existing file.
+        Path(output_path).unlink(missing_ok=True)
+        writer = osmium.SimpleWriter(str(output_path))
     for nid in sorted(collector.nodes):
         lon, lat = collector.nodes[nid]
-        writer.add_node(Node(id=nid, location=osmium.osm.Location(lon, lat)))
+        writer.add_node(Node(
+            id=nid,
+            location=osmium.osm.Location(lon, lat),
+            tags=collector.node_tags.get(nid, {}),
+        ))
     for wid in sorted(collector.ways):
         writer.add_way(collector.ways[wid])
     for rid in sorted(collector.relations):

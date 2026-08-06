@@ -13,6 +13,10 @@ setup(
         ("share/" + package_name, ["package.xml"]),
         ("share/" + package_name + "/launch", glob("launch/*.py")),
         ("share/" + package_name + "/config", glob("config/*.yaml")),
+        (
+            "share/" + package_name + "/config/behavior_trees",
+            glob("config/behavior_trees/*.xml"),
+        ),
     ],
     install_requires=["setuptools", "numpy"],
     zip_safe=True,

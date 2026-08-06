@@ -2,6 +2,10 @@
 <!--
   This Behavior Tree replans the global path periodically at 1 Hz through an array of poses continuously
    and it also has recovery actions specific to planning / control as well as general system issues.
+
+  goal_checker_id must be spelled out: controller_server only falls back to an
+  unnamed checker while exactly one is configured, and the outdoor stack also
+  loads precise_goal_checker for the campus_nav route end.
 -->
 <root BTCPP_format="4" main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
@@ -17,7 +21,7 @@
           </RecoveryNode>
         </RateController>
         <RecoveryNode number_of_retries="1" name="FollowPath">
-          <FollowPath path="{path}" controller_id="FollowPath"/>
+          <FollowPath path="{path}" controller_id="FollowPath" goal_checker_id="general_goal_checker"/>
           <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>
         </RecoveryNode>
       </PipelineSequence>

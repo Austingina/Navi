@@ -16,6 +16,7 @@ Pipeline:
 from __future__ import annotations
 
 import math
+import os
 import re
 import sqlite3
 import struct
@@ -86,6 +87,9 @@ def _parse_wkb(wkb: bytes):
     base = gtype % 1000
     dims = _wkb_dims(gtype)
     off = 5
+    if base == 1:  # Point (entry-point layers); returned as a 1-vertex "line"
+        x, y = struct.unpack_from(bo + "dd", wkb, off)
+        return [[(x, y)]]
     if base == 2:  # LineString
         pts, _ = _read_linestring(wkb, off, bo, dims)
         return [pts] if len(pts) >= 2 else []
@@ -271,6 +275,128 @@ class RouteGraph:
                     self.adj[node] = [
                         e for e in self.adj[node] if e[0] not in (S, G)
                     ]
+
+    def plan_to_goal(self, slon, slat, glon, glat, entries=None,
+                     off_network_m=5.0, search_radius_m=40.0,
+                     offroad_weight=1.0, respect_turns=False,
+                     max_candidates=8):
+        """Plan to a goal that may sit off the road network.
+
+        A goal inside a fenced area (plaza, courtyard) has no road under it, and
+        snapping it to the geometrically nearest segment happily picks a
+        sidewalk on the wrong side of the fence. So when the goal is further
+        than off_network_m from any road and entry points are known, the road
+        part of the route ends at the entry minimizing
+
+            network_dist(start, entry) + offroad_weight * straight(entry, goal)
+
+        and the goal is appended after it. An entry authored off the road (a
+        click a few metres inside the opening, to say which way to head in) is
+        kept as a via point in between, so the robot is really driven through the
+        opening instead of being handed a straight line from the roadside. The
+        tail of the path is therefore
+
+            ... -> road_end (the entry projected onto the road)
+                -> via (the entry as authored; absent when it sits on the road)
+                -> goal
+
+        Each of those off-network hops gets planned by the caller's planner in
+        one shot, so search_radius_m caps them both: a hop reaching outside the
+        global costmap is rejected before the robot drives anywhere.
+
+        Returns a dict, or None when nothing is reachable:
+            path              [(lon, lat), ...]
+            length_m          road length + both off-network hops
+            start_proj        projection dict of the start
+            goal_proj         projection of the goal onto the nearest road
+            road_end_index    last on-road point (None when no entry was used)
+            via_index         the authored entry point (None when on the road)
+            entry_name        name of the chosen entry
+            entry_lead_m      road_end -> via (0 when there is no via point)
+            offroad_m         hand-over point -> goal
+            goal_offnetwork_m goal distance to the nearest road
+            entry_missing     goal is off-network but no entry covers it
+        """
+        gp0 = self.project_to_edge(glon, glat)
+        if gp0 is None:
+            return None
+        off_network = gp0["dist"]
+
+        def _plain(entry_missing):
+            res = self.plan_points(slon, slat, glon, glat,
+                                   respect_turns=respect_turns)
+            if res is None:
+                return None
+            lonlat, length, sp, gp = res
+            return {
+                "path": lonlat, "length_m": length,
+                "start_proj": sp, "goal_proj": gp,
+                "road_end_index": None, "via_index": None,
+                "entry_name": None,
+                "entry_lead_m": 0.0, "offroad_m": 0.0,
+                "goal_offnetwork_m": off_network,
+                "entry_missing": entry_missing,
+            }
+
+        if off_network <= off_network_m or not entries:
+            return _plain(off_network > off_network_m)
+
+        # Pre-filter on the authored coordinate, with slack, only to bound how
+        # many searches a campus-wide layer costs. The radius itself is enforced
+        # below on the real access leg.
+        cands = []
+        for e in entries:
+            radius = e.get("radius_m") or search_radius_m
+            rough = haversine(e["lon"], e["lat"], glon, glat)
+            if rough > radius + _ENTRY_PREFILTER_SLACK_M:
+                continue
+            cands.append((rough, radius, e))
+        cands.sort(key=lambda c: c[0])
+
+        best = None
+        for _rough, radius, e in cands[:max_candidates]:
+            res = self.plan_points(slon, slat, e["lon"], e["lat"],
+                                   respect_turns=respect_turns)
+            if res is None:
+                continue
+            lonlat, length, sp, gp = res
+            # The road part can only end where the entry meets the road, so every
+            # off-network distance is measured from that projection outwards.
+            # Measuring from the authored click instead would under-report the
+            # legs by however far it was placed off the road, letting an
+            # over-long hop through the radius check.
+            lead = haversine(gp["lon"], gp["lat"], e["lon"], e["lat"])
+            if lead < _ENTRY_VIA_MIN_M:
+                lead = 0.0
+                handover = (gp["lon"], gp["lat"])
+            else:
+                handover = (e["lon"], e["lat"])
+            straight = haversine(handover[0], handover[1], glon, glat)
+            if straight > radius or lead > radius:
+                continue
+            cost = length + offroad_weight * (lead + straight)
+            if best is None or cost < best[0]:
+                best = (cost, lonlat, length, sp, gp, lead, straight, e)
+        if best is None:
+            return _plain(True)
+
+        _cost, lonlat, road_len, sp, gp, lead, straight, e = best
+        path = list(lonlat)
+        road_end_index = len(path) - 1
+        via_index = None
+        if lead:
+            via_index = len(path)
+            path.append((e["lon"], e["lat"]))
+        path.append((glon, glat))
+        return {
+            "path": path, "length_m": road_len + lead + straight,
+            "start_proj": sp, "goal_proj": gp,
+            "road_end_index": road_end_index, "via_index": via_index,
+            "entry_name": e.get("name"),
+            "entry_lead_m": lead, "offroad_m": straight,
+            "goal_offnetwork_m": off_network,
+            "entry_missing": False,
+        }
 
     def astar(self, start, goal, respect_turns=False):
         """Return (node_id_path, length_m) or (None, inf).
@@ -466,6 +592,155 @@ def _keep(highway, foot, access, mode, allow_private=True):
             "construction", "proposed",
         }
     return True
+
+
+# ---------------------------------------------------------------------------
+# Entry points: hand-authored "the robot may leave the road here" markers
+# ---------------------------------------------------------------------------
+# A goal on a plaza or in a courtyard has no road under it, and the fence around
+# it is not mapped, so geometry alone cannot tell where entering is allowed.
+# Two authoring routes feed the same candidate list:
+#   - a GeoPackage POINT layer (QGIS: one click per opening)
+#   - ways tagged campus_entry=yes in the pbf (a stub drawn from the sidewalk
+#     into the area; its dangling end is the anchor)
+# How far past the radius an authored point may sit before it is not even worth
+# a search. Only the pre-filter uses it; the radius is enforced on the real leg.
+# Points authored more than this far off the road may not be considered at all.
+_ENTRY_PREFILTER_SLACK_M = 15.0
+# Below this the authored point is effectively on the road, and adding it as a
+# via point would only produce a near-zero-length goal for Nav2 to chase.
+_ENTRY_VIA_MIN_M = 1.0
+_ENTRY_NAME_COLS = ("name", "Name", "label", "title")
+_ENTRY_RADIUS_COLS = ("radius_m", "radius", "range_m")
+_ENTRY_GEOM_COLS = ("geom", "geometry", "the_geom")
+_TRUTHY = ("yes", "true", "1")
+
+
+def _parse_gpkg_point(blob):
+    """Return (lon, lat) from a GeoPackage POINT blob, or None."""
+    for pts in _parse_gpkg_blob(blob) or []:
+        if pts:
+            return float(pts[0][0]), float(pts[0][1])
+    return None
+
+
+def load_entry_points(gpkg_path: str, table: str = "entries"):
+    """Load entry points from a GeoPackage POINT layer.
+
+    Returns [{"lon", "lat", "name", "radius_m", "source"}]. A missing file,
+    missing table or missing optional column is not an error: the feature stays
+    inactive until the layer is authored, so nothing changes for setups that
+    never create it. Optional columns: name (label), radius_m (per-entry
+    override of the global search radius).
+    """
+    if not gpkg_path or not os.path.exists(gpkg_path):
+        return []
+    con = sqlite3.connect(f"file:{gpkg_path}?mode=ro", uri=True)
+    try:
+        cols = [r[1] for r in con.execute(f'PRAGMA table_info("{table}")')]
+        if not cols:
+            return []
+        geom_col = None
+        try:
+            row = con.execute(
+                "SELECT column_name FROM gpkg_geometry_columns WHERE table_name = ?",
+                (table,),
+            ).fetchone()
+            if row and row[0] in cols:
+                geom_col = row[0]
+        except sqlite3.Error:
+            pass
+        if geom_col is None:
+            geom_col = next((c for c in _ENTRY_GEOM_COLS if c in cols), None)
+        if geom_col is None:
+            return []
+        name_col = next((c for c in _ENTRY_NAME_COLS if c in cols), None)
+        radius_col = next((c for c in _ENTRY_RADIUS_COLS if c in cols), None)
+        sel = [geom_col] + [c for c in (name_col, radius_col) if c]
+        query = ", ".join(f'"{c}"' for c in sel)
+        out = []
+        for i, row in enumerate(con.execute(f'SELECT {query} FROM "{table}"')):
+            lonlat = _parse_gpkg_point(row[0])
+            if lonlat is None:
+                continue
+            vals = dict(zip(sel, row))
+            radius = vals.get(radius_col) if radius_col else None
+            try:
+                radius = float(radius) if radius not in (None, "") else None
+            except (TypeError, ValueError):
+                radius = None
+            name = vals.get(name_col) if name_col else None
+            out.append({
+                "lon": lonlat[0], "lat": lonlat[1],
+                "name": str(name) if name not in (None, "") else f"entry{i + 1}",
+                "radius_m": radius,
+                "source": "gpkg",
+            })
+        return out
+    except sqlite3.Error:
+        return []
+    finally:
+        con.close()
+
+
+def _node_id_at(g, lon, lat, tol_m=0.5):
+    """Graph node id at a coordinate, for either node-id scheme.
+
+    pbf graphs key nodes by OSM id, merged/gpkg graphs by quantized coordinate,
+    so look the coordinate up both ways.
+    """
+    nid = g._key_to_id.get(_key(lon, lat))
+    if nid is not None:
+        return nid
+    if getattr(g, "_id_coords", None) is None or not len(g.coords):
+        return None
+    nid = g.nearest_node(lon, lat)
+    nlon, nlat = g.coords[nid]
+    return nid if haversine(lon, lat, nlon, nlat) <= tol_m else None
+
+
+def load_stub_entry_points(pbf_path: str, graph, tag: str = "campus_entry"):
+    """Entry anchors from stub ways tagged campus_entry=yes.
+
+    A stub is drawn in QGIS from the sidewalk into the fenced area; the end that
+    leads nowhere else (lowest graph degree) is the anchor. Ties resolve to the
+    way's last vertex, matching the "draw outward-in" convention.
+    """
+    if not pbf_path or not os.path.exists(pbf_path):
+        return []
+    try:
+        import osmium
+    except ImportError:
+        return []
+    stubs = []
+
+    class _Handler(osmium.SimpleHandler):
+        def way(self, w):
+            tags = {t.k: t.v for t in w.tags}
+            if str(tags.get(tag, "")).strip().lower() not in _TRUTHY:
+                return
+            pts = [
+                (nd.location.lon, nd.location.lat)
+                for nd in w.nodes
+                if nd.location.valid()
+            ]
+            if len(pts) >= 2:
+                stubs.append((tags.get("name") or f"stub{w.id}", pts))
+
+    _Handler().apply_file(pbf_path, locations=True)
+    out = []
+    for name, pts in stubs:
+        ends = (pts[0], pts[-1])
+        degrees = []
+        for lon, lat in ends:
+            nid = _node_id_at(graph, lon, lat)
+            degrees.append(len(graph.adj.get(nid, ())) if nid is not None else 0)
+        anchor = ends[0] if degrees[0] < degrees[1] else ends[1]
+        out.append({
+            "lon": anchor[0], "lat": anchor[1], "name": str(name),
+            "radius_m": None, "source": "stub",
+        })
+    return out
 
 
 # ---------------------------------------------------------------------------
