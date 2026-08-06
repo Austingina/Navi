@@ -621,6 +621,32 @@ class RoutePlanner(Node):
         self.declare_parameter("entry_offroad_weight", 1.0)
         self.declare_parameter("entry_markers_topic", "campus_entry_markers")
         self.declare_parameter("entry_marker_size_m", 1.0)
+        # -- road network vs. direct drive --------------------------------------
+        # Following the roads is the safe default: the graph encodes topology the
+        # robot cannot see, so it never drives into a fenced dead end. But for a
+        # goal a few metres away, or one the roads only reach by going around the
+        # block, snapping to the network is a pointless excursion. plan_auto
+        # weighs the two; see RouteGraph.plan_auto for the ordered rules.
+        self.declare_parameter("auto_channel_enable", True)
+        # Hard ceiling on any hop handed to Nav2 as a single goal. The global
+        # costmap is a rolling 100x100 m window centred on the robot, so
+        # NavfnPlanner throws GoalOutsideMapBounds past ~50 m; 40 leaves room for
+        # TF jitter and update lag. Same reasoning as entry_search_radius_m —
+        # keep the two in step.
+        self.declare_parameter("direct_max_m", 40.0)
+        # Below this, drive straight there unconditionally: projecting onto a road
+        # and back off it costs more than the trip itself.
+        self.declare_parameter("always_direct_m", 8.0)
+        # Drive direct once the road route is this many times the straight line.
+        # 1.0 would always go direct; very large values always follow the roads.
+        self.declare_parameter("detour_ratio_threshold", 1.6)
+        # An on-road leg no longer than this means both ends attach to the road
+        # at the same place, i.e. the route would leave and re-enter through one
+        # opening. Kept as a length rather than an entry-name match: names are
+        # neither unique nor required, and two entries a metre apart should
+        # behave identically.
+        self.declare_parameter("same_entry_road_m", 2.0)
+        self.declare_parameter("decision_topic", "campus_route_decision")
         # -- patrol route picking (RViz "Publish Point" -> ordered waypoints) --
         self.declare_parameter("patrol_enable", True)
         self.declare_parameter("patrol_name", "patrol_01")
@@ -707,6 +733,11 @@ class RoutePlanner(Node):
                 self.get_parameter("entry_markers_topic").value,
                 latched_qos(),
             )
+        # Latched: the last decision stays readable for anything that subscribes
+        # after the goal was already dispatched.
+        self.decision_pub = self.create_publisher(
+            String, self.get_parameter("decision_topic").value, latched_qos()
+        )
         self.entries = []
         if self.get_parameter("entry_enable").value:
             self._load_entry_points()
@@ -726,6 +757,9 @@ class RoutePlanner(Node):
         # Index of the entry pose when the route ends with an off-network access
         # leg (entry -> goal); None for an ordinary on-road route.
         self._nav_entry_index = None
+        # Which channel plan_auto picked for the route being driven:
+        # 'road' | 'direct' | 'direct_via_entry'. Only affects log wording.
+        self._nav_mode = "road"
         # -- waypoint marker state (progress colouring) --
         self._nav_marker_n = 0        # waypoints in the published marker array
         self._nav_marker_reached = 0  # how many of them are already green
@@ -1486,9 +1520,7 @@ class RoutePlanner(Node):
         )
 
     def _plan_and_send_to_nav(self, start_lonlat, goal_lonlat):
-        plan = self.graph.plan_to_goal(
-            start_lonlat[0], start_lonlat[1],
-            goal_lonlat[0], goal_lonlat[1],
+        road_kwargs = dict(
             entries=self.entries,
             off_network_m=float(self.get_parameter("off_network_m").value),
             search_radius_m=float(
@@ -1497,50 +1529,88 @@ class RoutePlanner(Node):
             offroad_weight=float(self.get_parameter("entry_offroad_weight").value),
             respect_turns=self.respect_turns,
         )
+        if self.get_parameter("auto_channel_enable").value:
+            plan = self.graph.plan_auto(
+                start_lonlat[0], start_lonlat[1],
+                goal_lonlat[0], goal_lonlat[1],
+                direct_max_m=float(self.get_parameter("direct_max_m").value),
+                always_direct_m=float(
+                    self.get_parameter("always_direct_m").value
+                ),
+                detour_ratio_threshold=float(
+                    self.get_parameter("detour_ratio_threshold").value
+                ),
+                same_entry_road_m=float(
+                    self.get_parameter("same_entry_road_m").value
+                ),
+                **road_kwargs,
+            )
+        else:
+            plan = self.graph.plan_to_goal(
+                start_lonlat[0], start_lonlat[1],
+                goal_lonlat[0], goal_lonlat[1], **road_kwargs
+            )
+            if plan is not None:
+                plan = dict(plan, mode="road", decision_reason="auto_disabled")
         if plan is None:
-            self.get_logger().error("No path: start/goal not connected.")
+            self.get_logger().error(
+                "No path: the goal is beyond the direct-drive limit "
+                f"({self.get_parameter('direct_max_m').value:.0f} m) and not "
+                "reachable on the road network either. If both ends sit inside "
+                "a fenced area, add an entry point in "
+                f"{self.get_parameter('entry_gpkg').value}."
+            )
             return
         lonlat_path = plan["path"]
         length = plan["length_m"]
         road_start_index = plan["road_start_index"]
         road_end_index = plan["road_end_index"]
+        mode = plan["mode"]
         entry_enable = self.get_parameter("entry_enable").value
         radius_str = f"{self.get_parameter('entry_search_radius_m').value:.0f}"
-        if road_start_index is not None:
-            s_lead = plan["start_entry_lead_m"]
-            s_through = f"{s_lead:.0f} m through the opening + " if s_lead else ""
-            self.get_logger().info(
-                f"Start is {plan['start_offnetwork_m']:.1f} m off-network -> "
-                f"exiting via '{plan['start_entry_name']}' "
-                f"({s_through}{plan['start_offroad_m']:.0f} m to road network)."
-            )
-        elif plan["start_entry_missing"] and entry_enable:
-            self.get_logger().warn(
-                f"Start is {plan['start_offnetwork_m']:.1f} m off-network but no "
-                f"entry point is within {radius_str} m of it; snapping to the "
-                f"nearest road, which may sit on the wrong side of a fence. "
-                f"Add a point closer to the start in "
-                f"{self.get_parameter('entry_gpkg').value}."
-            )
-        if road_end_index is not None:
-            lead = plan["entry_lead_m"]
-            road_m = (length - plan["start_offroad_m"] - plan["start_entry_lead_m"]
-                      - lead - plan["offroad_m"])
-            through = f"{lead:.0f} m through the opening + " if lead else ""
-            self.get_logger().info(
-                f"Goal is {plan['goal_offnetwork_m']:.1f} m off-network -> entering "
-                f"via '{plan['entry_name']}' ({road_m:.0f} m on roads + "
-                f"{through}{plan['offroad_m']:.0f} m access leg)."
-            )
-        elif plan["entry_missing"] and entry_enable:
-            self.get_logger().warn(
-                f"Goal is {plan['goal_offnetwork_m']:.1f} m off-network but no entry "
-                f"point is within {radius_str} m "
-                f"of it (none authored, or the nearest opening is too far); snapping "
-                f"to the nearest road, which may sit on the wrong side of a fence. "
-                f"Add a point closer to the goal in "
-                f"{self.get_parameter('entry_gpkg').value}."
-            )
+        self._log_channel_decision(plan)
+        self._publish_channel_decision(plan)
+        # Entry / off-network narration describes a road route only. Both direct
+        # modes reuse road_end_index to mark their un-densified hops, so without
+        # this guard they would trip the same branches and report driving through
+        # an opening they never touch.
+        if mode == "road":
+            if road_start_index is not None:
+                s_lead = plan["start_entry_lead_m"]
+                s_through = (
+                    f"{s_lead:.0f} m through the opening + " if s_lead else ""
+                )
+                self.get_logger().info(
+                    f"Start is {plan['start_offnetwork_m']:.1f} m off-network -> "
+                    f"exiting via '{plan['start_entry_name']}' "
+                    f"({s_through}{plan['start_offroad_m']:.0f} m to road network)."
+                )
+            elif plan["start_entry_missing"] and entry_enable:
+                self.get_logger().warn(
+                    f"Start is {plan['start_offnetwork_m']:.1f} m off-network but "
+                    f"no entry point is within {radius_str} m of it; snapping to "
+                    f"the nearest road, which may sit on the wrong side of a "
+                    f"fence. Add a point closer to the start in "
+                    f"{self.get_parameter('entry_gpkg').value}."
+                )
+            if road_end_index is not None:
+                lead = plan["entry_lead_m"]
+                through = f"{lead:.0f} m through the opening + " if lead else ""
+                self.get_logger().info(
+                    f"Goal is {plan['goal_offnetwork_m']:.1f} m off-network -> "
+                    f"entering via '{plan['entry_name']}' "
+                    f"({plan['road_m']:.0f} m on roads + "
+                    f"{through}{plan['offroad_m']:.0f} m access leg)."
+                )
+            elif plan["entry_missing"] and entry_enable:
+                self.get_logger().warn(
+                    f"Goal is {plan['goal_offnetwork_m']:.1f} m off-network but no "
+                    f"entry point is within {radius_str} m "
+                    f"of it (none authored, or the nearest opening is too far); "
+                    f"snapping to the nearest road, which may sit on the wrong "
+                    f"side of a fence. Add a point closer to the goal in "
+                    f"{self.get_parameter('entry_gpkg').value}."
+                )
         # Match road-network marker height for RViz; keep Nav2 goals at z=0.
         path_z = float(self.get_parameter("network_z").value)
         self._publish_path_msg(
@@ -1565,10 +1635,49 @@ class RoutePlanner(Node):
         if self.get_parameter("send_to_nav2").value:
             if self.get_parameter("nav2_batch_enable").value:
                 self._start_batched_route(
-                    nav_msg.poses, entry_index=nav_entry_index
+                    nav_msg.poses, entry_index=nav_entry_index, mode=mode
                 )
             else:
                 self._send_nav2_waypoints(nav_msg.poses)
+
+    # -- channel decision reporting -----------------------------------------
+    def _log_channel_decision(self, plan):
+        """One line saying which way we are going and what decided it."""
+        rt = plan["road_total_m"]
+        ratio = plan["detour_ratio"]
+        rt_s = "unreachable" if rt is None else f"{rt:.0f} m"
+        ratio_s = "n/a" if ratio is None else f"{ratio:.2f}x"
+        head = (
+            f"straight {plan['straight_m']:.0f} m, road route {rt_s} "
+            f"({ratio_s}) -> "
+        )
+        mode = plan["mode"]
+        reason = plan["decision_reason"]
+        if mode == "road":
+            self.get_logger().info(f"{head}following the road network [{reason}]")
+        elif mode == "direct":
+            self.get_logger().info(
+                f"{head}driving straight to the goal, bypassing the road "
+                f"network [{reason}]"
+            )
+        else:  # direct_via_entry
+            self.get_logger().info(
+                f"{head}too far for one hop, so driving it in two via "
+                f"'{plan['entry_name']}' [{reason}]"
+            )
+
+    def _publish_channel_decision(self, plan):
+        if not hasattr(self, "decision_pub"):
+            return
+        rt = plan["road_total_m"]
+        ratio = plan["detour_ratio"]
+        self.decision_pub.publish(String(data=(
+            f"mode={plan['mode']} reason={plan['decision_reason']} "
+            f"straight_m={plan['straight_m']:.1f} "
+            f"road_total_m={'' if rt is None else f'{rt:.1f}'} "
+            f"road_m={plan['road_m']:.1f} "
+            f"detour_ratio={'' if ratio is None else f'{ratio:.3f}'}"
+        )))
 
     def _densify_route(self, lonlat_path, step_m, road_end_index,
                        road_start_index=None):
@@ -1643,7 +1752,7 @@ class RoutePlanner(Node):
             return None
         return tf.transform.translation.x, tf.transform.translation.y
 
-    def _start_batched_route(self, poses, entry_index=None):
+    def _start_batched_route(self, poses, entry_index=None, mode="road"):
         """Store the full route and let the timer feed it to Nav2 in batches."""
         self._cancel_nav2_goal()
         self._cancel_final_goal()
@@ -1651,6 +1760,7 @@ class RoutePlanner(Node):
         self._final_retry = 0
         self._final_cancel_pending = False
         self._final_wait_ticks = 0
+        self._nav_mode = mode
         self._nav_entry_index = entry_index
         self._nav_route_poses = list(poses)
         self._nav_cursor = 0
@@ -1801,10 +1911,14 @@ class RoutePlanner(Node):
         # Everything up to the hand-over pose is behind us now; only the goal
         # itself stays amber until it is reached.
         self._recolor_nav_waypoints(len(self._nav_route_poses) - 1)
-        what = (
-            "access leg from the entry point"
-            if self._nav_entry_index is not None else "route end"
-        )
+        if self._nav_mode == "direct":
+            what = "direct drive to the goal"
+        elif self._nav_mode == "direct_via_entry":
+            what = "second hop, from the entry to the goal"
+        elif self._nav_entry_index is not None:
+            what = "access leg from the entry point"
+        else:
+            what = "route end"
         self.get_logger().info(
             f"Final approach: {distance:.1f} m of {what}, switching from batched "
             f"waypoints to '{self.get_parameter('nav2_final_action_name').value}'."

@@ -300,6 +300,10 @@ class RouteGraph:
         Returns a dict, or None when nothing is reachable:
             path               [(lon, lat), ...]
             length_m           total length including all off-network hops
+            road_m             the on-road part alone (length_m minus every
+                               off-network hop). ~0 means both ends attach to
+                               the road at the same place, i.e. the route leaves
+                               and re-enters through one opening.
             start_proj         road projection of the start-side entry (or start)
             goal_proj          road projection of the goal-side entry (or goal)
             road_start_index   index of the first on-road point; None if start on-network
@@ -331,7 +335,7 @@ class RouteGraph:
                 return None
             lonlat, length, sp, gp = res
             return {
-                "path": lonlat, "length_m": length,
+                "path": lonlat, "length_m": length, "road_m": length,
                 "start_proj": sp, "goal_proj": gp,
                 "road_start_index": None, "start_via_index": None,
                 "road_end_index": None, "via_index": None,
@@ -415,6 +419,7 @@ class RouteGraph:
             path.append((glon, glat))
             return {
                 "path": path, "length_m": road_len + lead + straight,
+                "road_m": road_len,
                 "start_proj": sp, "goal_proj": gp,
                 "road_start_index": None, "start_via_index": None,
                 "road_end_index": road_end_index, "via_index": via_index,
@@ -456,6 +461,7 @@ class RouteGraph:
             path.extend(lonlat)
             return {
                 "path": path, "length_m": straight + lead + road_len,
+                "road_m": road_len,
                 "start_proj": sp, "goal_proj": gp,
                 "road_start_index": road_start_index,
                 "start_via_index": start_via_index,
@@ -511,6 +517,7 @@ class RouteGraph:
         return {
             "path": path,
             "length_m": s_straight + s_lead + road_len + g_lead + g_straight,
+            "road_m": road_len,
             "start_proj": sp, "goal_proj": gp,
             "road_start_index": road_start_index,
             "start_via_index": start_via_index,
@@ -522,6 +529,207 @@ class RouteGraph:
             "goal_offnetwork_m": goal_off_network,
             "start_entry_missing": False, "entry_missing": False,
         }
+
+    def plan_auto(self, slon, slat, glon, glat, entries=None,
+                  direct_max_m=40.0, always_direct_m=8.0,
+                  detour_ratio_threshold=1.6, same_entry_road_m=2.0,
+                  **plan_to_goal_kwargs):
+        """Pick between following the road network and driving straight there.
+
+        Routing along the roads is the safe default: the graph encodes topology
+        the robot cannot see, so it never walks into a fenced dead end. But for a
+        goal a few metres away — or one where the roads detour all the way around
+        a block — snapping to the network is a pointless excursion.
+
+        The only way to tell the two apart is to compare the two candidate routes,
+        which needs the graph. That is why this lives here rather than in the
+        caller: plan_to_goal already computes the road route (total length, the
+        on-road part alone, and how far each end sits off the network), so the
+        comparison is free.
+
+        The governing idea: a direct drive is only sound when the straight line
+        does not cross the boundary of a fenced area. Both ends inside the same
+        one, or both out on the network, are fine. One of each is not — that line
+        must cross, and an entry point is the only description we have of where
+        crossing is allowed.
+
+        The decision, in order:
+
+          1. Both ends off-network and road_m ~ 0  ->  the route leaves and
+             re-enters through a single opening, so the on-road leg is pure
+             waste. Straight there if it fits the costmap; otherwise via the
+             entry as a waypoint (see below).
+          2. straight > direct_max_m               ->  road. A direct goal this
+             far out is rejected by the planner, so there is nothing to weigh.
+          3. no road route at all                  ->  direct, for lack of
+             anything else (straight is already within direct_max_m here).
+          4. exactly one end off-network           ->  road, unconditionally.
+             The straight line would cross the enclosure boundary; the roads and
+             the authored opening are the only sanctioned way through.
+          5. straight <= always_direct_m           ->  direct. Snapping to a road
+             and back costs more than just driving it.
+          6. either end has entry_missing          ->  direct. That end is
+             off-network with no opening authored, so plan_to_goal fell back to
+             the nearest road, which may well be across a fence.
+          7. road_total/straight >= threshold      ->  direct. The roads detour.
+          8. otherwise                             ->  road.
+
+        Rule 1 must precede rule 2: routing via the entry exists precisely to
+        serve the case where the straight shot does not fit.
+
+        Rule 4 must precede rules 5-7, which are all shortcuts that would
+        otherwise send the robot across a boundary — a goal 7 m off the road is
+        both "trivially close" and on the far side of a fence.
+
+        Rule 6 divides by the *total* road route (length_m, access legs
+        included), not the on-road part, so "drive out of one courtyard and into
+        another" is counted against the road option the way it should be.
+
+        Rule 1 keys off road_m rather than comparing the two entries by name:
+        an entry name is neither unique nor required, and two distinct entries a
+        metre apart should behave the same as one.
+
+        The dict returned is plan_to_goal's, plus:
+            mode             'road' | 'direct' | 'direct_via_entry'
+            decision_reason  short tag naming the rule that fired
+            straight_m       straight-line start -> goal
+            road_total_m     length_m of the road route (None if unreachable)
+            detour_ratio     road_total_m / straight_m (None if unreachable)
+
+        For the two direct modes the path is trimmed to just the hops the caller
+        has to drive, and every entry/off-road field is zeroed, so a caller that
+        only knows plan_to_goal's shape keeps working:
+
+            direct            [start, goal]         road_end_index=0
+            direct_via_entry  [start, entry, goal]   road_start_index=road_end_index=1
+
+        Marking the middle point as both the start and the end of the "on-road"
+        span is what stops the caller from interpolating along either hop — both
+        are off-network and may cut through the very fence they exist to skirt.
+
+        Returns None when neither option is possible.
+        """
+        straight = haversine(slon, slat, glon, glat)
+        plan = self.plan_to_goal(slon, slat, glon, glat, entries=entries,
+                                 **plan_to_goal_kwargs)
+
+        road_total = plan["length_m"] if plan else None
+        ratio = (road_total / straight) if (plan and straight > 1e-6) else None
+        # Same threshold plan_to_goal classified the ends with, so "off-network"
+        # means the same thing in both places.
+        off_network_m = plan_to_goal_kwargs.get("off_network_m", 5.0)
+        start_off_network = plan["start_offnetwork_m"] if plan else None
+        goal_off_network = plan["goal_offnetwork_m"] if plan else None
+
+        def _decide(mode, reason, path, road_start_index, road_end_index,
+                    entry=None):
+            out = dict(plan) if plan else {}
+            out.update({
+                "path": path,
+                "length_m": sum(
+                    haversine(a[0], a[1], b[0], b[1])
+                    for a, b in zip(path, path[1:])
+                ),
+                "road_m": 0.0,
+                "road_start_index": road_start_index,
+                "road_end_index": road_end_index,
+                "start_via_index": None, "via_index": None,
+                "start_entry_lead_m": 0.0, "entry_lead_m": 0.0,
+                "start_offroad_m": 0.0, "offroad_m": 0.0,
+                # Cleared so the caller does not warn about an unauthored
+                # opening on a route that no longer touches the network.
+                "start_entry_missing": False, "entry_missing": False,
+                "start_entry_name": None,
+                "entry_name": entry.get("name") if entry else None,
+                "mode": mode, "decision_reason": reason,
+                "straight_m": straight, "road_total_m": road_total,
+                "detour_ratio": ratio,
+            })
+            # plan_to_goal was skipped entirely (no road route): fill in the keys
+            # it would have provided so every mode returns the same shape.
+            out.setdefault("start_proj", None)
+            out.setdefault("goal_proj", None)
+            out.setdefault("start_offnetwork_m", None)
+            out.setdefault("goal_offnetwork_m", None)
+            return out
+
+        def _road(reason):
+            out = dict(plan)
+            out.update({
+                "mode": "road", "decision_reason": reason,
+                "straight_m": straight, "road_total_m": road_total,
+                "detour_ratio": ratio,
+            })
+            return out
+
+        start = (slon, slat)
+        goal = (glon, glat)
+
+        # -- 1. one opening serves both ends -------------------------------------
+        # Both ends hang off the network and the on-road leg between their
+        # attachment points is ~nothing: they share an opening, so the road
+        # excursion is out-and-straight-back.
+        if (plan is not None
+                and plan["road_start_index"] is not None
+                and plan["road_end_index"] is not None
+                and plan["road_m"] <= same_entry_road_m):
+            if straight <= direct_max_m:
+                return _decide("direct", "single_entry_both_ends",
+                               [start, goal], None, 0)
+            # Too far to hand over in one piece. The entry is a legal waypoint
+            # for exactly this: plan_to_goal only kept it if both of its access
+            # legs were inside search_radius_m, so each half is drivable even
+            # though the whole is not.
+            via = plan["path"][plan["road_start_index"]]
+            if plan["start_via_index"] is not None:
+                via = plan["path"][plan["start_via_index"]]
+            return _decide("direct_via_entry", "single_entry_via_waypoint",
+                           [start, via, goal], 1, 1,
+                           entry={"name": plan["start_entry_name"]})
+
+        # -- 2. beyond the costmap: the direct option does not exist -------------
+        if straight > direct_max_m:
+            if plan is None:
+                return None
+            return _road("beyond_direct_max")
+
+        # -- 3. no road route ---------------------------------------------------
+        if plan is None:
+            return _decide("direct", "no_road_route", [start, goal], None, 0)
+
+        # -- 4. one end inside, one end outside: the roads are the only way ------
+        # A straight line between them has to cross the boundary of whatever the
+        # off-network end sits inside — a fence, hedge, kerb, planting. That
+        # boundary is exactly what an entry point exists to describe: it says
+        # where crossing is allowed. Going direct here bypasses the one piece of
+        # information we have about it, so no shortcut rule below may override
+        # this. (Both ends outside is different: rule 1 already covers the case
+        # where they share an opening, and then the straight line never leaves
+        # the enclosure.)
+        #
+        # This holds even with no entry authored. The road route then stops at the
+        # goal's projection, a few metres short, and plan_to_goal already reports
+        # entry_missing so the caller can say to add one — better than driving at
+        # an unmapped fence.
+        if (start_off_network is not None and goal_off_network is not None
+                and (start_off_network > off_network_m)
+                != (goal_off_network > off_network_m)):
+            return _road("crosses_network_boundary")
+
+        # -- 5. close enough that snapping to a road is the detour ---------------
+        if straight <= always_direct_m:
+            return _decide("direct", "trivially_close", [start, goal], None, 0)
+
+        # -- 6. the road plan is not trustworthy --------------------------------
+        if plan["entry_missing"] or plan["start_entry_missing"]:
+            return _decide("direct", "entry_missing", [start, goal], None, 0)
+
+        # -- 7. the roads detour ------------------------------------------------
+        if ratio is not None and ratio >= detour_ratio_threshold:
+            return _decide("direct", "road_detours", [start, goal], None, 0)
+
+        # -- 8. default: follow the roads ---------------------------------------
+        return _road("road_is_direct_enough")
 
     def astar(self, start, goal, respect_turns=False):
         """Return (node_id_path, length_m) or (None, inf).
