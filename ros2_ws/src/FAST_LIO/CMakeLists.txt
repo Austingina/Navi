@@ -166,6 +166,7 @@ install(PROGRAMS
   scripts/cmd_vel_bridge.py
   scripts/map_odom_from_gps.py
   scripts/gps_heading_align.py
+  scripts/safety_stop.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

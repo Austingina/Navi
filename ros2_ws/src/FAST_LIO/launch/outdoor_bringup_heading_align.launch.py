@@ -36,8 +36,10 @@ from launch.actions import (
     IncludeLaunchDescription,
     TimerAction,
 )
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
 
 
 # 上一次 bringup 若被强杀/异常退出，某些节点（尤其 Python 的 elevation_mapping_node）
@@ -116,6 +118,7 @@ def generate_launch_description():
     # so declare it once here.
     datum_lat = LaunchConfiguration('datum_lat')
     datum_lon = LaunchConfiguration('datum_lon')
+    safety_stop_on_exit = LaunchConfiguration('safety_stop_on_exit')
 
     # ---- top-level args (透传给子 launch) ----
     declare_args = [
@@ -144,7 +147,34 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'send_to_nav2', default_value='true',
             description='route_planner: forward campus waypoints to Nav2'),
+        DeclareLaunchArgument(
+            'safety_stop_on_exit', default_value='true',
+            description='Publish zero /cmd_vel when this launch is stopped '
+                        '(Ctrl-C / tmux kill), so the base does not keep the '
+                        'last commanded velocity'),
     ]
+
+    # t=0 —— 刹停守卫。整条速度链（controller -> velocity_smoother ->
+    # collision_monitor -> /cmd_vel）在 Ctrl-C 时会一起死掉，没人补发零速，底盘会保持
+    # 最后一条速度指令。这个节点平时完全沉默（绝不能和 collision_monitor 抢 /cmd_vel），
+    # 收到 SIGINT/SIGTERM/SIGHUP 后连续发 1.5s 零速，保证线上最后一条是停车指令。
+    # 与整栈同生共死，所以和 localization 一起 t=0 起。
+    safety_stop = Node(
+        package='fast_lio',
+        executable='safety_stop.py',
+        name='safety_stop',
+        output='screen',
+        parameters=[{
+            'use_sim_time': use_sim_time,
+            'cmd_vel_topic': '/cmd_vel',
+            # 室外没跑 cmd_vel_bridge，底盘直订 /cmd_vel；这条 TwistStamped 是给
+            # 室内桥接那条链兜底，多发一份零速无副作用。置 '' 可关掉。
+            'chassis_topic': '/motion_target/target_speed_chassis',
+            'stop_duration_s': 1.5,
+            'stop_rate_hz': 20.0,
+        }],
+        condition=IfCondition(safety_stop_on_exit),
+    )
 
     # t=0 —— 定位 / 建图（TF 根基）：带 heading-align 的正式定位栈。
     localization = IncludeLaunchDescription(
@@ -197,4 +227,4 @@ def generate_launch_description():
     )
 
     return LaunchDescription(
-        declare_args + [localization, nav2, route_planner])
+        declare_args + [safety_stop, localization, nav2, route_planner])
