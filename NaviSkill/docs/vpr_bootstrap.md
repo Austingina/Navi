@@ -18,7 +18,7 @@
 之所以单独成一个模块、并跑成独立子进程，是因为：
 
 - VPR 推理依赖 **PyTorch / torchvision / FAISS / SuperPoint + LightGlue**，依赖体积大且与 Jetson 上 CUDA wheel 强绑定，必须有独立 venv。
-- NaviSkill 的主进程是 ROS + FastAPI / FastMCP 的 conda 环境，**不能污染** VPR 的依赖。
+- NaviSkill 的主进程是 ROS + FastAPI WebSocket 的 Python 环境，**不能污染** VPR 的依赖。
 - 模型 + 数据库加载需要 5～10s（Jetson 上更久），不能每次查询都启动一次进程。
 
 因此整体结构是：

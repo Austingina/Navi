@@ -270,15 +270,15 @@
                     </select>
                 </div>
                 
-                <!-- set_goal_by_xy -->
+                <!-- set_goal_by_slam(target=tmp) -->
                 <div class="nav-btn-row">
-                    <button class="btn btn-secondary" id="xySelectBtn" onclick="toggleXYSelectMode()">set_goal_by_xy</button>
+                    <button class="btn btn-secondary" id="xySelectBtn" onclick="toggleXYSelectMode()">set_goal_by_slam(tmp)</button>
                     <span class="hint-text" id="xyHint">点击按钮后在地图选点</span>
                 </div>
                 
-                <!-- set_goal_by_lonlat -->
+                <!-- set_goal_by_outdoor -->
                 <div class="nav-btn-row">
-                    <button class="btn btn-secondary" disabled>set_goal_by_lonlat</button>
+                    <button class="btn btn-secondary" disabled>set_goal_by_outdoor</button>
                     <span class="hint-text">(暂不可用)</span>
                 </div>
                 
@@ -1006,9 +1006,7 @@
                         
                         const waitResult = await callMCPTool('wait_goal_reached', {
                             target: waypoint,
-                            timeout: 1.0,
-                            xy_tolerance: 0.6,
-                            yaw_tolerance: 3.14
+                            timeout: 1.0
                         });
                         
                         if (waitResult.success) {
@@ -1114,7 +1112,7 @@
                 hint.textContent = '点击地图选择目标点';
                 canvas.style.cursor = 'crosshair';
             } else {
-                btn.textContent = 'set_goal_by_xy';
+                btn.textContent = 'set_goal_by_slam(tmp)';
                 btn.classList.remove('btn-danger');
                 btn.classList.add('btn-secondary');
                 indicator.classList.remove('active');
@@ -1139,7 +1137,8 @@
             // 发送导航请求
             try {
                 updateStatus('navStatus', `导航到: (${mapPos.x.toFixed(2)}, ${mapPos.y.toFixed(2)})...`, '');
-                const result = await callMCPTool('set_goal_by_xy', { 
+                const result = await callMCPTool('set_goal_by_slam', { 
+                    target: 'tmp',
                     x: mapPos.x, 
                     y: mapPos.y, 
                     distance: 0.5 

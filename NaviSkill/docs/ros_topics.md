@@ -68,7 +68,7 @@ TF 新鲜度用于判断定位是否丢失：连续异常或 stamp 落后超过�
 | Service | 类型 | 用途 |
 |---------|------|------|
 | `/grid_map_pcl_loader_node/get_parameters` | `rcl_interfaces/srv/GetParameters` | 读取 `map_file_path` 参数，得到当前加载的地图路径。 |
-| `/elevator_mode` | `std_srvs/srv/SetBool` | 进/出电梯模式：进梯点锁定 Z（`enter_elevator`），出梯点解锁 Z（`exit_elevator`）。 |
+| `/elevator_mode` | `std_srvs/srv/SetBool` | 进/出电梯模式：`set_goal_by_slam` 遇 `elevator_in` 自动锁定 Z；出梯换图时自动重置。由服务端内部调用，无对外 RPC。 |
 | `{node_name}/set_parameters` | `rcl_interfaces/srv/SetParameters` | 动态设置远程节点参数（如 `/controller_server` 的 `general_goal_checker.xy_goal_tolerance`）。支持 bool/int/float/str。 |
 
 ---

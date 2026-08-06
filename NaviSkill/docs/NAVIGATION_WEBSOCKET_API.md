@@ -17,22 +17,33 @@ python server.py -m /path/to/multifloor.json
 # 测试端口 9999
 python server.py -t -m /path/to/multifloor.json
 
-# 显式指定初始 submap（跳过 VPR 自动识别）
-python server.py -m /path/to/multifloor.json -s floor
+# SLAM 室内模式：指定初始 slam_map/submap，并拉起 start_slam.sh
+python server.py -m /path/to/scene.json --ss zhichengA2A3/1f
+
+# 室外 GPS 模式（省略 --ss）：拉起 start_outdoor.sh
+python server.py -m /path/to/scene.json
 
 # 自定义 VPR 相机话题与设备
-python server.py -m /path/to/multifloor.json \
+python server.py -m /path/to/scene.json --ss default/2f \
   --image_topic /hdas/camera_head/left_raw/image_raw_color/compressed \
   --vpr_device cuda
+
+# 附带 rerun 可视化
+python server.py -m /path/to/scene.json --ss caihong/2f -v
 ```
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `-m/--map` | 无 | 多楼层地图配置文件路径（`multifloor.json` 等）。**强烈建议传入**，否则依赖 `MapManager` 的接口会失败。 |
+| `-m/--map` | 无 | 地图配置来源：本地 `*.json` 路径，或 mapserver URL（会缓存到 `mapdata/<id>/`）。**强烈建议传入**。 |
 | `-t/--test` | 关 | 使用测试端口 **9999**；不加则为 **9000**。 |
-| `-s/--submap` | 无 | 显式指定初始 submap ID。**省略时**：若至少一个 submap 配置了 VPR 数据库，则启动后自动用相机图像通过 VPR 识别 submap；VPR 不可用时回退到 `default_submap`。 |
+| `--ss` | 无 | 初始定位目标，格式 **`slam_map_id/submap_id`**（如 `caihong/2f`）。**给出 → SLAM 室内模式**，解析 submap 的 pcd 并拉起 `start_slam.sh`；**省略 → 室外 GPS 模式**，拉起 `start_outdoor.sh`。（与仿真常用的 `-s` use_sim_time 不同，见 `start_mcp.sh` 注释。） |
 | `--image_topic` | `NavNode` 默认值 | VPR 引导/重定位使用的 **CompressedImage** 话题，默认 `/hdas/camera_head/left_raw/image_raw_color/compressed`。 |
 | `--vpr_device` | `cuda` | VPR 子进程使用的设备，可选 `cuda` / `cpu`。 |
+| `-v/--viz` | 关 | 启动 rerun 可视化（依赖 `rerun-sdk`）。 |
+| `--viz_lidar_topic` | `/cloud_registered` | 可视化 LiDAR 话题；也可设为 `/livox/lidar`（需 lidar→base_link 外参）。 |
+| `--viz_mode` | `spawn` | `spawn` / `connect` / `serve` / `save`。 |
+| `--viz_addr` | 依 mode | connect 默认 `127.0.0.1:9876`；serve 默认 `0.0.0.0:9876`。 |
+| `--viz_save_path` | `/tmp/navi_rerun.rrd` | `viz_mode=save` 时的输出路径。 |
 
 ### 1.2 端点
 
@@ -49,11 +60,13 @@ python server.py -m /path/to/multifloor.json \
 ### 1.3 启动流程
 
 1. 解析 CLI 参数并加载 `MapManager`（如指定 `-m`）。
-2. 初始化 `NavNode`（ROS 2），后台线程跑 `SingleThreadedExecutor`。
-3. 若任意 submap 含 VPR 数据库，则启动 **VPR 子进程**（位于独立 `vpr/.venv`），等待模型 ready。
-4. 若未指定 `-s/--submap` 且 VPR 可用，**用最新一帧相机图像识别初始 submap**。
-5. 调用 `_change_map` 把 ROS 端地图同步到目标 submap。
-6. 启动 FastAPI/WebSocket 服务及 **VPR tf_ready watchdog**（仅当 VPR 可用）。
+2. 依据 `--ss` 调用 `_launch_nav_stack`：**有 `--ss` → SLAM 栈**；**无 `--ss` → 室外 GPS 栈**。
+3. 初始化 `NavNode`（ROS 2，`initial_nav_mode` 与上一步一致），后台 `MultiThreadedExecutor` 跑 spin。
+4. 若地图含 VPR 数据库，启动 **VPR 子进程**（独立 `vpr/.venv`），等待模型 ready。
+5. **仅 SLAM 模式**（给出 `--ss`）：MapManager 已设为对应 `slam_map/submap`（不再走 VPR 启动引导，因 submap 已显式指定），随后 `_sync_map_state` 与 ROS 端对齐。
+6. **室外 GPS 模式**（省略 `--ss`）：跳过 submap 识别与 `_change_map`。
+7. 可选 `-v` 启动 `NaviRerunViz`。
+8. 启动 FastAPI/WebSocket；若 VPR 可用则启动 **tf_ready watchdog**（见 §5.3）。
 
 ---
 
@@ -113,7 +126,6 @@ python server.py -m /path/to/multifloor.json \
 
 以下方法在服务端为 **async**，可能长时间占用连接：
 
-- `set_goal_by_multipose`
 - `wait_goal_reached`
 - `get_navigation_plan`
 
@@ -149,79 +161,71 @@ python server.py -m /path/to/multifloor.json \
 
 > 说明：未特别注明时，`params` 可为 `{}`。所有涉及 **当前子图语义点** 的方法依赖 **已加载地图** 与 **`MapManager` 配置**。
 
-完整方法列表（按字母序）：
+### 方法分类
 
-```
-cancel_navigation, change_map, enter_elevator, exit_elevator,
-get_current_map_id, get_default_route, get_map, get_navigation_plan,
-get_nearest_point, get_pose_in_submap, get_pose_list_in_current_submap,
-get_portal_to_submap, get_route, get_route_names, get_status,
-get_submap_info, get_submap_list, pause_navigation, resume_navigation,
-set_goal_by_lonlat, set_goal_by_multipose, set_goal_by_name,
-set_goal_by_xy, set_xy_goal_tolerance, wait_goal_reached
-```
+| 类别 | 方法 |
+|------|------|
+| **导航动作类** | `set_goal_by_slam`, `set_goal_by_outdoor`, `pause_navigation`, `cancel_navigation`, `resume_navigation`, `set_xy_goal_tolerance` |
+| **导航模式类** | `set_nav_mode`, `get_nav_mode` |
+| **导航状态获取** | `get_map`, `get_navigation_plan`, `wait_goal_reached`, `get_status`, `get_nearest_point` |
+| **地图数据获取** | `get_pose_list_in_current_submap`, `get_pose_in_submap`, `get_submap_list`, `get_submap_info`, `get_current_map_id` |
+| **路线数据获取** | `get_route_names`, `get_default_route`, `get_route` |
 
-### 4.1 导航目标
+---
 
-#### `set_goal_by_name`
+### 4.1 导航动作类
 
-下发命名语义点目标（Nav2 / `publish_goal`）。
+#### `set_goal_by_slam`
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `target` | string | 是 | 预设点名称，须在 `pose_map_current_submap` 中。 |
+SLAM 模式下发目标（自动确保处于 `slam` 模式）。两种用法：
+
+1. **命名语义点**：从地图取该点位姿下发（Nav2 / `publish_goal`）。
+2. **临时坐标点**（`target == "tmp"`）：不查地图，直接以 `x`/`y` 为目标，朝向取「当前位置指向目标」的接近方向；到达精度由 `xy_tolerance`/`yaw_tolerance` 控制。
+
+| 参数 | 类型 | 必填 | 默认 | 说明 |
+|------|------|------|------|------|
+| `target` | string | 是 | — | 预设点名称（须在 `pose_map_current_submap` 中）；传 `"tmp"` 表示用 `x`/`y` 临时坐标。 |
+| `x` | number | `target=="tmp"` 时必填 | — | 地图(odom)系 X（米）。 |
+| `y` | number | `target=="tmp"` 时必填 | — | 地图(odom)系 Y（米）。 |
+| `slam_map` | string | 否 | — | 仅命名点位；目标所在 SLAM 地图 id，与当前不同会自动切换。 |
+| `submap` | string | 否 | — | 仅命名点位；目标所在 submap id，与当前不同会自动换图。 |
+| `xy_tolerance` | number | 否 | 0.1 | 到达判定位置容差（米）；随目标记录，供 `wait_goal_reached` 取回。 |
+| `yaw_tolerance` | number | 否 | 0.1 | 到达判定朝向容差（弧度）；同上。 |
 
 **自动行为：**
 
-- 若目标点 `type` 为 `elevator_in`，下发目标时 **自动调用 `enter_elevator`**（锁定 Z 轴），在前往电梯途中即生效。
+- 若命名点位 `type` 为 `elevator_in`，下发目标时 **自动锁定 Z 轴**（内部调用 `/elevator_mode`，无对外 RPC），在前往电梯途中即生效。
+- 若命名点位 `type` 为 `elevator_in` / `LowPrecision_pose`，下发时**自动放宽**容差（`xy_tolerance ≥ 0.6`，`yaw_tolerance ≥ 3.14`）。
+- 出梯后随即换图（换 submap/切栈）时，Z 锁状态会被**自动重置**，无需单独解锁。
 
-**成功示例字段：** `success`, `msg`, `target`。
-
----
-
-#### `set_goal_by_multipose`
-
-对 **multi_pose** 类型点位，依次用 **PID** 走完全部位姿（非 Nav2 路径）。
-
-| 参数 | 类型 | 默认 | 说明 |
-|------|------|------|------|
-| `target` | string | 必填 | 点名，且须为 multi_pose。 |
-| `timeout_per_pose` | number | 60.0 | 单点最大耗时（秒）。 |
-| `xy_tolerance` | number | 0.04 | 位置容差（米）。 |
-| `yaw_tolerance` | number | 0.05 | 航向容差（弧度）。 |
-
-**成功：** `success`, `msg`, `target`, `total_poses`, `completed_poses`, `results`（含每点 `pose_index`, `position`, `reached`, `elapsed_time`）。
-**部分失败：** `success=false`，含 `completed_poses`、`results`，以及 `msg` 中的失败索引。
+**成功字段：** 命名点位 `success`, `msg`, `target`, `mode_switch`, `xy_tolerance`, `yaw_tolerance`；`tmp` 另含 `target_str`, `target_point`。
 
 ---
 
-#### `set_goal_by_lonlat`
+#### `set_goal_by_outdoor`
 
-经纬度 → 地图坐标 → 在目标前 `distance` 米处停车并朝向目标。
+室外 GPS 模式下发目标（按距离选择 Nav2 直达或 campus 路网规划；自动切到 `gps` 模式）。两种用法：
 
-| 参数 | 类型 | 默认 | 说明 |
-|------|------|------|------|
-| `lon` | number | 必填 | 经度。 |
-| `lat` | number | 必填 | 纬度。 |
-| `distance` | number | 1.5 | 距目标点距离（米）。 |
+1. **命名场景语义点**：经纬度**始终**从场景语义点 `target` 读取（忽略入参 `lon`/`lat`）。
+2. **临时坐标点**（`target == "tmp"`）：不查地图，直接以入参 `lon`/`lat` 为目标。
 
-**成功字段示例：** `success`, `msg`, `target_str`, `original_target`, `actual_target`, `distance`。
+| 参数 | 类型 | 必填 | 默认 | 说明 |
+|------|------|------|------|------|
+| `target` | string | 是 | — | 目标语义点名称；传 `"tmp"` 表示用 `lon`/`lat` 临时坐标。随目标记录，供 `wait_goal_reached` 判定到达。 |
+| `lon` | number | `target=="tmp"` 时必填 | — | 目标经度；仅 `target=="tmp"` 时使用。 |
+| `lat` | number | `target=="tmp"` 时必填 | — | 目标纬度；仅 `target=="tmp"` 时使用。 |
+| `tolerance` | number | 否 | **10.0** | 到达判定距离阈值（米）；下发时记录，供 `wait_goal_reached` 取回。 |
+| `direct_threshold` | number | 否 | **150.0** | 与机器人直线距离小于该值（米）时走 Nav2 直达 `/goal_pose`；否则走 campus 路网规划器。 |
+
+**成功字段：** `success`, `mode`（`gps`）, `channel`（`nav2`/`campus`）, `distance`, `mode_switch`, `target`, `goal`（`lon`/`lat`）, `tolerance`, `msg`。
+
+> **跨模式 / 换图（内部自动，无独立 RPC）**
+>
+> - **换图**：`set_goal_by_slam` 在已处于 slam 模式且目标 `submap` 与当前不一致时，由 `_ensure_submap` 先导航到传送门、到达后 `_change_map`（无 `change_map` / `get_portal_to_submap` RPC）。
+> - **跨模式**：`_ensure_nav_mode` 在当前模式下先导航到场景传送门，到达后再重启目标栈（GPS↔SLAM）。失败时不切换，返回 `mode_switch`。
+> - 客户端只需在下发目标时携带 `slam_map`/`submap`，或调用对应的 `set_goal_*`。
 
 ---
-
-#### `set_goal_by_xy`
-
-地图 `odom` 系下坐标，逻辑与 `set_goal_by_lonlat` 类似（停在目标点前 `distance` 米并朝向目标）。
-
-| 参数 | 类型 | 默认 | 说明 |
-|------|------|------|------|
-| `x` | number | 必填 | X（米）。 |
-| `y` | number | 必填 | Y（米）。 |
-| `distance` | number | 0.5 | 距目标点距离（米）。 |
-
----
-
-### 4.2 导航控制
 
 #### `pause_navigation`
 
@@ -236,41 +240,9 @@ set_goal_by_xy, set_xy_goal_tolerance, wait_goal_reached
 
 无参数。重新下发上一次的目标（`last_goal`）。返回：`success`, `msg`。
 
----
-
-### 4.3 电梯模式
-
-用于多楼层电梯场景。进入电梯模式后，FAST-LIO 会**锁定 Z 轴**位姿，避免电梯升降造成的 IMU 漂移；同时定位节点订阅 `/elevator_moving` 话题：当检测到电梯升降时，导航与 PID 精调会被暂停并保持零速，**升降过程中自动锁 XY**；升降结束（`/elevator_moving=false`）后导航会自动恢复，必要时重发 goal。
-
-电梯模式通过 ROS 服务 **`/elevator_mode`**（`std_srvs/SetBool`）控制。
-
-#### `enter_elevator`
-
-进入电梯模式：锁定 Z 轴。应在机器人**进入电梯前**调用。
-
-无参数。
-
-**成功：** `success`, `msg`。
-
-> **提示：** 通常不需要手动调用——`set_goal_by_name` 目标为 `elevator_in` 类型点时会**自动触发**。
-
----
-
-#### `exit_elevator`
-
-退出电梯模式：解锁 Z 轴，恢复正常 3D 里程计。应在机器人**出电梯后**调用。
-
-无参数。
-
-**成功：** `success`, `msg`。
-
-> 当前 `wait_goal_reached` **不会**自动调用 `exit_elevator`，请客户端在到达 `elevator_out` 类型点位后显式调用。
-
----
-
 #### `set_xy_goal_tolerance`
 
-临时修改 Nav2 `controller_server` 的 `general_goal_checker.xy_goal_tolerance` 参数。适合电梯场景需要放大到位容差时使用。
+临时修改 Nav2 `controller_server` 的 `general_goal_checker.xy_goal_tolerance` 参数。适合需要放大 Nav2 到位容差时使用（与 `set_goal_by_slam` 记录的到达判定容差相互独立）。
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
@@ -280,157 +252,34 @@ set_goal_by_xy, set_xy_goal_tolerance, wait_goal_reached
 
 ---
 
-### 4.4 地图与点位查询
+### 4.2 导航模式类
 
-#### `get_pose_list_in_current_submap`
+#### `get_nav_mode`
 
-无参数。返回当前子图**预设点名称列表**。
+无参数。返回当前导航模式。
 
-**成功：** `success`, `keys`（string 数组）, `count`。
+**成功：** `success`, `nav_mode`（`slam` 或 `gps`）。
 
----
+#### `set_nav_mode`
 
-#### `get_submap_list`
+手动切换导航模式（会停当前目标、复位定位判据）。**不会**自动走传送门衔接；跨模式切换请用 `set_goal_by_slam` / `set_goal_by_outdoor`（内部 `_ensure_nav_mode`）。
 
-无参数。返回所有子图 ID。
-
-**成功：** `success`, `submaps`, `count`。
-
----
-
-#### `get_submap_info`
-
-| 参数 | 类型 | 必填 |
-|------|------|------|
-| `submap_id` | string | 是 |
-
-**成功：** `success`, `submap_id`, `info`（结构由 `MapManager` 决定）。
-
----
-
-#### `get_pose_in_submap`
-
-| 参数 | 类型 | 必填 |
-|------|------|------|
-| `pose_name` | string | 是 |
-| `submap_id` | string | 否 |
-
-返回指定语义点的完整 `point_info`（包括 `type` 与 `pose` 等字段）。
-
-`point_info` 中 `type` 字段说明与使用建议：
-
-| type 值 | 说明 | 客户端使用方式 |
-|---------|------|----------------|
-| `single_pose` | 单一位姿点 | `set_goal_by_name` 下发目标并导航。 |
-| `multi_pose` | 多位姿点 | `set_goal_by_multipose`，服务端依次导航到各个位姿。 |
-| `LowPrecision_pose` | 低精度点位 | `set_goal_by_name` 下发；`wait_goal_reached` 会**自动放宽**到位容差（xy ≥ 0.6 m，yaw ≥ 3.14 rad）。 |
-| `elevator_call` | 电梯呼叫点 | 到达后由外部 agent 执行呼叫电梯操作。 |
-| `elevator_wait` | 电梯等待点 | 到达后等待 agent 确认电梯已到达且门已打开。 |
-| `elevator_in` | 进梯点 | `set_goal_by_name` 下发时 **自动 `enter_elevator`**（锁 Z）；`wait_goal_reached` **自动放宽**到位容差。 |
-| `elevator_out` | 出梯点 | 到达后客户端**应显式调用 `exit_elevator`**（解锁 Z）。 |
-
-客户端使用建议：先调用 `get_pose_in_submap` 检查点位 `type`，再选择合适的导航或外部协同流程。
-
----
-
-#### `get_current_map_id`
-
-无参数。根据 ROS 当前地图路径解析 **逻辑 map_id**；ROS 参数服务暂不可用时回退到 `MapManager` 缓存。
-
-**成功：** `success`, `map_id`, `map_path`, `msg`。
-**失败：** 无法读当前地图路径且无缓存。
-
----
-
-#### `change_map`
-
-切换到指定子图（含等待加载超时）。当前已定位且能确定源 `from_map_id` 时，会调用 `MapManager.get_init_pose_after_changemap` 计算目标 submap 中的初始位姿，并在切换完成后发布到 `/pose_in_target`（强制 `z=0`）。
-
-| 参数 | 类型 | 默认 | 说明 |
+| 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `map_id` | string | 必填 | 目标子图 ID。 |
-| `timeout` | number | 60.0 | 等待 ROS 端切到目标地图的超时（秒）。 |
+| `mode` | string | 是 | `slam` 或 `gps`。 |
 
-**成功时常见字段：** `success`, `map_id`, `map_path`, `from_map_id`, `msg`；当切换前已定位时还会包含 `pose_in_source` 与 `pose_in_target`。
-
-> 如果目标地图与当前 ROS 端地图相同，会直接返回 `success=true` 并同步 `MapManager` 缓存，不会重新下发 change_map 请求。
+**成功：** `success`, `nav_mode`, `msg`。
 
 ---
 
-#### `get_portal_to_submap`
+### 4.3 导航状态获取
 
-从 **当前子图** 到 **目标子图** 的传送门信息。当存在多条可直达的 portal 时，若机器人当前位姿可用，则**按 XY 距离选最近的一条**。
+#### `get_map`
 
-| 参数 | 类型 | 必填 |
-|------|------|------|
-| `target_submap` | string | 是 |
+无参数。返回 **完整栅格** `data`，体积可能很大，请谨慎调用。
 
-**成功：** `success`, `portal`, `target_submap`, `from_submap`, `portal_pose`, `portal_candidates`（所有候选 portal 名称列表）, `selected_by_nearest`（bool，是否按距离选取）, `msg`。
-**无法直达：** `success=false` 且带提示信息。
-
----
-
-### 4.5 路线（巡逻）
-
-#### `get_route_names`
-
-无参数。
-
-**成功：** `success`, `route_names`, `routes`, `count`。
-
----
-
-#### `get_default_route`
-
-无参数。返回地图配置中 `global.default_route` 字段。
-
-**成功：** `success`, `default_route`。
-**失败：** `success=false`, `msg`（未配置 `default_route`）。
-
----
-
-#### `get_route`
-
-| 参数 | 类型 | 必填 |
-|------|------|------|
-| `route_name` | string | 是 |
-
-**成功：** `success`, `name`, `description`, `waypoints`, `count`。
-`waypoints` 元素可能为字典（含 `submap`, `semantic_point` 等），与工程内路线定义一致。
-
----
-
-### 4.6 状态与到达判定
-
-#### `get_status`
-
-无参数。当前里程计位姿及定位状态。
-
-**成功：** `success`, `localized`（bool, map→base_link TF 是否稳定可用）, `position` `{x,y,z}`, `orientation` 四元数。
-
----
-
-#### `wait_goal_reached`
-
-在给定时间内轮询是否到达当前目标（与 `target` 名称关联用于返回文案）。
-
-| 参数 | 类型 | 默认 | 说明 |
-|------|------|------|------|
-| `target` | string | 必填 | 目标标识（日志/返回信息用）。 |
-| `timeout` | number | 120.0 | 秒。 |
-| `xy_tolerance` | number | 0.1 | 米。 |
-| `yaw_tolerance` | number | 0.1 | 弧度。 |
-
-**自动放宽容差：** 若 `target` 在当前子图中类型为 `elevator_in` 或 `LowPrecision_pose`，服务端会强制：
-`xy_tolerance = max(xy_tolerance, 0.6)`，`yaw_tolerance = max(yaw_tolerance, 3.14)`。
-
-**成功：** `success`, `msg`, `timestamp`。
-**超时：** `success=false`, `msg` 提示超时或未到达, `nav_failed=false`。
-**导航失败：** `success=false`, `msg` 含失败原因, `nav_failed=true`。
-
-适合与 `set_goal_by_name` 等配合；短 `timeout` 可形成轮询（见测试客户端）。
-
----
+**成功：** `success`, `info`（分辨率、宽高、原点）, `bound`, `data`（int 列表，-1 未知 / 0 空闲 / 1–100 占用）, `msg`。
+**失败：** 尚未收到 `/map` 等。
 
 #### `get_navigation_plan`
 
@@ -443,7 +292,29 @@ set_goal_by_xy, set_xy_goal_tolerance, wait_goal_reached
 **成功：** `success`, `plan`（含 `frame_id`, `stamp`, `poses`, `pose_count`）, `msg`。
 **超时：** `success=false`，提示未收到 `/plan`。
 
----
+#### `wait_goal_reached`
+
+在给定时间内轮询是否到达当前目标（与 `target` 名称关联用于返回文案）。
+
+| 参数 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `target` | string | 必填 | 目标标识（日志/返回信息用）。 |
+| `timeout` | number | 120.0 | 秒。 |
+
+**到达容差不在此传入**：SLAM 由 `set_goal_by_slam(xy_tolerance=…, yaw_tolerance=…)`、室外由 `set_goal_by_outdoor(tolerance=…)` 在**下发目标时**确定并记录，本接口取回使用。`elevator_in` / `LowPrecision_pose` 的容差放宽也已移至 `set_goal_by_slam` 下发时处理。
+
+**成功：** `success`, `msg`, `timestamp`。
+**超时：** `success=false`, `msg` 提示超时或未到达, `nav_failed=false`。
+**导航失败：** `success=false`, `msg` 含失败原因, `nav_failed=true`。
+
+适合与 `set_goal_by_slam` 等配合；短 `timeout` 可形成轮询（见测试客户端）。
+
+#### `get_status`
+
+无参数。当前位姿及按**当前导航模式**判定的定位状态。
+
+**成功：** `success`, `nav_mode`（`slam`|`gps`）, `localized`（按模式综合判定）, `map_localized`, `gps_available`, `slam_map`, `position`, `orientation`；GPS 模式下另含 `gps_fix`。
+**无位姿时：** `success=false`, `msg`, 仍含 `nav_mode`, `localized`, `map_localized`, `gps_available`。
 
 #### `get_nearest_point`
 
@@ -453,12 +324,102 @@ set_goal_by_xy, set_xy_goal_tolerance, wait_goal_reached
 
 ---
 
-#### `get_map`
+### 4.4 地图数据获取
 
-无参数。返回 **完整栅格** `data`，体积可能很大，请谨慎调用。
+#### `get_pose_list_in_current_submap`
 
-**成功：** `success`, `info`（分辨率、宽高、原点）, `bound`, `data`（int 列表，-1 未知 / 0 空闲 / 1–100 占用）, `msg`。
-**失败：** 尚未收到 `/map` 等。
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `slam_map` | string | 否 | 指定 SLAM 地图 id；默认当前。 |
+| `submap_id` | string | 否 | 指定 submap id；默认当前。 |
+
+**成功：** `success`, `keys`, `count`, `slam_map`, `submap`。
+
+#### `get_pose_in_submap`
+
+| 参数 | 类型 | 必填 |
+|------|------|------|
+| `pose_name` | string | 是 |
+| `submap_id` | string | 否 |
+| `slam_map` | string | 否 |
+
+**成功：** `success`, `pose_name`, `point_info`。
+
+`point_info` 中 `type` 字段说明与使用建议：
+
+| type 值 | 说明 | 客户端使用方式 |
+|---------|------|----------------|
+| `single_pose` | 单一位姿点 | `set_goal_by_slam` 下发目标并导航。 |
+| `multi_pose` | 多位姿点 | 当前无专用下发接口（一串按顺序经过的位姿）。 |
+| `LowPrecision_pose` | 低精度点位 | `set_goal_by_slam` 下发时会**自动放宽**到位容差（xy ≥ 0.6 m，yaw ≥ 3.14 rad）。 |
+| `elevator_call` | 电梯呼叫点 | 到达后由外部 agent 执行呼叫电梯操作。 |
+| `elevator_wait` | 电梯等待点 | 到达后等待 agent 确认电梯已到达且门已打开。 |
+| `elevator_in` | 进梯点 | `set_goal_by_slam` 下发时 **自动锁 Z**（内部处理）并**自动放宽**到位容差。 |
+| `elevator_out` | 出梯点 | 出梯后随即换图，Z 锁状态自动重置，无需解锁。 |
+| `door_open` | 开门点 | 到达后由外部 agent 执行开门动作。 |
+
+客户端使用建议：先调用 `get_pose_in_submap` 检查点位 `type`，再选择合适的导航或外部协同流程。
+
+#### `get_submap_list`
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `slam_map` | string | 否 | 指定 SLAM 地图 id；默认当前。 |
+
+**成功：** `success`, `submaps`, `count`, `slam_map`, `slam_maps`（全部 SLAM 地图 id 列表）。
+
+#### `get_submap_info`
+
+| 参数 | 类型 | 必填 |
+|------|------|------|
+| `submap_id` | string | 是 |
+| `slam_map` | string | 否 |
+
+**成功：** `success`, `submap_id`, `slam_map`, `info`。
+
+#### `get_current_map_id`
+
+无参数。根据 ROS 当前地图路径解析 **逻辑 submap id**；GPS 模式下无 SLAM 点云地图。
+
+**成功（SLAM）：** `success`, `nav_mode`（`slam`）, `map_id`, `slam_map`, `map_path`, `msg`。
+**成功（GPS）：** `success`, `nav_mode`（`gps`）, `map_id`/`slam_map` 均为 `null`, `map_path` 为空字符串, `msg` 说明无 SLAM 地图。
+**失败：** 无法读当前地图路径且无 MapManager 缓存。
+
+---
+
+### 4.5 路线数据获取
+
+#### `get_route_names`
+
+无参数。
+
+**成功：** `success`, `route_names`, `routes`（每项含 `scope`: `global`|`slam`）, `global_routes`, `slam_routes`, `count`。
+
+#### `get_default_route`
+
+无参数。返回地图配置中 `global.default_route` 字段。
+
+**成功：** `success`, `default_route`。
+**失败：** `success=false`, `msg`（未配置 `default_route`）。
+
+#### `get_route`
+
+| 参数 | 类型 | 必填 |
+|------|------|------|
+| `route_name` | string | 是 |
+
+**成功：** `success`, `scope`（`global`|`slam`）, `name`, `description`, `waypoints`, `count`。
+
+`waypoints` 采用**统一定义**，每个元素含 `name` 与 `type`，**`type` 唯一确定导航模式**：
+
+- `type == "slam"`：某 SLAM 地图 submap 内的语义点 —— `{name, type:"slam", slam_map, submap}`（室内）；
+- `type == "gps"`：场景语义点 / 经纬度点 —— `{name, type:"gps", area, lon, lat, heading_deg}`（室外）；
+- `type == "instruction"`：VLN 指令 —— `{name:null, type:"instruction", instruction}`。
+
+客户端按 `type` 顺序路由即可：`gps` → `set_goal_by_outdoor(target=name)`；
+`slam` → `set_goal_by_slam(target=name, submap=submap)`。下发目标时服务端会按需自动
+切换导航模式（`_ensure_nav_mode`/`_ensure_submap`），因此**不再返回 `nav_mode` / `segments`**，
+`get_route_plan` RPC 也已移除。
 
 ---
 
@@ -471,26 +432,27 @@ set_goal_by_xy, set_xy_goal_tolerance, wait_goal_reached
 - `MapManager` 已加载，且 **至少一个 submap 配置了 VPR 数据库**。
 - VPR 子进程独立运行于 `vpr/.venv`，启动时会阻塞至模型 ready。
 
-### 5.2 启动引导
+### 5.2 启动引导（SLAM 模式）
 
-- 若启动时**未指定 `-s/--submap`** 且 VPR 可用：抓取最新一帧 CompressedImage（最多等 10 s），调用 VPR 识别 submap，然后通过 `_change_map` 同步 ROS 端地图。
-- 识别失败时回退到 `MapManager.get_current_submap()`（即 `default_submap`）。
+- 给出 **`--ss slam_map/submap`** 时：submap 已显式指定，**跳过** VPR 启动引导，直接 `_sync_map_state` 与 ROS 对齐。
+- **室外 GPS 模式**（省略 `--ss`）：不做 submap 引导与换图。
 
 ### 5.3 运行时 watchdog
 
-服务启动后会运行 `_tf_localization_watchdog` 协程：
+服务启动后，若 VPR 可用，运行 `_tf_localization_watchdog` 协程（基于 `is_map_localized()`，即 map→base_link TF）：
 
 | 参数 | 取值 | 说明 |
 |------|------|------|
-| `check_interval_sec` | 2.0 s | 检查 `tf_ready` 频率 |
-| `grace_sec` | 10.0 s | 定位丢失超过该时长才视为真的丢失 |
-| `cooldown_sec` | 30.0 s | 两次 VPR 重定位尝试之间的最小间隔 |
+| `check_interval_sec` | 2.0 s | 检查频率 |
+| `grace_sec` | **150.0 s** | 定位丢失持续超过该时长才触发 VPR 重定位 |
+| `fail_cooldown_sec` | 30.0 s | 两次 VPR **尝试**之间的最小间隔 |
+| `success_cooldown_sec` | 60.0 s | VPR **成功**后的静默期（此期间即使仍未定位也不再触发） |
 
-当 `is_map_localized()` 持续为 `False` 超过 grace 时间，watchdog 会抓取最新相机图像 → 调 VPR → 若识别到的 submap 与当前不同则触发 `_change_map`，从而恢复定位。
+当 `is_map_localized()` 持续为 `False` 超过 `grace_sec`，watchdog 抓取相机图像 → VPR 共识 → 若 submap 变化则 `_change_map`。
 
 ### 5.4 失败行为
 
-- VPR 子进程未启动（无数据库）或不可用：跳过引导与 watchdog，沿用 `default_submap`。
+- VPR 子进程未启动（无数据库）或不可用：跳过 watchdog；SLAM 启动时若未指定 `--ss` 且 VPR 不可用，使用 MapManager 当前 submap。
 - VPR 查询失败/超时：日志告警，本次跳过；watchdog 在冷却时间后再次尝试。
 
 ---
@@ -518,10 +480,7 @@ asyncio.run(main())
 
 ### 6.2 巡检示例（按路线）
 
-下面示例展示：先获取 `route_names`，根据 `route_name` 获取 `waypoints`，然后对每个点执行巡检：
-
-- 若点位 `type` 为 `single_pose` / `LowPrecision_pose`，调用 `set_goal_by_name` 并使用 `wait_goal_reached` 等待到达；
-- 若点位 `type` 为 `multi_pose`，调用 `set_goal_by_multipose`（该方法本身会按顺序完成内部位姿导航）。
+下面示例展示：先 `get_route`，再按 waypoint 的 **`type`** 路由（`gps` → `set_goal_by_outdoor`；`slam` → `set_goal_by_slam`），并用 `wait_goal_reached` 等待到达。
 
 ```python
 import asyncio, json, websockets
@@ -533,31 +492,33 @@ async def patrol_by_route(ws_url, route_name):
     waypoints = res.get('waypoints', [])
 
     for wp in waypoints:
-      point_name = wp.get('semantic_point') or wp.get('name') or wp.get('pose')
-      if not point_name:
+      wp_type = wp.get('type', 'slam')
+      if wp_type == 'instruction':
+        print('skip instruction:', wp)
+        continue
+      if wp_type == 'gps':
+        target = wp.get('name') or 'tmp'
+        params = {"target": target}
+        if target == 'tmp':
+          params.update({"lon": wp['lon'], "lat": wp['lat']})
+        await ws.send(json.dumps({"id":2, "method":"set_goal_by_outdoor", "params": params}))
+        print('outdoor:', json.loads(await ws.recv())['result'])
+        await ws.send(json.dumps({"id":3, "method":"wait_goal_reached", "params":{"target": target, "timeout": 600}}))
+        print('reached:', json.loads(await ws.recv())['result'])
         continue
 
-      await ws.send(json.dumps({"id":2, "method":"get_pose_in_submap", "params":{"pose_name": point_name}}))
-      info = json.loads(await ws.recv())['result']
-      if not info.get('success'):
-        print('skip', point_name, info.get('msg'))
-        continue
-
-      point_info = info['point_info']
-      ptype = point_info.get('type', 'single_pose')
-
-      if ptype == 'multi_pose':
-        await ws.send(json.dumps({"id":3, "method":"set_goal_by_multipose", "params":{"target": point_name}}))
-        res = json.loads(await ws.recv())['result']
-        print('multi_pose result:', res)
-      else:
-        await ws.send(json.dumps({"id":4, "method":"set_goal_by_name", "params":{"target": point_name}}))
-        res = json.loads(await ws.recv())['result']
-        print('set_goal:', res)
-
-        await ws.send(json.dumps({"id":5, "method":"wait_goal_reached", "params":{"target": point_name}}))
-        reached = json.loads(await ws.recv())['result']
-        print('reached:', reached)
+      point_name = wp.get('name')
+      submap = wp.get('submap')
+      slam_map = wp.get('slam_map')
+      params = {"target": point_name, "xy_tolerance": 0.1, "yaw_tolerance": 0.1}
+      if submap:
+        params["submap"] = submap
+      if slam_map:
+        params["slam_map"] = slam_map
+      await ws.send(json.dumps({"id":4, "method":"set_goal_by_slam", "params": params}))
+      print('slam:', json.loads(await ws.recv())['result'])
+      await ws.send(json.dumps({"id":5, "method":"wait_goal_reached", "params":{"target": point_name}}))
+      print('reached:', json.loads(await ws.recv())['result'])
 
 asyncio.run(patrol_by_route('ws://127.0.0.1:9000/ws', '巡逻线路A'))
 ```
@@ -568,10 +529,10 @@ asyncio.run(patrol_by_route('ws://127.0.0.1:9000/ws', '巡逻线路A'))
 
 1. 在源楼层导航到 `elevator_call` 点 → agent 呼叫电梯；
 2. 导航到 `elevator_wait` 点 → agent 确认电梯到达、门已开；
-3. 导航到 `elevator_in` 点（自动 `enter_elevator`，锁定 Z；`wait_goal_reached` 自动放宽容差）；
+3. 导航到 `elevator_in` 点（自动锁定 Z；`set_goal_by_slam` 同时自动放宽容差）；
 4. 电梯运行中，FAST-LIO 通过 `/elevator_moving` 通告升降状态，导航与 PID 精调会被自动暂停并保持零速；
-5. 电梯到达目标楼层后，调用 `change_map` 切换子图（VPR watchdog 也可在丢失定位时辅助识别）；
-6. 导航到 `elevator_out` 点 → **客户端显式调用 `exit_elevator`** 解锁 Z 轴；
+5. 电梯到达目标楼层后，下发目标时携带目标 `submap`，服务端会**自动换图**（VPR watchdog 也可在丢失定位时辅助识别），换图会**自动重置 Z 锁状态**；
+6. 导航到 `elevator_out` 点（无需手动解锁 Z）；
 7. 在目标楼层继续后续巡检。
 
 ```python
@@ -597,15 +558,10 @@ async def patrol_with_elevator(ws_url, route_name):
       if not point_name:
         continue
 
-      # 需要切换楼层时，先导航到 portal
+      # 需要切换楼层时无需手动处理：下发目标点时带 submap，服务端会自动
+      # 先导航到传送门、到达后换图（_ensure_submap），再前往目标点。
       if target_submap and target_submap != current_map:
-        portal = await rpc(ws, "get_portal_to_submap", {"target_submap": target_submap})
-        if portal.get('success') and portal.get('portal'):
-          await rpc(ws, "set_goal_by_name", {"target": portal['portal']})
-          await rpc(ws, "wait_goal_reached", {"target": portal['portal']})
-        await rpc(ws, "change_map", {"map_id": target_submap})
-        cur = await rpc(ws, "get_current_map_id")
-        current_map = cur.get('map_id')
+        current_map = target_submap
 
       pinfo = await rpc(ws, "get_pose_in_submap", {"pose_name": point_name})
       if not pinfo.get('success'):
@@ -615,9 +571,9 @@ async def patrol_with_elevator(ws_url, route_name):
       ptype = pinfo['point_info'].get('type', 'single_pose')
 
       if ptype == 'multi_pose':
-        print(await rpc(ws, "set_goal_by_multipose", {"target": point_name}))
+        print('skip multi_pose (无专用下发接口):', point_name)
       else:
-        print(await rpc(ws, "set_goal_by_name", {"target": point_name}))
+        print(await rpc(ws, "set_goal_by_slam", {"target": point_name, "submap": target_submap}))
         print(await rpc(ws, "wait_goal_reached", {"target": point_name}))
 
       # 电梯协同
@@ -628,15 +584,15 @@ async def patrol_with_elevator(ws_url, route_name):
         print('等待电梯到达并开门...')
         await simulate_agent_wait('elevator_arrived', delay=6.0)
       elif ptype == 'elevator_out':
-        # 客户端必须显式退出电梯模式
-        print(await rpc(ws, "exit_elevator"))
+        # 无需手动退出电梯模式：出梯后换图会自动重置 Z 锁状态
+        print('已出梯，Z 锁将随换图自动重置')
 
 asyncio.run(patrol_with_elevator('ws://127.0.0.1:9000/ws', '跨楼层巡逻'))
 ```
 
 ### 6.4 切换楼层并继续巡检示例
 
-当巡检路线跨楼层时，客户端需要在到达目标点所在楼层前，先导航到当前楼层到目标楼层的 `portal`，然后调用 `change_map` 切换楼层，切换成功后继续导航到目标点。下面示例展示该流程：
+当巡检路线跨楼层时，客户端**无需手动导航到传送门或换图**：只需在下发目标点时携带目标 `submap`，服务端（`_ensure_submap`）会先导航到当前楼层→目标楼层的传送门、到达后换图，再前往目标点。下面示例展示该流程：
 
 ```python
 import asyncio, json, websockets
@@ -657,24 +613,10 @@ async def patrol_cross_floor(ws_url, route_name):
       if not point_name:
         continue
 
+      # 跨楼层无需手动取传送门/导航/换图：下方 set_goal_by_slam(submap=...)
+      # 会由服务端 _ensure_submap 自动完成（先导航到传送门，到达后换图）。
       if target_submap and target_submap != current_map:
-        await ws.send(json.dumps({"id":3, "method":"get_portal_to_submap", "params":{"target_submap": target_submap}}))
-        portal_resp = json.loads(await ws.recv())['result']
-        portal_name = portal_resp.get('portal')
-        portal_pose = portal_resp.get('portal_pose')
-
-        if portal_name and portal_pose:
-          await ws.send(json.dumps({"id":4, "method":"set_goal_by_name", "params":{"target": portal_name}}))
-          print('navigate to portal ->', json.loads(await ws.recv())['result'])
-          await ws.send(json.dumps({"id":5, "method":"wait_goal_reached", "params":{"target": portal_name}}))
-          print('portal reached ->', json.loads(await ws.recv())['result'])
-
-        await ws.send(json.dumps({"id":6, "method":"change_map", "params":{"map_id": target_submap}}))
-        print('change_map ->', json.loads(await ws.recv())['result'])
-
-        await ws.send(json.dumps({"id":7, "method":"get_current_map_id", "params":{}}))
-        cur = json.loads(await ws.recv())['result']
-        current_map = cur.get('map_id')
+        current_map = target_submap
 
       await ws.send(json.dumps({"id":8, "method":"get_pose_in_submap", "params":{"pose_name": point_name}}))
       pinfo = json.loads(await ws.recv())['result']
@@ -684,10 +626,9 @@ async def patrol_cross_floor(ws_url, route_name):
 
       ptype = pinfo['point_info'].get('type', 'single_pose')
       if ptype == 'multi_pose':
-        await ws.send(json.dumps({"id":9, "method":"set_goal_by_multipose", "params":{"target": point_name}}))
-        print('multi_pose ->', json.loads(await ws.recv())['result'])
+        print('skip multi_pose (无专用下发接口):', point_name)
       else:
-        await ws.send(json.dumps({"id":10, "method":"set_goal_by_name", "params":{"target": point_name}}))
+        await ws.send(json.dumps({"id":10, "method":"set_goal_by_slam", "params":{"target": point_name, "submap": target_submap}}))
         print('set_goal ->', json.loads(await ws.recv())['result'])
         await ws.send(json.dumps({"id":11, "method":"wait_goal_reached", "params":{"target": point_name}}))
         print('reached ->', json.loads(await ws.recv())['result'])
@@ -705,7 +646,7 @@ import asyncio, json, websockets
 
 async def example_pause_resume(ws_url, point_name):
   async with websockets.connect(ws_url) as ws:
-    await ws.send(json.dumps({"id":1, "method":"set_goal_by_name", "params":{"target": point_name}}))
+    await ws.send(json.dumps({"id":1, "method":"set_goal_by_slam", "params":{"target": point_name}}))
     print('set_goal:', json.loads(await ws.recv()))
 
     await asyncio.sleep(2)
@@ -721,7 +662,7 @@ async def example_pause_resume(ws_url, point_name):
 
 async def example_cancel(ws_url, point_name):
   async with websockets.connect(ws_url) as ws:
-    await ws.send(json.dumps({"id":10, "method":"set_goal_by_name", "params":{"target": point_name}}))
+    await ws.send(json.dumps({"id":10, "method":"set_goal_by_slam", "params":{"target": point_name}}))
     print('set_goal:', json.loads(await ws.recv()))
     await ws.send(json.dumps({"id":11, "method":"cancel_navigation", "params":{}}))
     print('cancel:', json.loads(await ws.recv()))
@@ -752,4 +693,4 @@ asyncio.run(example_pause_resume('ws://127.0.0.1:9000/ws', 'PointA'))
 - 方法注册：`NavigationToolManager.register_tools` 末尾的 `self._handlers` 字典
 - VPR 引导/重定位：`NaviSkill/vpr_bootstrap.py`、`NavigationToolManager._vpr_*` / `_tf_localization_watchdog`
 - 本文档随代码维护，如有新增方法请以源码 `self._handlers` 字典为准。
-- 最后更新：2026-05-14
+- 最后更新：2026-08-06
