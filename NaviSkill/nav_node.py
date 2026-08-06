@@ -292,6 +292,9 @@ class NavNode(Node):
             self._gps_lock = threading.Lock()
             self._latest_gps_fix: Optional[Dict[str, Any]] = None
             self._latest_gps_odom: Optional[Tuple[float, float, float]] = None  # (x, y, mono)
+            # 切到 GPS 模式后复位；仅新室外栈的 navsat_transform 发布 /odometry/gps
+            # 才会置回 True，作为“新室外栈已就绪”的判据（见 update_robot_pose 门控）。
+            self._gps_odom_received = False
             self.gps_fix_sub = self.create_subscription(
                 NavSatFix,
                 gps_fix_topic,
@@ -878,8 +881,14 @@ class NavNode(Node):
                 # （map_odom_from_gps 的 publish_identity_until_gps），此时 TF 链
                 # 虽连通但 GPS 尚未真正定位。额外要求 GNSS fix 可用，避免在 GPS
                 # 收敛前就误报“定位成功”。SLAM 模式不受影响。
+                #
+                # 另：SLAM→GPS 切换时，旧 SLAM 栈残留/异步续发的 map→odom 会让 TF 链
+                # 立刻连通，而 GNSS fix 由传感器持续发布（仿真里恒为可用），二者都不足以
+                # 区分新旧栈，会在新室外栈启动完成前误报就绪、把目标发给未就绪的栈而丢失。
+                # 故额外要求新栈的 navsat_transform 重新发布过 /odometry/gps
+                # （_gps_odom_received，切换时已复位，仅室外栈发布该话题）。
                 if (self.nav_mode == self.NAV_MODE_GPS
-                        and not self.is_gps_available()):
+                        and not (self.is_gps_available() and self._gps_odom_received)):
                     return
                 # SLAM 模式：切换后 map_received 被复位，只有新 SLAM 栈重新发布 /map
                 # 才会置回 True。以此确保“定位就绪”对应的是新栈（而非旧栈残留 TF），
@@ -974,6 +983,13 @@ class NavNode(Node):
             if mode == self.NAV_MODE_SLAM:
                 self.map_received = False
                 self.current_map = None
+            # 切到 GPS：与 SLAM 对称。仅靠 TF 无法区分“旧 SLAM 栈残留的 map→odom”
+            # 和“新室外栈 map_odom_from_gps 的 map→odom”，故额外要求新栈的
+            # navsat_transform 重新发布过 /odometry/gps（仅室外栈发布）才认定就绪：
+            # 复位 _gps_odom_received，令其只能被新栈的 /odometry/gps 置回 True。
+            if mode == self.NAV_MODE_GPS:
+                self._gps_odom_received = False
+                self._latest_gps_odom = None
             self._publish_nav_mode()
             self.get_logger().info(f"✓ 导航模式已切换: {old} → {mode}")
         return True, f"已切换到 {mode} 模式"
@@ -1035,6 +1051,8 @@ class NavNode(Node):
             float(msg.pose.pose.position.y),
             time.monotonic(),
         )
+        # 该话题只有室外栈的 navsat_transform 发布：收到即说明新室外栈已起来。
+        self._gps_odom_received = True
 
     def get_latest_gps_fix(self) -> Optional[Dict[str, Any]]:
         """返回最新一帧 NavSatFix 的字段字典，或 None（还未收到）。"""
@@ -1061,8 +1079,15 @@ class NavNode(Node):
         与 SLAM 的 ``is_map_localized`` 对应——室外由 navsat_transform +
         map_odom_from_gps 融合出 map→odom→base_link，故仍以 ``current_pose``
         判断底盘位姿是否可用，再叠加 GNSS fix 健康度。
+
+        另外要求 ``_gps_odom_received``：SLAM→GPS 切换时该标志被复位，只有新室外栈的
+        navsat_transform 重新发布 /odometry/gps 才会置回。否则 ``current_pose`` 会被旧
+        SLAM 栈残留的 map→odom 立刻填上、GNSS fix 又由传感器持续发布，二者都无法区分
+        新旧栈，导致 ``_wait_localized`` 在新室外栈就绪前就误判“已定位”而提前下发目标。
         """
-        return bool(self.is_gps_available() and self.current_pose is not None)
+        return bool(self.is_gps_available()
+                    and self._gps_odom_received
+                    and self.current_pose is not None)
 
     def is_localized(self) -> bool:
         """按当前导航模式返回定位是否就绪（SLAM 看点云 TF，GPS 看 GNSS fix）。"""
@@ -1121,8 +1146,8 @@ class NavNode(Node):
 
     def set_outdoor_goal(self, lon: float, lat: float,
                          target: Optional[str] = None,
-                         tolerance: float = 3.0,
-                         direct_threshold_m: float = 30.0) -> Dict[str, Any]:
+                         tolerance: float = 10.0,
+                         direct_threshold_m: float = 150.0) -> Dict[str, Any]:
         """室外目标自适应下发：按与机器人当前位置的直线距离选择下发通道。
 
         - 距离 < ``direct_threshold_m``（默认 30m）：作为**点到点 Nav2 目标**直接
