@@ -12,6 +12,7 @@ from nav2_msgs.srv import ClearEntireCostmap
 from rcl_interfaces.msg import SetParametersResult
 from rclpy.action import ActionClient
 from rclpy.duration import Duration
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.time import Time
 from std_msgs.msg import String
@@ -2347,13 +2348,40 @@ class RoutePlanner(Node):
 
 
 def main():
+    """Spin multi-threaded so TF delivery is not blocked by our own callbacks.
+
+    tf2_ros fills a node's TF buffer from that node's own /tf and /tf_static
+    subscription callbacks, and `Buffer.lookup_transform(..., timeout=T)` waits by
+    busy-looping inside the calling callback:
+
+        while now < start + timeout and not can_transform_core(...):
+            sleep(0.02)          # tf2_ros/buffer.py, see geometry2#327
+
+    On a single-threaded executor that loop holds the only thread, so /tf_static
+    can never be delivered while it waits — if the buffer was not already warm the
+    wait is doomed, and the caller then treats a live transform as missing. That is
+    how a campus goal arriving early after an outdoor-stack restart got dropped:
+    _on_campus_goal -> _current_robot_lonlat -> lookup_transform(campus_map,
+    base_link, timeout=0.5) failed with "base_link does not exist" even though the
+    static transform had been published continuously for 13 s.
+
+    Two threads are enough, and the split is safe without touching any callback:
+    TransformListener puts /tf and /tf_static in its own ReentrantCallbackGroup,
+    while every callback in this node uses the default MutuallyExclusive group. So
+    TF delivery runs concurrently with our logic, but _on_campus_goal,
+    _nav_batch_tick, the parameter callback and the timers stay mutually exclusive
+    exactly as before — no new races on the _nav_* state.
+    """
     rclpy.init()
     node = RoutePlanner()
+    executor = MultiThreadedExecutor(num_threads=2)
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     finally:
+        executor.remove_node(node)
         node.destroy_node()
         rclpy.shutdown()
 
