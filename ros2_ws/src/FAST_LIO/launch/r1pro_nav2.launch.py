@@ -7,6 +7,15 @@ from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 
+
+def _default_r1pro_params(param_dir: str) -> str:
+    """Pick Nav2 params by ROS distro: Jazzy -> param_r1pro.yaml, else Humble file."""
+    distro = os.environ.get('ROS_DISTRO', 'humble').lower()
+    if distro == 'jazzy':
+        return os.path.join(param_dir, 'param_r1pro.yaml')
+    return os.path.join(param_dir, 'param_r1pro_humble.yaml')
+
+
 def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time', default='false')
 
@@ -23,8 +32,8 @@ def generate_launch_description():
     #param_top_akm_dl.yaml/param_four_wheel_diff_dl.yaml/param_four_wheel_diff_bs.yaml
 
     param_dir = os.path.join(wheeltec_nav_dir, 'config')
-    param_file = LaunchConfiguration('params', default=os.path.join(
-        param_dir, 'param_r1pro.yaml'))
+    default_params = _default_r1pro_params(param_dir)
+    params = LaunchConfiguration('params')
 
     # Prepare parameter rewrites for BT XML files so paths are not hardcoded in YAML
     slope_pkg_dir = get_package_share_directory('slope_behavior')
@@ -40,7 +49,7 @@ def generate_launch_description():
     }
 
     rewritten_params = RewrittenYaml(
-        source_file=param_file,
+        source_file=params,
         root_key='',
         param_rewrites=param_rewrites,
         convert_types=True)
@@ -65,8 +74,9 @@ def generate_launch_description():
 
         DeclareLaunchArgument(
             'params',
-            default_value=param_file,
-            description='Full path to param file to load'),
+            default_value=default_params,
+            description='Nav2 param file (default: param_r1pro.yaml on Jazzy, '
+                        'param_r1pro_humble.yaml otherwise, from $ROS_DISTRO)'),
         #Node(
         #    name='waypoint_cycle',
         #    package='nav2_waypoint_cycle',

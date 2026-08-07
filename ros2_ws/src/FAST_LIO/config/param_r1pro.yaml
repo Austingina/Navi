@@ -1,3 +1,4 @@
+# param_r1pro.yaml — ROS 2 Jazzy 专用（8a9f93c）。Humble 请用 param_r1pro_humble.yaml。
 bt_navigator:
   ros__parameters:
     transform_tolerance: 0.1 #变换容差
