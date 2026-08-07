@@ -316,9 +316,6 @@ class NavNode(Node):
             self.campus_frame = campus_frame
             self.campus_goal_pub = self.create_publisher(
                 PoseStamped, campus_goal_topic, 10)
-            # 近距离室外目标：点到点 Nav2 直达（发布 PoseStamped 到 /goal_pose，
-            # 等价于 RViz “Nav2 Goal” 工具），绕过 campus 路网规划器。
-            self.nav2_goal_pub = self.create_publisher(PoseStamped, 'goal_pose', 10)
             # 经纬度 ↔ campus_map 平面（等距圆柱投影，与 route_graph.ENU 完全一致）
             self.gps_datum_lat = float(gps_datum_lat)
             self.gps_datum_lon = float(gps_datum_lon)
@@ -1150,27 +1147,19 @@ class NavNode(Node):
 
     def set_outdoor_goal(self, lon: float, lat: float,
                          target: Optional[str] = None,
-                         tolerance: float = 10.0,
-                         direct_threshold_m: float = 150.0) -> Dict[str, Any]:
-        """室外目标自适应下发：按与机器人当前位置的直线距离选择下发通道。
+                         tolerance: float = 1.0) -> Dict[str, Any]:
+        """室外目标经 campus_nav 路网规划器下发（``campus_goal_pose``）。
 
-        - 距离 < ``direct_threshold_m``（默认 30m）：作为**点到点 Nav2 目标**直接
-          发布 ``geometry_msgs/PoseStamped`` 到 ``/goal_pose``（map 系，朝向指向目标），
-          等价于 RViz “Nav2 Goal”，绕过路网规划；
-        - 否则（或当前未定位 / 无法估计距离时）：走 **campus_nav 路网规划器**
-          （``campus_goal_pose``；经纬度经 ENU datum 换算成 campus_map 平面点后
-          调 ``set_outdoor_goal_by_xy`` 下发）。
+        规划器会根据距离自动选择路网分段或 Nav2 直达，无需在此按距离分支。
+        经纬度经 ENU datum 换算成 campus_map 平面点后调用 ``set_outdoor_goal_by_xy``。
 
-        两种通道都会记录 ``_outdoor_goal`` / ``target`` / ``tolerance``，使
-        ``wait_goal_reached`` 在 GPS 模式下统一按几何距离判定到达。
+        记录 ``_outdoor_goal`` / ``target`` / ``tolerance``，供 ``wait_goal_reached`` 判定到达。
 
-        :return: {ok, channel: 'nav2'|'campus', distance, threshold, target, tolerance}
+        :return: {ok, channel: 'campus', distance, target, tolerance}
         """
         east, north = self._lonlat_to_campus_xy(lon, lat)
 
-        # 估算目标到机器人的直线距离（统一到 map 系）
         dist = None
-        goal_xy_map = None
         if self.current_pose is not None:
             mapped = self._transform_xy(east, north, self.campus_frame, "map")
             if mapped is not None:
@@ -1178,42 +1167,15 @@ class NavNode(Node):
                 rx = self.current_pose.pose.position.x
                 ry = self.current_pose.pose.position.y
                 dist = math.hypot(gx - rx, gy - ry)
-                goal_xy_map = (gx, gy, rx, ry)
 
-        # 近距离：点到点 Nav2 直达（/goal_pose，map 系，朝向指向目标）
-        if dist is not None and dist < direct_threshold_m:
-            gx, gy, rx, ry = goal_xy_map
-            yaw = math.atan2(gy - ry, gx - rx)
-            pose = PoseStamped()
-            pose.header.stamp = self.get_clock().now().to_msg()
-            pose.header.frame_id = "map"
-            pose.pose.position.x = float(gx)
-            pose.pose.position.y = float(gy)
-            pose.pose.orientation.z = math.sin(yaw / 2.0)
-            pose.pose.orientation.w = math.cos(yaw / 2.0)
-            # 记录目标供 wait_goal_reached 的几何到达判定复用
-            self._outdoor_goal = pose
-            self._outdoor_goal_name = target
-            self._outdoor_goal_tol = float(tolerance)
-            self._outdoor_nav_active = True
-            self.nav2_goal_pub.publish(pose)
-            self.get_logger().info(
-                f"室外近距目标({dist:.1f}m<{direct_threshold_m:.0f}m)→Nav2 /goal_pose: "
-                f"map=({gx:.2f},{gy:.2f}) target={target} tol={tolerance}")
-            return {"ok": True, "channel": "nav2", "distance": dist,
-                    "threshold": direct_threshold_m, "target": target,
-                    "tolerance": float(tolerance)}
-
-        # 远距离 / 无法估距：campus 路网规划器（经纬度→campus_map 平面点）
         self._outdoor_goal_name = target
         self._outdoor_goal_tol = float(tolerance)
         ok = self.set_outdoor_goal_by_xy(east, north, frame=self.campus_frame)
+        dist_str = "未知" if dist is None else f"{dist:.1f}m"
         self.get_logger().info(
-            f"室外远距目标(dist={'未知' if dist is None else f'{dist:.1f}m'}"
-            f">={direct_threshold_m:.0f}m)→campus 路网规划器 target={target}")
+            f"室外目标→campus 路网规划器 target={target} dist={dist_str} tol={tolerance}")
         return {"ok": bool(ok), "channel": "campus", "distance": dist,
-                "threshold": direct_threshold_m, "target": target,
-                "tolerance": float(tolerance)}
+                "target": target, "tolerance": float(tolerance)}
 
     def cancel_outdoor_goal(self) -> None:
         """清除本地室外目标与运行标志，并发零速停车（尽力而为）。"""

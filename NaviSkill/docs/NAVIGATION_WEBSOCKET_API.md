@@ -204,7 +204,7 @@ SLAM 模式下发目标（自动确保处于 `slam` 模式）。两种用法：
 
 #### `set_goal_by_outdoor`
 
-室外 GPS 模式下发目标（按距离选择 Nav2 直达或 campus 路网规划；自动切到 `gps` 模式）。两种用法：
+室外 GPS 模式下发目标（统一经 campus 路网规划器 `campus_goal_pose`；自动切到 `gps` 模式）。两种用法：
 
 1. **命名场景语义点**：经纬度**始终**从场景语义点 `target` 读取（忽略入参 `lon`/`lat`）。
 2. **临时坐标点**（`target == "tmp"`）：不查地图，直接以入参 `lon`/`lat` 为目标。
@@ -215,9 +215,8 @@ SLAM 模式下发目标（自动确保处于 `slam` 模式）。两种用法：
 | `lon` | number | `target=="tmp"` 时必填 | — | 目标经度；仅 `target=="tmp"` 时使用。 |
 | `lat` | number | `target=="tmp"` 时必填 | — | 目标纬度；仅 `target=="tmp"` 时使用。 |
 | `tolerance` | number | 否 | **10.0** | 到达判定距离阈值（米）；下发时记录，供 `wait_goal_reached` 取回。 |
-| `direct_threshold` | number | 否 | **150.0** | 与机器人直线距离小于该值（米）时走 Nav2 直达 `/goal_pose`；否则走 campus 路网规划器。 |
 
-**成功字段：** `success`, `mode`（`gps`）, `channel`（`nav2`/`campus`）, `distance`, `mode_switch`, `target`, `goal`（`lon`/`lat`）, `tolerance`, `msg`。
+**成功字段：** `success`, `mode`（`gps`）, `channel`（恒为 `campus`）, `distance`, `mode_switch`, `target`, `goal`（`lon`/`lat`）, `tolerance`, `msg`。
 
 > **跨模式 / 换图（内部自动，无独立 RPC）**
 >

@@ -866,7 +866,7 @@ class NavigationToolManager:
         # ── 2) 到达传送门后重启目标模式导航栈 ──
         # 传送门“到达”是几何判定（进入 tol 半径即返回），机器人此刻可能仍在移动。
         # 拆栈前必须先停车，否则切换期间会溜车：cancel_navigation 只能取消本节点持有
-        # handle 的目标，而室外近距目标是发到 /goal_pose 的（nav_node 无其 handle），
+        # handle 的目标；campus_nav 近距也可能直发 /goal_pose，nav_node 无其 handle，
         # 故还需 cancel_all_nav_goals 走 action 底层 CancelGoal 服务取消全部目标——
         # Nav2 取消目标时 controller 会主动发零速停车，无需自行持续刷零速。
         self.ros_node.cancel_navigation()
@@ -1072,18 +1072,12 @@ class NavigationToolManager:
                 return {"success": False, "msg": f"设置目标失败: {str(e)}"}
 
         def set_goal_by_outdoor(target: str, lon: float = None, lat: float = None,
-                                tolerance: float = 10.0,
-                                direct_threshold: float = 150.0) -> Dict[str, Any]:
+                                tolerance: float = 0.8) -> Dict[str, Any]:
             """
-            按语义点下发室外 GPS 导航目标（按距离自适应选择下发通道）。
+            按语义点下发室外 GPS 导航目标（统一经 campus_nav 路网规划器 ``campus_goal_pose``）。
 
             仅支持室外 GPS 模式，调用时自动切到 gps 模式（不再支持 SLAM 换算）。
-
-            下发通道（见 ``NavNode.set_outdoor_goal``）：
-            - 目标与机器人当前位置的直线距离 < ``direct_threshold``（默认 30m）：作为
-              **点到点 Nav2 目标**直接发布 ``PoseStamped`` 到 ``/goal_pose``（等价 RViz
-              “Nav2 Goal”），绕过路网规划；
-            - 否则（或当前未定位、无法估距）：走 **campus_nav 路网规划器**（``campus_goal_pose``）。
+            campus_nav 会根据距离自动选择路网规划或 Nav2 直达，无需 ``direct_threshold``。
 
             两种用法：
             - **命名场景语义点**（``target`` 为具体点名）：经纬度**始终**从 MapManager 的
@@ -1097,11 +1091,11 @@ class NavigationToolManager:
                     （GPS 无 Nav2 到达回调，按几何距离阈值判定）。
             lon: 目标点经度；仅 ``target == "tmp"`` 时使用且必填。
             lat: 目标点纬度；仅 ``target == "tmp"`` 时使用且必填。
-            tolerance: 到达判定距离阈值（米），默认 3.0；随目标记录并供 `wait_goal_reached` 使用。
-            direct_threshold: 直线距离阈值（米），默认 30.0；小于该值走 Nav2 直达，否则走路网规划。
+            tolerance: 到达判定距离阈值（米），默认 0.8（与路网规划器终点精确逼近的容差
+                       同量级）；随目标记录并供 `wait_goal_reached` 使用。
 
             返回:
-            Dict: 操作结果（含 ``channel``: 'nav2'|'campus' 与估算 ``distance``）
+            Dict: 操作结果（含 ``channel``: 'campus' 与估算 ``distance``）
             """
             try:
                 if not target:
@@ -1128,13 +1122,11 @@ class NavigationToolManager:
                             "msg": mode_switch.get("msg", "切换到室外 GPS 模式失败"),
                             "mode_switch": mode_switch}
                 res = self.ros_node.set_outdoor_goal(
-                    float(lon), float(lat), target=target, tolerance=float(tolerance),
-                    direct_threshold_m=float(direct_threshold))
+                    float(lon), float(lat), target=target, tolerance=float(tolerance))
                 ok = res.get("ok")
                 channel = res.get("channel")
                 dist = res.get("distance")
                 dist_str = "未知" if dist is None else f"{dist:.1f}m"
-                chan_str = "Nav2直达(/goal_pose)" if channel == "nav2" else "路网规划器(campus_goal_pose)"
                 return {
                     "success": bool(ok),
                     "mode": "gps",
@@ -1144,7 +1136,8 @@ class NavigationToolManager:
                     "target": target,
                     "goal": {"lon": lon, "lat": lat},
                     "tolerance": tolerance,
-                    "msg": (f"已下发室外目标 target={target} ({lon},{lat})，距离={dist_str}，通道={chan_str}"
+                    "msg": (f"已下发室外目标 target={target} ({lon},{lat})，距离={dist_str}，"
+                            f"通道=路网规划器(campus_goal_pose)"
                             if ok else "室外目标下发失败"),
                 }
             except Exception as e:
