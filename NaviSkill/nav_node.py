@@ -886,10 +886,13 @@ class NavNode(Node):
                 # 另：SLAM→GPS 切换时，旧 SLAM 栈残留/异步续发的 map→odom 会让 TF 链
                 # 立刻连通，而 GNSS fix 由传感器持续发布（仿真里恒为可用），二者都不足以
                 # 区分新旧栈，会在新室外栈启动完成前误报就绪、把目标发给未就绪的栈而丢失。
-                # 故额外要求新栈的 navsat_transform 重新发布过 /odometry/gps
-                # （_gps_odom_received，切换时已复位，仅室外栈发布该话题）。
+                # 故额外要求 campus_planner_ready()：新栈的 route_planner 已订阅
+                # /campus_goal_pose。这里原先用 _gps_odom_received（/odometry/gps 收到过），
+                # 但那条话题要等航向锁定才发布，会让切换流程站着等到超时——详见
+                # campus_planner_ready 的说明。
                 if (self.nav_mode == self.NAV_MODE_GPS
-                        and not (self.is_gps_available() and self._gps_odom_received)):
+                        and not (self.is_gps_available()
+                                 and self.campus_planner_ready())):
                     return
                 # SLAM 模式：切换后 map_received 被复位，只有新 SLAM 栈重新发布 /map
                 # 才会置回 True。以此确保“定位就绪”对应的是新栈（而非旧栈残留 TF），
@@ -984,10 +987,10 @@ class NavNode(Node):
             if mode == self.NAV_MODE_SLAM:
                 self.map_received = False
                 self.current_map = None
-            # 切到 GPS：与 SLAM 对称。仅靠 TF 无法区分“旧 SLAM 栈残留的 map→odom”
-            # 和“新室外栈 map_odom_from_gps 的 map→odom”，故额外要求新栈的
-            # navsat_transform 重新发布过 /odometry/gps（仅室外栈发布）才认定就绪：
-            # 复位 _gps_odom_received，令其只能被新栈的 /odometry/gps 置回 True。
+            # 切到 GPS：新旧栈的区分现在由 campus_planner_ready()（/campus_goal_pose 有
+            # 订阅者）承担，见其说明。这里仍复位 _gps_odom_received / _latest_gps_odom，
+            # 但只作为排查信息（navsat 是否已在发 /odometry/gps，即航向是否已锁定），
+            # 不再参与就绪判定。
             if mode == self.NAV_MODE_GPS:
                 self._gps_odom_received = False
                 self._latest_gps_odom = None
@@ -1074,6 +1077,25 @@ class NavNode(Node):
             return False
         return (time.monotonic() - fix["mono"]) <= max_age
 
+    def campus_planner_ready(self) -> bool:
+        """新室外栈的 campus 路网规划器是否已经能接目标。
+
+        判据是 ``/campus_goal_pose`` 有订阅者。这一个信号同时承担三件事：
+
+        1. **区分新旧栈**——只有 campus_nav 的 route_planner 订阅这个话题，而它只存在于
+           室外栈；``start_outdoor.sh`` 又会先 ``tmux kill-session -t outdoor``，所以订阅者
+           出现只能是新栈。这替代了原来用 ``_gps_odom_received`` 做的同一件事。
+        2. **不依赖航向锁定**——原判据要等 ``/odometry/gps``，而那条话题要等
+           gps_heading_align 锁定航向（需走够 3 m）才由 navsat 发布。切换流程里
+           ``wait_until_stopped()`` 刚把车停住、之后没有任何东西驱动它，于是站着等锁定，
+           直到 ``localize_timeout`` 超时。改用本判据后「边走边锁」才成立：目标先下发
+           （``require_heading_lock`` 已为 false），机器人走起来自己把 baseline 攒上。
+        3. **目标不会被静默丢弃**——``/campus_goal_pose`` 两端都是 VOLATILE 无 latch 队列，
+           而 route_planner 要到室外栈启动后约 9 s 才建立订阅（TimerAction 7 s + 加载 6 万
+           节点 OSM 图）。在那之前 publish 的目标会被永久丢掉且两端都不报错。
+        """
+        return self.campus_goal_pub.get_subscription_count() > 0
+
     def is_gps_localized(self) -> bool:
         """室外 GPS 定位是否就绪：GNSS fix 新鲜可用，且 map→base_link 位姿已建立。
 
@@ -1081,13 +1103,13 @@ class NavNode(Node):
         map_odom_from_gps 融合出 map→odom→base_link，故仍以 ``current_pose``
         判断底盘位姿是否可用，再叠加 GNSS fix 健康度。
 
-        另外要求 ``_gps_odom_received``：SLAM→GPS 切换时该标志被复位，只有新室外栈的
-        navsat_transform 重新发布 /odometry/gps 才会置回。否则 ``current_pose`` 会被旧
-        SLAM 栈残留的 map→odom 立刻填上、GNSS fix 又由传感器持续发布，二者都无法区分
-        新旧栈，导致 ``_wait_localized`` 在新室外栈就绪前就误判“已定位”而提前下发目标。
+        新旧栈的区分交给 ``campus_planner_ready()``：``current_pose`` 会被旧 SLAM 栈残留的
+        map→odom 立刻填上、GNSS fix 又由传感器持续发布，两者都分不清新旧栈。这里原先用
+        ``_gps_odom_received``，但它要等航向锁定（见 ``campus_planner_ready`` 的说明），会让
+        ``_wait_localized`` 站着等到超时。
         """
         return bool(self.is_gps_available()
-                    and self._gps_odom_received
+                    and self.campus_planner_ready()
                     and self.current_pose is not None)
 
     def is_localized(self) -> bool:
@@ -1109,12 +1131,34 @@ class NavNode(Node):
         lon = self.gps_datum_lon + math.degrees(east / (self._EARTH_R * self._gps_datum_cos0))
         return lon, lat
 
-    def send_campus_goal(self, pose: PoseStamped) -> bool:
+    def send_campus_goal(self, pose: PoseStamped,
+                         wait_planner_s: float = 30.0) -> bool:
         """把一个 campus_frame 下的 PoseStamped 目标发给路网规划器（campus_goal_pose）。
 
         规划器会把该点吸附到最近道路、A* 出道路级路线并分批下发 Nav2。仅记录目标
         与运行标志；实际道路规划/驱动 Nav2 由 campus_route_planner 完成。
+
+        发布前先确认 route_planner 已订阅：话题两端都是 VOLATILE 无 latch 队列，而
+        route_planner 要到室外栈启动后约 9 s 才建立订阅（TimerAction 7 s + 加载 6 万节点
+        OSM 图）。在那之前 publish 的目标会被**永久丢弃且两端都不报错**，表现为「路径发
+        不过去」。这里等到订阅出现再发，超时则明确失败而不是往虚空里扔。
         """
+        if not self.campus_planner_ready():
+            deadline = time.time() + wait_planner_s
+            self.get_logger().info(
+                f'campus 路网规划器尚未订阅 {self.campus_goal_pub.topic_name}，'
+                f'等待其就绪（最多 {wait_planner_s:.0f}s）…')
+            while time.time() < deadline and not self.campus_planner_ready():
+                time.sleep(0.2)
+            if not self.campus_planner_ready():
+                self.get_logger().error(
+                    f'等待 {wait_planner_s:.0f}s 后 {self.campus_goal_pub.topic_name} '
+                    f'仍无订阅者，放弃下发（若此刻 publish 会被静默丢弃）。'
+                    f'请确认室外栈的 campus_route_planner 已启动。')
+                return False
+            self.get_logger().info(
+                f'campus 路网规划器已就绪（等待 '
+                f'{wait_planner_s - (deadline - time.time()):.1f}s）')
         try:
             self.campus_goal_pub.publish(pose)
             self._outdoor_goal = pose
