@@ -66,6 +66,27 @@ def generate_launch_description():
         output='screen',
     )
 
+    # 刹停守卫。整条速度链（controller -> velocity_smoother -> collision_monitor
+    # -> /cmd_vel）在栈被拆掉时会一起死，没人补发零速，底盘会保持最后一条速度指令。
+    # 室内→室外切换正是这条路径：start_outdoor.sh 会 tmux kill-session -t slam，
+    # 把这一整套连 cmd_vel_bridge 一起 SIGHUP 掉。该节点平时完全沉默（绝不和
+    # collision_monitor 抢 /cmd_vel），收到 SIGINT/SIGTERM/SIGHUP 后连发 1.5s 零速。
+    safety_stop_node = Node(
+        package='fast_lio',
+        executable='safety_stop.py',
+        name='safety_stop',
+        output='screen',
+        parameters=[{
+            'use_sim_time': use_sim_time,
+            'cmd_vel_topic': '/cmd_vel',
+            # 室内这条链有 cmd_vel_bridge 把 /cmd_vel 转成 TwistStamped 发给底盘，
+            # 但桥自己也会被一起杀掉，所以两个话题都补零速。
+            'chassis_topic': '/motion_target/target_speed_chassis',
+            'stop_duration_s': 1.5,
+            'stop_rate_hz': 20.0,
+        }],
+    )
+
     return LaunchDescription([
         DeclareLaunchArgument(
             'map',
@@ -83,6 +104,7 @@ def generate_launch_description():
         #    executable='nav2_waypoint_cycle',
         #),
         cmd_vel_bridge_node,
+        safety_stop_node,
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 [wheeltec_nav_launchr, '/bringup_launch.py']),

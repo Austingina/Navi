@@ -1616,6 +1616,73 @@ class NavNode(Node):
             self.get_logger().error(f'取消全部导航目标失败: {e}')
             return False
 
+    def wait_until_stopped(self, timeout: float = 4.0,
+                           linear_tol: float = 0.05,
+                           angular_tol: float = 0.05,
+                           settle: float = 0.3,
+                           poll: float = 0.05) -> Dict[str, Any]:
+        """等底盘**真的**停下，而不是假设「取消目标 = 已停车」。
+
+        取消目标只让 Nav2 开始减速：零速要经
+        ``controller -> /cmd_vel_nav -> velocity_smoother -> /cmd_vel_smoothed
+        -> collision_monitor -> /cmd_vel``
+        三跳才到底盘，且 velocity_smoother 按 ``max_decel``（-2.5 m/s²）**渐变**下来，
+        0.8 m/s 要 ~0.3s 才归零。谁在这中间拆栈，最后一条 /cmd_vel 就是非零值，
+        底盘会保持它继续溜车。
+
+        所以这里直接盯 ``/motion_control/chassis_speed`` 的真实反馈。
+
+        :param settle: 达标后再确认这么久，避免刚好采到减速过零的瞬间。
+        :return: {stopped: True|False|None, waited: 秒, speed: 最后测得线速度}
+                 ``stopped=None`` 表示没有底盘反馈可判（仿真/驱动未起），
+                 此时退化为固定延时。
+        """
+        t0 = time.time()
+
+        def _speed():
+            cs = self.chassis_speed
+            if cs is None:
+                return None
+            return (math.hypot(cs.linear.x, cs.linear.y), abs(cs.angular.z))
+
+        if _speed() is None:
+            # 没有反馈就无法确认，只能给足够时间让减速走完（velocity_smoother 的
+            # velocity_timeout 是 1.0s，加上减速斜坡）。
+            time.sleep(min(timeout, 1.5))
+            self.get_logger().warning(
+                '无底盘速度反馈(/motion_control/chassis_speed)，无法确认已停车，'
+                f'按固定 {min(timeout, 1.5):.1f}s 延时处理')
+            return {'stopped': None, 'waited': time.time() - t0, 'speed': None}
+
+        ok_since = None
+        last = None
+        while time.time() - t0 < timeout:
+            sp = _speed()
+            if sp is None:
+                break
+            last = sp[0]
+            if sp[0] <= linear_tol and sp[1] <= angular_tol:
+                if ok_since is None:
+                    ok_since = time.time()
+                elif time.time() - ok_since >= settle:
+                    waited = time.time() - t0
+                    self.get_logger().info(
+                        f'底盘已停车（线速度 {sp[0]:.3f} m/s，'
+                        f'角速度 {sp[1]:.3f} rad/s），耗时 {waited:.2f}s')
+                    return {'stopped': True, 'waited': waited, 'speed': sp[0]}
+            else:
+                ok_since = None
+            time.sleep(poll)
+
+        # 超时：Nav2 没把车停下来，自己补发零速（此时目标已取消，不会和谁抢）。
+        self.cmd_vel_pub.publish(Twist())
+        self.cmd_vel_sent = None
+        waited = time.time() - t0
+        self.get_logger().warning(
+            f'等待停车超时（{timeout:.1f}s，最后线速度 '
+            f'{"未知" if last is None else f"{last:.3f} m/s"}），已直接下发零速')
+        return {'stopped': False, 'waited': waited, 'speed': last}
+
     def quaternion_to_euler(self, x, y, z, w):
         """
         将四元数转换为欧拉角

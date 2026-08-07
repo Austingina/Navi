@@ -867,10 +867,17 @@ class NavigationToolManager:
         # 传送门“到达”是几何判定（进入 tol 半径即返回），机器人此刻可能仍在移动。
         # 拆栈前必须先停车，否则切换期间会溜车：cancel_navigation 只能取消本节点持有
         # handle 的目标；campus_nav 近距也可能直发 /goal_pose，nav_node 无其 handle，
-        # 故还需 cancel_all_nav_goals 走 action 底层 CancelGoal 服务取消全部目标——
-        # Nav2 取消目标时 controller 会主动发零速停车，无需自行持续刷零速。
+        # 故还需 cancel_all_nav_goals 走 action 底层 CancelGoal 服务取消全部目标。
         self.ros_node.cancel_navigation()
         self.ros_node.cancel_all_nav_goals()
+        # 取消只是让 Nav2 **开始**减速：零速要经 controller -> velocity_smoother
+        # -> collision_monitor 三跳才到底盘，且 velocity_smoother 按 max_decel 渐变。
+        # 而下面 _launch_*_stack 会 tmux kill-session 掉当前栈，谁在减速途中拆栈，
+        # 最后一条 /cmd_vel 就是非零值，底盘保持它继续溜车。所以这里盯底盘反馈，
+        # 确认真的停了再拆。
+        stop = self.ros_node.wait_until_stopped()
+        if stop.get('stopped') is False:
+            logging.warning("切换模式前未能确认停车: %s", stop)
         if target_mode == NavNode.NAV_MODE_SLAM:
             launch = self._launch_slam_stack()
         else:
@@ -884,7 +891,7 @@ class NavigationToolManager:
             "switched": bool(ok), "from": cur,
             "nav_mode": self.ros_node.get_nav_mode(),
             "portal": name, "portal_nav": portal_nav,
-            "launch": launch, "localized": localized, "msg": msg,
+            "launch": launch, "stop": stop, "localized": localized, "msg": msg,
         }
 
     def register_tools(self):
