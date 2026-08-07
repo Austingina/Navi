@@ -1,6 +1,5 @@
 bt_navigator:
   ros__parameters:
-    use_sim_time: True # 仿真时为 True
     transform_tolerance: 0.5 # 仿真时为 0.5, 真实时为 0.1
     goal_reached_tol: 0.25
     global_frame: map
@@ -19,21 +18,8 @@ bt_navigator:
       - compute_path_error_code
       - follow_path_error_code
 
-bt_navigator_rclcpp_node:
-  ros__parameters:
-    use_sim_time: True
-
-bt_navigator_navigate_through_poses_rclcpp_node:
-  ros__parameters:
-    use_sim_time: True
-
-bt_navigator_navigate_to_pose_rclcpp_node:
-  ros__parameters:
-    use_sim_time: True
-
 controller_server:
   ros__parameters:
-    use_sim_time: True
     controller_frequency: 5.0
     min_x_velocity_threshold: 0.01
     min_y_velocity_threshold: 0.01
@@ -101,13 +87,8 @@ controller_server:
       RotateToGoal.lookahead_time: -2.0
       Oscillation.scale: 32.0
 
-controller_server_rclcpp_node:
-  ros__parameters:
-    use_sim_time: True
-
 velocity_smoother:
   ros__parameters:
-    use_sim_time: True
     smoothing_frequency: 20.0
     scale_velocities: False
     feedback: "OPEN_LOOP"
@@ -127,7 +108,6 @@ velocity_smoother:
 # -----------------------------------------------------------------------------
 collision_monitor:
   ros__parameters:
-    use_sim_time: True
     base_frame_id: base_link
     odom_frame_id: odom
     cmd_vel_in_topic: cmd_vel_smoothed
@@ -178,7 +158,6 @@ local_costmap:
       publish_frequency: 10.0
       global_frame: odom
       robot_base_frame: base_link
-      use_sim_time: True
       transform_tolerance: 0.3
       rolling_window: true
       width: 10
@@ -231,13 +210,6 @@ local_costmap:
         inflation_radius: 0.7
 
       always_send_full_costmap: True
-  local_costmap_client:
-    ros__parameters:
-      use_sim_time: True
-  local_costmap_rclcpp_node:
-    ros__parameters:
-      use_sim_time: True
-
 # -----------------------------------------------------------------------------
 # 全局代价地图：滚动窗口 + 无 static_layer，未知空间视为可通行
 # 注意：滚动窗口尺寸(width/height)必须能同时覆盖机器人与当前 GPS 目标；
@@ -250,7 +222,6 @@ global_costmap:
       publish_frequency: 5.0
       global_frame: map
       robot_base_frame: base_link
-      use_sim_time: True
       transform_tolerance: 0.3
       rolling_window: true
       width: 100
@@ -303,17 +274,9 @@ global_costmap:
         inflation_radius: 0.7
 
       always_send_full_costmap: True
-  global_costmap_client:
-    ros__parameters:
-      use_sim_time: True
-  global_costmap_rclcpp_node:
-    ros__parameters:
-      use_sim_time: True
-
 planner_server:
   ros__parameters:
     expected_planner_frequency: 5.0
-    use_sim_time: True
     planner_plugins: ["GridBased"]
     GridBased:
       plugin: "nav2_navfn_planner::NavfnPlanner"
@@ -322,13 +285,8 @@ planner_server:
       # 室外无地图：允许把路径规划进未知空间，否则目标在感知范围外会规划失败。
       allow_unknown: true
 
-planner_server_rclcpp_node:
-  ros__parameters:
-    use_sim_time: True
-
 smoother_server:
   ros__parameters:
-    use_sim_time: True
     smoother_plugins: ["simple_smoother"]
     simple_smoother:
       plugin: "nav2_smoother::SimpleSmoother"
@@ -354,15 +312,10 @@ behavior_server:
     global_frame: odom
     robot_base_frame: base_link
     transform_tolerance: 0.3
-    use_sim_time: True
     simulate_ahead_time: 2.0
     max_rotational_vel: 0.3
     min_rotational_vel: 0.05
     rotational_acc_lim: 0.3
-
-robot_state_publisher:
-  ros__parameters:
-    use_sim_time: True
 
 # GPS 航点跟踪：室外用 FollowGPSWaypoints / FollowWaypoints 逐点推进。
 waypoint_follower:

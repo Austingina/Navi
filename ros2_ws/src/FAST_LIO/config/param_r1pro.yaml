@@ -1,6 +1,5 @@
 bt_navigator:
   ros__parameters:
-    use_sim_time: False
     transform_tolerance: 0.1 #变换容差
     global_frame: map
     robot_base_frame: base_link
@@ -35,22 +34,9 @@ bt_navigator:
 # Jazzy 已移除 enable_groot_monitoring / groot_zmq_*_port（Groot2 改用 BT 自带的
 # 监控接口）和 goal_reached_tol（不是 bt_navigator 的参数），故删除。
 
-bt_navigator_rclcpp_node:
-  ros__parameters:
-    use_sim_time: False
-
 # Jazzy: 每个 navigator 各有自己的内部节点，需要单独给 use_sim_time。
-bt_navigator_navigate_through_poses_rclcpp_node:
-  ros__parameters:
-    use_sim_time: False
-
-bt_navigator_navigate_to_pose_rclcpp_node:
-  ros__parameters:
-    use_sim_time: False
-
 controller_server:
   ros__parameters:
-    use_sim_time: False # 是否使用仿真时间
     controller_frequency: 5.0 # 控制器运行频率（Hz）
     min_x_velocity_threshold: 0.01 # x方向最小速度阈值
     min_y_velocity_threshold: 0.01 # y方向最小速度阈值
@@ -361,13 +347,8 @@ controller_server:
 
 
 
-controller_server_rclcpp_node:
-  ros__parameters:
-    use_sim_time: False
-
 velocity_smoother:
   ros__parameters:
-    use_sim_time: False
     smoothing_frequency: 20.0
     scale_velocities: False
     feedback: "OPEN_LOOP"
@@ -396,7 +377,6 @@ velocity_smoother:
 # -----------------------------------------------------------------------------
 collision_monitor:
   ros__parameters:
-    use_sim_time: False
     # 本仓库没有 base_footprint 帧（静态 TF 只有 body->base_link），
     # 所以用 base_link，与两张 costmap 的 robot_base_frame 一致。
     base_frame_id: base_link
@@ -445,7 +425,6 @@ local_costmap:
       publish_frequency: 10.0   #将成本图发布到话题的频率
       global_frame: map       #全局框架
       robot_base_frame: base_link  #机器人底座框架
-      use_sim_time: False  #仿真时间
       transform_tolerance: 1.3  
       rolling_window: true #成本地图是否应随机器人基座框架滚动
       width: 10             #代价地图的宽度（m）
@@ -530,13 +509,6 @@ local_costmap:
           obstacle_min_range: 0.0                   #控制代价地图上标记障碍物的最小范围
 
       always_send_full_costmap: True                 #是否每次更新时都发送完整的成本图，而不是更新
-  local_costmap_client:
-    ros__parameters:
-      use_sim_time: False
-  local_costmap_rclcpp_node:
-    ros__parameters:
-      use_sim_time: False
-
 global_costmap:
   global_costmap:
     ros__parameters:
@@ -544,7 +516,6 @@ global_costmap:
       publish_frequency: 10.0            #将成本图发布到话题的频率
       global_frame: map                 #全局框架
       robot_base_frame: base_link  #机器人底座框架
-      use_sim_time: False               #仿真时间 
       transform_tolerance: 1.3  
       #robot_radius: 0.20                #机器人半径
       footprint: "[ [-0.2, -0.2], [-0.2, 0.2],[0.2, 0.2],[0.2, -0.2] ]"
@@ -604,13 +575,6 @@ global_costmap:
         cost_scaling_factor: 10.0                   #成本缩放因子，决定障碍物成本随距离的递减速度。
         inflation_radius: 0.7                     #膨胀半径
       always_send_full_costmap: false               #是否每次更新时都发送完整的成本图，而不是更新
-  global_costmap_client:
-    ros__parameters:
-      use_sim_time: False
-  global_costmap_rclcpp_node:
-    ros__parameters:
-      use_sim_time: False
-
 # map_server:
 #   ros__parameters:
 #     use_sim_time: False
@@ -671,7 +635,6 @@ global_costmap:
 planner_server:
   ros__parameters:
     expected_planner_frequency: 5.0
-    use_sim_time: False
     planner_plugins: ["GridBased"]
     GridBased:
       plugin: "nav2_navfn_planner::NavfnPlanner"
@@ -679,13 +642,8 @@ planner_server:
       use_astar: false
       allow_unknown: false
 
-planner_server_rclcpp_node:
-  ros__parameters:
-    use_sim_time: False
-
 smoother_server:
   ros__parameters:
-    use_sim_time: false
     smoother_plugins: ["simple_smoother"]
     simple_smoother:
       plugin: "nav2_smoother::SimpleSmoother"
@@ -719,15 +677,10 @@ behavior_server:
     global_frame: map
     robot_base_frame: base_link
     transform_tolerance: 0.3 #TF 变换容差
-    use_sim_time: False
     simulate_ahead_time: 2.0 #提前模拟
     max_rotational_vel: 0.3  #最大旋转速度（弧度/秒）
     min_rotational_vel: 0.05 #最小旋转速度（弧度/秒）
     rotational_acc_lim: 0.3  #最大旋转加速度（rad/s^2）
-
-robot_state_publisher:
-  ros__parameters:
-    use_sim_time: False
 
 waypoint_follower:
   ros__parameters:
