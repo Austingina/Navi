@@ -13,8 +13,11 @@ windows:
       - shell_command:
           - sleep 0
           - bash $NAVI_SCRIPT_DIR/start_localization.bash $NAVI_SIM_ARG -m "$NAVI_MAP_PCD"
+      # 不再靠固定 sleep 赌 FAST-LIO 已经定位好：start_navigation.bash 里会等
+      # map->base_link 真的出现（仿真下还等 /clock）再起 Nav2。留 2s 只是让上面那
+      # 个 pane 先把 launch 拉起来，避免两个 ros2 launch 同时抢终端输出。
       - shell_command:
-          - sleep 8
+          - sleep 2
           - bash $NAVI_SCRIPT_DIR/start_navigation.bash $NAVI_SIM_ARG
 
   - window_name: monitoring
