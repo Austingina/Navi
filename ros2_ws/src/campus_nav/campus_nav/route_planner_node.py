@@ -16,6 +16,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.time import Time
 from std_msgs.msg import String
+from std_srvs.srv import Empty
 from tf2_ros import Buffer, TransformException, TransformListener
 from rclpy.qos import (
     QoSDurabilityPolicy,
@@ -573,6 +574,10 @@ class RoutePlanner(Node):
             "local_costmap_clear_service",
             "/local_costmap/clear_entirely_local_costmap",
         )
+        self.declare_parameter(
+            "elevation_map_clear_service",
+            "/elevation_mapping_cupy/clear_map",
+        )
         # Feed the route to Nav2 in rolling batches so every goal stays inside
         # the (rolling-window) global costmap. Disable to send the whole route.
         self.declare_parameter("nav2_batch_enable", True)
@@ -804,6 +809,7 @@ class RoutePlanner(Node):
         self._settle_clear_timer = None
         self._global_clear_cli = None
         self._local_clear_cli = None
+        self._elevation_clear_cli = None
         # Subscribe whenever the topic is configured, independent of the gate
         # policy: the lock transition is what triggers the costmap clear, and
         # that is needed *more* when goals are allowed through early — the robot
@@ -1594,10 +1600,34 @@ class RoutePlanner(Node):
                 f"{self.get_parameter('entry_gpkg').value}."
             )
             return
-        lonlat_path = plan["path"]
+        # plan_to_goal may fall back to the goal's nearest road projection when
+        # the goal is off-network and has no authored entry.  That is still a
+        # useful road route, but it must not become the actual navigation end:
+        # always include the requested goal as the final access leg.
+        lonlat_path = list(plan["path"])
         length = plan["length_m"]
         road_start_index = plan["road_start_index"]
         road_end_index = plan["road_end_index"]
+        if lonlat_path:
+            end_x, end_y = self.enu.to_xy(*lonlat_path[-1])
+            goal_x, goal_y = self.enu.to_xy(*goal_lonlat)
+            final_leg_m = math.hypot(goal_x - end_x, goal_y - end_y)
+            if final_leg_m > 0.05:
+                # The old last point is the end of the road section.  Marking it
+                # lets _densify_route leave this off-network hop intact and lets
+                # batched navigation hand the true goal to NavigateToPose.
+                if road_end_index is None:
+                    road_end_index = len(lonlat_path) - 1
+                lonlat_path.append(goal_lonlat)
+                length += final_leg_m
+                plan["path"] = lonlat_path
+                plan["length_m"] = length
+                plan["road_end_index"] = road_end_index
+                plan["offroad_m"] = plan.get("offroad_m", 0.0) + final_leg_m
+                self.get_logger().info(
+                    f"Goal is off the planned road endpoint; appended the "
+                    f"remaining {final_leg_m:.1f} m access leg."
+                )
         mode = plan["mode"]
         entry_enable = self.get_parameter("entry_enable").value
         radius_str = f"{self.get_parameter('entry_search_radius_m').value:.0f}"
@@ -1640,8 +1670,9 @@ class RoutePlanner(Node):
                     f"Goal is {plan['goal_offnetwork_m']:.1f} m off-network but no "
                     f"entry point is within {radius_str} m "
                     f"of it (none authored, or the nearest opening is too far); "
-                    f"snapping to the nearest road, which may sit on the wrong "
-                    f"side of a fence. Add a point closer to the goal in "
+                    f"using the nearest road followed by a straight final "
+                    f"access leg, which may cross a fence. Add a point closer "
+                    f"to the goal in "
                     f"{self.get_parameter('entry_gpkg').value}."
                 )
         # Match road-network marker height for RViz; keep Nav2 goals at z=0.
@@ -2187,7 +2218,7 @@ class RoutePlanner(Node):
         self._nav_sent_key = None
 
     def _clear_costmaps(self, pass_label="immediate"):
-        """Best-effort clear of the Nav2 global/local costmaps.
+        """Best-effort clear of Nav2 costmaps and the source elevation map.
 
         Never blocks the caller: if a service is not up (e.g. Nav2 not running)
         we warn and move on. The result is reported from a done-callback rather
@@ -2202,6 +2233,10 @@ class RoutePlanner(Node):
             self._local_clear_cli = self.create_client(
                 ClearEntireCostmap,
                 self.get_parameter("local_costmap_clear_service").value,
+            )
+            self._elevation_clear_cli = self.create_client(
+                Empty,
+                self.get_parameter("elevation_map_clear_service").value,
             )
         for name, cli in (
             ("global", self._global_clear_cli),
@@ -2221,16 +2256,33 @@ class RoutePlanner(Node):
                     f"'{cli.srv_name}' unavailable; skipping."
                 )
 
-    def _on_clear_done(self, future, name, pass_label):
+        cli = self._elevation_clear_cli
+        if cli.service_is_ready() or cli.wait_for_service(timeout_sec=1.0):
+            future = cli.call_async(Empty.Request())
+            self.get_logger().info(
+                f"heading snap [{pass_label}]: requested elevation map clear."
+            )
+            future.add_done_callback(
+                lambda f, p=pass_label: self._on_clear_done(
+                    f, "elevation map", p
+                )
+            )
+        else:
+            self.get_logger().warn(
+                f"heading snap [{pass_label}]: elevation map clear service "
+                f"'{cli.srv_name}' unavailable; skipping."
+            )
+
+    def _on_clear_done(self, future, target, pass_label):
         try:
             future.result()
         except Exception as exc:  # noqa: BLE001 — report, never propagate
             self.get_logger().error(
-                f"heading snap [{pass_label}]: {name} costmap clear FAILED: {exc}"
+                f"heading snap [{pass_label}]: {target} clear FAILED: {exc}"
             )
             return
         self.get_logger().info(
-            f"heading snap [{pass_label}]: {name} costmap cleared."
+            f"heading snap [{pass_label}]: {target} cleared."
         )
 
     def _settle_clear_costmaps(self):

@@ -36,6 +36,7 @@ from geometry_msgs.msg import Vector3, Quaternion
 from std_msgs.msg import Float32MultiArray
 from std_msgs.msg import MultiArrayLayout as MAL
 from std_msgs.msg import MultiArrayDimension as MAD
+from std_srvs.srv import Empty
 import rosbag2_py
 from elevation_mapping_cupy import ElevationMap, Parameter
 from elevation_mapping_cupy.elevation_mapping import GridGeometry
@@ -322,6 +323,7 @@ class ElevationMappingNode(Node):
         service_masked = self._resolve_service_name('masked_replace')
         service_save = self._resolve_service_name('save_map')
         service_load = self._resolve_service_name('load_map')
+        service_clear = self._resolve_service_name('clear_map')
 
         self._srv_masked_replace = self.create_service(
             SetGridMap,
@@ -338,6 +340,17 @@ class ElevationMappingNode(Node):
             service_load,
             self.handle_load_map
         )
+        self._srv_clear_map = self.create_service(
+            Empty,
+            service_clear,
+            self.handle_clear_map
+        )
+
+    def handle_clear_map(self, _request, response):
+        """Discard every accumulated elevation and semantic-map cell."""
+        self._map.clear()
+        self.get_logger().info('Elevation map cleared.')
+        return response
 
     def publish_map(self, key: str) -> None:
         if self._map_q is None:

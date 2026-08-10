@@ -796,7 +796,7 @@ class NavNode(Node):
             leaf_age_sec: Optional[float] = None
             try:
                 leaf_tf = self.tf_buffer.lookup_transform(
-                    'odom', 'base_link',
+                    'map', 'base_link',
                     rclpy.time.Time(),
                     timeout=rclpy.duration.Duration(seconds=0.0),
                 )

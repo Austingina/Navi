@@ -279,7 +279,7 @@ class RouteGraph:
     def plan_to_goal(self, slon, slat, glon, glat, entries=None,
                      off_network_m=5.0, search_radius_m=40.0,
                      offroad_weight=1.0, respect_turns=False,
-                     max_candidates=8):
+                     max_candidates=None):
         """Plan between two points either of which may sit off the road network.
 
         A point inside a fenced area (plaza, courtyard) has no road under it.
@@ -360,6 +360,15 @@ class RouteGraph:
         # Pre-filter on the authored coordinate, with slack, only to bound how
         # many searches a campus-wide layer costs. The radius itself is enforced
         # below on the real access leg.
+        #
+        # Note this ranks by straight-line distance while the actual choice below
+        # minimises road distance + weighted access legs. An entry that is a
+        # little further away but sits much better on the network can therefore be
+        # cut here and never evaluated.  The default therefore keeps every
+        # entry inside its access radius and guarantees that the later cost
+        # comparison sees the globally cheapest pair.  Callers with very large
+        # entry layers may still pass a positive max_candidates to trade that
+        # guarantee for search time (the both-off-network branch is quadratic).
         def _prefilter(ref_lon, ref_lat):
             cands = []
             for e in entries:
@@ -368,7 +377,9 @@ class RouteGraph:
                 if rough <= radius + _ENTRY_PREFILTER_SLACK_M:
                     cands.append((rough, radius, e))
             cands.sort(key=lambda c: c[0])
-            return cands[:max_candidates]
+            if max_candidates is not None and max_candidates > 0:
+                return cands[:max_candidates]
+            return cands
 
         goal_cands = _prefilter(glon, glat) if goal_is_off else []
         start_cands = _prefilter(slon, slat) if start_is_off else []
