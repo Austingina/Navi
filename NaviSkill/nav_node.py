@@ -1832,7 +1832,7 @@ class NavNode(Node):
                     cmd_vel.angular.z = 0.5
                 elif cmd_vel.angular.z < -0.5:
                     cmd_vel.angular.z = -0.5
-                self.get_logger().warning(f"yaw_error={yaw_error},cmd={cmd_vel.angular.z},ts={timestamp.sec}.{timestamp.nanosec}")
+                self.get_logger().debug(f"yaw_error={yaw_error},cmd={cmd_vel.angular.z},ts={timestamp.sec}.{timestamp.nanosec}")
         else:
             # 移动阶段：调整xy位置
             if dist < tolerance:
@@ -1851,7 +1851,7 @@ class NavNode(Node):
                 y_local = -math.sin(current_yaw) * dx + math.cos(current_yaw) * dy
                 cmd_vel.linear.x = kp_linear * x_local
                 cmd_vel.linear.y = kp_linear * y_local
-                self.get_logger().warning(f"dx={dx},dy={dy},xlocal={x_local},ylocal={y_local},cmdx={cmd_vel.linear.x},cmdy={cmd_vel.linear.y}")
+                self.get_logger().debug(f"dx={dx},dy={dy},xlocal={x_local},ylocal={y_local},cmdx={cmd_vel.linear.x},cmdy={cmd_vel.linear.y}")
                 # 限制线性速度
                 max_vel = 0.3
                 if abs(cmd_vel.linear.x) > max_vel:

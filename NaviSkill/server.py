@@ -840,7 +840,7 @@ class NavigationToolManager:
                          localize_timeout: float = 180.0,
                          poll_interval: float = 1.0,
                          portal_timeout: float = 300.0,
-                         portal_tol: float = 3.0) -> Dict[str, Any]:
+                         portal_tol: float = 1.0) -> Dict[str, Any]:
         """确保 NavNode 处于目标导航模式；已在目标模式则空操作。
 
         供 set_goal 系列在下发前对齐模式（SLAM 语义点/坐标 → slam；经纬度 → gps）。
