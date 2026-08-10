@@ -13,6 +13,7 @@ from pathlib import Path
 import numpy as np  # 数值计算库
 # 让仓库根 (/home/nvidia/Navi) 进入 sys.path，方便 import mapserver
 _REPO_ROOT = Path(__file__).resolve().parent.parent
+_SLAM_HEADING_HANDOFF = Path('/tmp/navi_slam_heading_handoff.json')
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 # 导入自定义模块
@@ -678,6 +679,58 @@ class NavigationToolManager:
         ok = self._spawn_nav_script(cmd)
         return {"launched": ok, "cmd": ' '.join(cmd)}
 
+    def _write_slam_heading_handoff(self, slam_map_id: str) -> Dict[str, Any]:
+        """把切栈前最后 SLAM 朝向换算成 ENU yaw，供新 outdoor 栈粗对齐。
+
+        ``current_pose`` 位于当前 submap 局部系；submap 的级联 rotation 将它
+        转到 SLAM 根系，geo_anchor.heading_deg 再把根系转到 ENU。文件由
+        gps_heading_align 启动时限时、一次性消费，不能被当成真正 GPS 锁定。
+        """
+        cp = self.ros_node.current_pose
+        submap_id = self.map_manager.get_current_submap()
+        anchor = self.map_manager.get_slam_map_geo_anchor(slam_map_id) or {}
+        if cp is None or not submap_id or 'heading_deg' not in anchor:
+            return {"written": False, "msg": "缺少最后 SLAM 位姿/submap/geo_anchor heading"}
+
+        q_local = {
+            'x': float(cp.pose.orientation.x),
+            'y': float(cp.pose.orientation.y),
+            'z': float(cp.pose.orientation.z),
+            'w': float(cp.pose.orientation.w),
+        }
+        tf = self.map_manager.get_submap_transform(submap_id, slam_map_id)
+        q_root = (self.map_manager._quaternion_multiply(tf['rotation'], q_local)
+                  if tf else q_local)
+        root_yaw = math.atan2(
+            2.0 * (q_root['w'] * q_root['z'] + q_root['x'] * q_root['y']),
+            1.0 - 2.0 * (q_root['y'] ** 2 + q_root['z'] ** 2),
+        )
+        enu_yaw = math.atan2(
+            math.sin(root_yaw + math.radians(float(anchor['heading_deg']))),
+            math.cos(root_yaw + math.radians(float(anchor['heading_deg']))),
+        )
+        payload = {
+            'version': 1,
+            'created_at': time.time(),
+            'slam_map': slam_map_id,
+            'submap': submap_id,
+            'slam_root_yaw_rad': root_yaw,
+            'geo_heading_deg': float(anchor['heading_deg']),
+            'absolute_enu_yaw_rad': enu_yaw,
+        }
+        tmp = _SLAM_HEADING_HANDOFF.with_suffix('.tmp')
+        try:
+            tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
+            os.replace(tmp, _SLAM_HEADING_HANDOFF)
+        except OSError as exc:
+            logging.warning("写入 SLAM→ENU 航向交接失败: %s", exc)
+            return {"written": False, "msg": str(exc)}
+        logging.info(
+            "SLAM→outdoor 粗航向: map=%s submap=%s root=%.1f° anchor=%.1f° ENU=%.1f°",
+            slam_map_id, submap_id, math.degrees(root_yaw),
+            float(anchor['heading_deg']), math.degrees(enu_yaw))
+        return {"written": True, **payload}
+
     @staticmethod
     def _lonlat_dist_m(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
         """两经纬度间的近似平面距离（米），仅用于比较远近选最近传送门。"""
@@ -878,6 +931,10 @@ class NavigationToolManager:
         stop = self.ros_node.wait_until_stopped()
         if stop.get('stopped') is False:
             logging.warning("切换模式前未能确认停车: %s", stop)
+        heading_handoff = None
+        if target_mode == NavNode.NAV_MODE_GPS:
+            # 必须在 start_outdoor.sh 拆掉 SLAM 栈之前捕获最后姿态。
+            heading_handoff = self._write_slam_heading_handoff(slam_map_id)
         if target_mode == NavNode.NAV_MODE_SLAM:
             launch = self._launch_slam_stack()
         else:
@@ -892,6 +949,7 @@ class NavigationToolManager:
             "nav_mode": self.ros_node.get_nav_mode(),
             "portal": name, "portal_nav": portal_nav,
             "launch": launch, "stop": stop, "localized": localized, "msg": msg,
+            "heading_handoff": heading_handoff,
         }
 
     def register_tools(self):

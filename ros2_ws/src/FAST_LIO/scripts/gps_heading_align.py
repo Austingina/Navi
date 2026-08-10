@@ -31,10 +31,11 @@ Publishes:
       "gate" that stops navsat_transform from committing a wrong/zero datum
       before the heading is north-aligned (this build's wait_for_datum:true
       does NOT actually wait; it seeds (0,0,0)).
-  /heading_align/status      -- unlocked | locking | locked | frozen_bad_gps
-  /heading_align/yaw_offset  -- absolute-heading correction [rad], only once
-      locked. map->odom publishers (map_odom_from_gps) rotate odom(LIO startup
-      frame) by this into ENU/north, so the LIO cloud snaps onto the geo map.
+  /heading_align/status      -- unlocked | coarse | locked | frozen_bad_gps
+  /heading_align/yaw_offset  -- absolute-heading correction [rad]. During a
+      SLAM->outdoor handoff it is first seeded from the final SLAM pose (coarse),
+      then replaced by the GPS/LIO displacement estimate on lock. map->odom
+      publishers rotate odom(LIO startup frame) by this into ENU/north.
 
 On first lock, calls navsat_transform SetDatum once with a FIXED site origin
 (datum_lat/datum_lon, shared with campus_nav) so the map frame is anchored to
@@ -49,7 +50,10 @@ Optional exit_after_lock: shut down after first lock (heading_calib mode).
 from __future__ import annotations
 
 import copy
+import json
 import math
+import os
+import time
 from typing import Optional, Tuple
 
 import rclpy
@@ -107,8 +111,12 @@ class GpsHeadingAlign(Node):
         self.declare_parameter('absolute_yaw_topic', '/odometry/absolute_yaw')
         self.declare_parameter('status_topic', '/heading_align/status')
         # Absolute-heading correction (rad) so map->odom publishers can rotate
-        # odom(LIO startup frame) into ENU/north. Only sent once locked.
+        # odom(LIO startup frame) into ENU/north. A fresh SLAM handoff may seed
+        # it before GPS lock; GPS/LIO later replaces that coarse value.
         self.declare_parameter('yaw_offset_topic', '/heading_align/yaw_offset')
+        self.declare_parameter(
+            'slam_heading_handoff_file', '/tmp/navi_slam_heading_handoff.json')
+        self.declare_parameter('slam_heading_handoff_max_age', 30.0)
         # navsat_transform advertises the relative service name "datum"; with the
         # node in the "/" namespace that resolves to "/datum" (NOT the private
         # "/navsat_transform/datum"). SetDatum pins the map origin to the fixed
@@ -162,6 +170,10 @@ class GpsHeadingAlign(Node):
         self.absolute_yaw_topic = self.get_parameter('absolute_yaw_topic').value
         self.status_topic = self.get_parameter('status_topic').value
         self.yaw_offset_topic = self.get_parameter('yaw_offset_topic').value
+        self.slam_heading_handoff_file = str(
+            self.get_parameter('slam_heading_handoff_file').value)
+        self.slam_heading_handoff_max_age = float(
+            self.get_parameter('slam_heading_handoff_max_age').value)
         self.datum_service = self.get_parameter('datum_service').value
         self.datum_lat = float(self.get_parameter('datum_lat').value)
         self.datum_lon = float(self.get_parameter('datum_lon').value)
@@ -195,6 +207,8 @@ class GpsHeadingAlign(Node):
         self.datum_sent = False
         self._datum_attempts = 0
         self.last_status = 'unlocked'
+        self.coarse_absolute_yaw: Optional[float] = self._consume_slam_heading_handoff()
+        self.coarse_offset_active = False
 
         # anchor: (lat, lon, t, lio_x, lio_y) fixed while the baseline grows.
         self.anchor_fix: Optional[Tuple[float, float, float, float, float]] = None
@@ -259,6 +273,16 @@ class GpsHeadingAlign(Node):
 
     def on_odom(self, msg: Odometry):
         self.latest_odom = msg
+        if self.coarse_absolute_yaw is not None and not self.coarse_offset_active:
+            lio_yaw = quat_to_yaw(msg.pose.pose.orientation)
+            self.yaw_offset = wrap_pi(self.coarse_absolute_yaw - lio_yaw)
+            self.coarse_offset_active = True
+            self._diag = 'SLAM yaw prior active; GPS/LIO is refining it'
+            self.get_logger().info(
+                f'COARSE yaw from SLAM handoff: absolute_enu_yaw='
+                f'{math.degrees(self.coarse_absolute_yaw):.1f} deg, '
+                f'new_lio_yaw={math.degrees(lio_yaw):.1f} deg, '
+                f'yaw_offset={math.degrees(self.yaw_offset):.1f} deg')
 
     def on_timer(self):
         self._publish_absolute_yaw()
@@ -266,12 +290,44 @@ class GpsHeadingAlign(Node):
         # Feed the frozen/refined offset to map->odom publishers so they can
         # rotate odom(LIO) into ENU. Continuous @publish_rate => a late joiner
         # (map_odom_from_gps) still gets it within one tick.
-        if self.locked:
+        if self.locked or self.coarse_offset_active:
             self.offset_pub.publish(Float64(data=float(self.yaw_offset)))
         if self.auto_drive and not self.locked and self.cmd_pub is not None:
             tw = Twist()
             tw.linear.x = self.drive_speed
             self.cmd_pub.publish(tw)
+
+    def _consume_slam_heading_handoff(self) -> Optional[float]:
+        """读取并删除一次性 SLAM→ENU yaw；超时/非法交接绝不使用。"""
+        path = self.slam_heading_handoff_file
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError, TypeError) as exc:
+            self.get_logger().warn(f'ignore invalid SLAM heading handoff: {exc}')
+            return None
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+        try:
+            age = time.time() - float(data['created_at'])
+            yaw = float(data['absolute_enu_yaw_rad'])
+        except (KeyError, TypeError, ValueError):
+            self.get_logger().warn('ignore malformed SLAM heading handoff')
+            return None
+        if age < -2.0 or age > self.slam_heading_handoff_max_age or not math.isfinite(yaw):
+            self.get_logger().warn(
+                f'ignore stale/invalid SLAM heading handoff (age={age:.1f}s)')
+            return None
+        self.get_logger().info(
+            f'accepted one-shot SLAM heading prior (age={age:.1f}s, '
+            f'ENU yaw={math.degrees(yaw):.1f} deg)')
+        return wrap_pi(yaw)
 
     # --------------------------------------------------------------- quality
     def _fix_quality_ok(self, msg: NavSatFix) -> bool:
@@ -496,7 +552,7 @@ class GpsHeadingAlign(Node):
 
     def _publish_status(self):
         if not self.locked:
-            status = 'unlocked'
+            status = 'coarse' if self.coarse_offset_active else 'unlocked'
         elif not self.gps_quality_ok:
             status = 'frozen_bad_gps'
         else:
@@ -512,10 +568,10 @@ class GpsHeadingAlign(Node):
         # yet (and downstream, why campus goals may be held). Log every state
         # transition immediately, plus a throttled heartbeat.
         transition = status != prev
-        if status == 'unlocked':
+        if status in ('unlocked', 'coarse'):
             gps = 'ok' if self.gps_quality_ok else 'bad/low-quality'
             self.get_logger().warn(
-                f'heading UNLOCKED (gps={gps}): {self._diag}',
+                f'heading {status.upper()} (gps={gps}): {self._diag}',
                 throttle_duration_sec=5.0,
             )
         elif status == 'frozen_bad_gps':
