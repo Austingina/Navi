@@ -230,6 +230,41 @@ class RouteGraph:
             "way_id": self._edge_wayid[i],
         }
 
+    def access_segment_crosses_network(
+        self, lon1, lat1, lon2, lat2, endpoint_margin_m=0.5
+    ):
+        """Whether an access segment properly crosses a road-network edge.
+
+        Intersections within ``endpoint_margin_m`` of either access endpoint
+        are ignored: an authored entry is normally located on (or immediately
+        beside) its connecting road, and that endpoint contact is legal. Merely
+        touching/overlapping a collinear edge is not considered a crossing.
+        """
+        if getattr(self, "_edge_ax", None) is None:
+            return False
+        length = haversine(lon1, lat1, lon2, lat2)
+        if length <= 2.0 * endpoint_margin_m:
+            return False
+
+        cos_lat = math.cos(math.radians((lat1 + lat2) * 0.5))
+        px, py = lon1 * cos_lat, lat1
+        rx, ry = (lon2 - lon1) * cos_lat, lat2 - lat1
+        qx, qy = self._edge_ax * cos_lat, self._edge_ay
+        sx = (self._edge_bx - self._edge_ax) * cos_lat
+        sy = self._edge_by - self._edge_ay
+        den = rx * sy - ry * sx
+        qpx, qpy = qx - px, qy - py
+        with np.errstate(divide="ignore", invalid="ignore"):
+            t = (qpx * sy - qpy * sx) / den
+            u = (qpx * ry - qpy * rx) / den
+        end_eps = min(0.49, endpoint_margin_m / length)
+        crossing = (
+            (np.abs(den) > 1e-15)
+            & (t > end_eps) & (t < 1.0 - end_eps)
+            & (u >= 0.0) & (u <= 1.0)
+        )
+        return bool(np.any(crossing))
+
     def plan_points(self, slon, slat, glon, glat, respect_turns=False):
         """Plan between two free points on roads (not restricted to vertices).
 
@@ -278,7 +313,8 @@ class RouteGraph:
 
     def plan_to_goal(self, slon, slat, glon, glat, entries=None,
                      off_network_m=5.0, search_radius_m=40.0,
-                     offroad_weight=1.0, respect_turns=False,
+                     offroad_weight=1.0, reject_entry_network_crossing=True,
+                     respect_turns=False,
                      max_candidates=None):
         """Plan between two points either of which may sit off the road network.
 
@@ -374,7 +410,24 @@ class RouteGraph:
             for e in entries:
                 radius = e.get("radius_m") or search_radius_m
                 rough = haversine(e["lon"], e["lat"], ref_lon, ref_lat)
-                if rough <= radius + _ENTRY_PREFILTER_SLACK_M:
+                crosses = False
+                if reject_entry_network_crossing:
+                    # QGIS-authored entries do not always land exactly on the
+                    # road centerline. If this entry is already close enough to
+                    # be treated as on-road, allow the access line to meet that
+                    # nearby road anywhere inside the entry-side gap (+0.5 m
+                    # numerical/cartographic slack). Crossings farther along the
+                    # access line are still rejected as "another road".
+                    endpoint_margin = 0.5
+                    entry_proj = self.project_to_edge(e["lon"], e["lat"])
+                    if (entry_proj is not None
+                            and entry_proj["dist"] < _ENTRY_VIA_MIN_M):
+                        endpoint_margin += entry_proj["dist"]
+                    crosses = self.access_segment_crosses_network(
+                        e["lon"], e["lat"], ref_lon, ref_lat,
+                        endpoint_margin_m=endpoint_margin,
+                    )
+                if rough <= radius + _ENTRY_PREFILTER_SLACK_M and not crosses:
                     cands.append((rough, radius, e))
             cands.sort(key=lambda c: c[0])
             if max_candidates is not None and max_candidates > 0:
@@ -558,11 +611,9 @@ class RouteGraph:
         on-road part alone, and how far each end sits off the network), so the
         comparison is free.
 
-        The governing idea: a direct drive is only sound when the straight line
-        does not cross the boundary of a fenced area. Both ends inside the same
-        one, or both out on the network, are fine. One of each is not — that line
-        must cross, and an entry point is the only description we have of where
-        crossing is allowed.
+        The governing idea: road topology is authoritative whenever both ends
+        are on-network. A direct drive is considered only for off-network cases,
+        where entries describe how enclosure boundaries may be crossed.
 
         The decision, in order:
 
@@ -570,29 +621,34 @@ class RouteGraph:
              re-enters through a single opening, so the on-road leg is pure
              waste. Straight there if it fits the costmap; otherwise via the
              entry as a waypoint (see below).
-          2. straight > direct_max_m               ->  road. A direct goal this
+          2. both ends on-network                  ->  road unconditionally.
+          3. straight > direct_max_m               ->  road. A direct goal this
              far out is rejected by the planner, so there is nothing to weigh.
-          3. no road route at all                  ->  direct, for lack of
+          4. no road route at all                  ->  direct, for lack of
              anything else (straight is already within direct_max_m here).
-          4. exactly one end off-network           ->  road, unconditionally.
+          5. exactly one end off-network           ->  road, unconditionally.
              The straight line would cross the enclosure boundary; the roads and
              the authored opening are the only sanctioned way through.
-          5. straight <= always_direct_m           ->  direct. Snapping to a road
+          6. straight <= always_direct_m           ->  direct. Snapping to a road
              and back costs more than just driving it.
-          6. either end has entry_missing          ->  direct. That end is
+          7. either end has entry_missing          ->  direct. That end is
              off-network with no opening authored, so plan_to_goal fell back to
              the nearest road, which may well be across a fence.
-          7. road_total/straight >= threshold      ->  direct. The roads detour.
-          8. otherwise                             ->  road.
+          8. road_total/straight >= threshold      ->  direct. The roads detour.
+          9. otherwise                             ->  road.
 
         Rule 1 must precede rule 2: routing via the entry exists precisely to
         serve the case where the straight shot does not fit.
 
-        Rule 4 must precede rules 5-7, which are all shortcuts that would
+        The on-network rule must precede every direct fallback, including the
+        no-road-route case: disconnected road components must fail rather than
+        be joined by an invented straight segment.
+
+        The one-off-network rule must precede the shortcut rules, which would
         otherwise send the robot across a boundary — a goal 7 m off the road is
         both "trivially close" and on the far side of a fence.
 
-        Rule 6 divides by the *total* road route (length_m, access legs
+        The detour ratio uses the *total* road route (length_m, access legs
         included), not the on-road part, so "drive out of one courtyard and into
         another" is counted against the road option the way it should be.
 
@@ -629,8 +685,17 @@ class RouteGraph:
         # Same threshold plan_to_goal classified the ends with, so "off-network"
         # means the same thing in both places.
         off_network_m = plan_to_goal_kwargs.get("off_network_m", 5.0)
-        start_off_network = plan["start_offnetwork_m"] if plan else None
-        goal_off_network = plan["goal_offnetwork_m"] if plan else None
+        if plan:
+            start_off_network = plan["start_offnetwork_m"]
+            goal_off_network = plan["goal_offnetwork_m"]
+        else:
+            # Classification is still needed when A* cannot connect the two
+            # projected road components: two on-network points must not fall
+            # through to the direct no-road-route fallback.
+            start_proj = self.project_to_edge(slon, slat)
+            goal_proj = self.project_to_edge(glon, glat)
+            start_off_network = start_proj["dist"] if start_proj else None
+            goal_off_network = goal_proj["dist"] if goal_proj else None
 
         def _decide(mode, reason, path, road_start_index, road_end_index,
                     entry=None):
@@ -698,17 +763,29 @@ class RouteGraph:
                            [start, via, goal], 1, 1,
                            entry={"name": plan["start_entry_name"]})
 
-        # -- 2. beyond the costmap: the direct option does not exist -------------
+        # -- 2. two road points must respect road topology -----------------------
+        both_on_network = (
+            start_off_network is not None
+            and goal_off_network is not None
+            and start_off_network <= off_network_m
+            and goal_off_network <= off_network_m
+        )
+        if both_on_network:
+            if plan is None:
+                return None
+            return _road("both_on_network")
+
+        # -- 3. beyond the costmap: the direct option does not exist -------------
         if straight > direct_max_m:
             if plan is None:
                 return None
             return _road("beyond_direct_max")
 
-        # -- 3. no road route ---------------------------------------------------
+        # -- 4. no road route ---------------------------------------------------
         if plan is None:
             return _decide("direct", "no_road_route", [start, goal], None, 0)
 
-        # -- 4. one end inside, one end outside: the roads are the only way ------
+        # -- 5. one end inside, one end outside: the roads are the only way ------
         # A straight line between them has to cross the boundary of whatever the
         # off-network end sits inside — a fence, hedge, kerb, planting. That
         # boundary is exactly what an entry point exists to describe: it says
@@ -727,19 +804,19 @@ class RouteGraph:
                 != (goal_off_network > off_network_m)):
             return _road("crosses_network_boundary")
 
-        # -- 5. close enough that snapping to a road is the detour ---------------
+        # -- 6. close enough that snapping to a road is the detour ---------------
         if straight <= always_direct_m:
             return _decide("direct", "trivially_close", [start, goal], None, 0)
 
-        # -- 6. the road plan is not trustworthy --------------------------------
+        # -- 7. the road plan is not trustworthy --------------------------------
         if plan["entry_missing"] or plan["start_entry_missing"]:
             return _decide("direct", "entry_missing", [start, goal], None, 0)
 
-        # -- 7. the roads detour ------------------------------------------------
+        # -- 8. the roads detour ------------------------------------------------
         if ratio is not None and ratio >= detour_ratio_threshold:
             return _decide("direct", "road_detours", [start, goal], None, 0)
 
-        # -- 8. default: follow the roads ---------------------------------------
+        # -- 9. default: follow the roads ---------------------------------------
         return _road("road_is_direct_enough")
 
     def astar(self, start, goal, respect_turns=False):

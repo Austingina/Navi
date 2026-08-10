@@ -16,7 +16,6 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.time import Time
 from std_msgs.msg import String
-from std_srvs.srv import Empty
 from tf2_ros import Buffer, TransformException, TransformListener
 from rclpy.qos import (
     QoSDurabilityPolicy,
@@ -574,16 +573,12 @@ class RoutePlanner(Node):
             "local_costmap_clear_service",
             "/local_costmap/clear_entirely_local_costmap",
         )
-        self.declare_parameter(
-            "elevation_map_clear_service",
-            "/elevation_mapping_cupy/clear_map",
-        )
         # Feed the route to Nav2 in rolling batches so every goal stays inside
         # the (rolling-window) global costmap. Disable to send the whole route.
         self.declare_parameter("nav2_batch_enable", True)
         # Max straight-line distance (m) from the robot for a waypoint to be
         # included in the current batch. Keep it < global_costmap half-size.
-        self.declare_parameter("nav2_batch_radius_m", 25.0)
+        self.declare_parameter("nav2_batch_radius_m", 90.0)
         # When the robot is within this distance (m) of the batch's last
         # waypoint, extend/send the next batch for seamless driving.
         self.declare_parameter("nav2_batch_advance_m", 8.0)
@@ -622,16 +617,17 @@ class RoutePlanner(Node):
         # Only entries this close (m) to the goal are considered; a per-entry
         # radius_m column in the layer overrides it. This is also the cap on the
         # access leg, so it must stay under the global costmap's reach: that
-        # costmap is a rolling window centred on the robot (100x100 m), and
+        # costmap is a rolling window centred on the robot (200x200 m), and
         # NavfnPlanner throws GoalOutsideMapBounds for a goal outside it, i.e.
-        # more than 50 m away. 40 leaves room for TF jitter and update lag; a
+        # more than 100 m away. 99.5 avoids putting a goal exactly on the edge; a
         # goal further than this from every entry warns instead, which is the
         # cue to add another entry point rather than to raise the radius.
-        self.declare_parameter("entry_search_radius_m", 40.0)
+        self.declare_parameter("entry_search_radius_m", 99.5)
         # Weight on the off-road leg when comparing entries. >1 favors the entry
         # that leaves less driving outside the road network, even if the road
         # detour to reach it is longer.
         self.declare_parameter("entry_offroad_weight", 1.0)
+        self.declare_parameter("reject_entry_network_crossing", True)
         self.declare_parameter("entry_markers_topic", "campus_entry_markers")
         self.declare_parameter("entry_marker_size_m", 1.0)
         # -- road network vs. direct drive --------------------------------------
@@ -642,11 +638,11 @@ class RoutePlanner(Node):
         # weighs the two; see RouteGraph.plan_auto for the ordered rules.
         self.declare_parameter("auto_channel_enable", True)
         # Hard ceiling on any hop handed to Nav2 as a single goal. The global
-        # costmap is a rolling 100x100 m window centred on the robot, so
-        # NavfnPlanner throws GoalOutsideMapBounds past ~50 m; 40 leaves room for
-        # TF jitter and update lag. Same reasoning as entry_search_radius_m —
+        # costmap is a rolling 200x200 m window centred on the robot, so
+        # NavfnPlanner throws GoalOutsideMapBounds past ~100 m; 99.5 avoids the
+        # exact boundary. Same reasoning as entry_search_radius_m —
         # keep the two in step.
-        self.declare_parameter("direct_max_m", 40.0)
+        self.declare_parameter("direct_max_m", 99.5)
         # Below this, drive straight there unconditionally: projecting onto a road
         # and back off it costs more than the trip itself.
         self.declare_parameter("always_direct_m", 8.0)
@@ -809,7 +805,6 @@ class RoutePlanner(Node):
         self._settle_clear_timer = None
         self._global_clear_cli = None
         self._local_clear_cli = None
-        self._elevation_clear_cli = None
         # Subscribe whenever the topic is configured, independent of the gate
         # policy: the lock transition is what triggers the costmap clear, and
         # that is needed *more* when goals are allowed through early — the robot
@@ -1566,6 +1561,9 @@ class RoutePlanner(Node):
                 self.get_parameter("entry_search_radius_m").value
             ),
             offroad_weight=float(self.get_parameter("entry_offroad_weight").value),
+            reject_entry_network_crossing=bool(
+                self.get_parameter("reject_entry_network_crossing").value
+            ),
             respect_turns=self.respect_turns,
         )
         if self.get_parameter("auto_channel_enable").value:
@@ -2218,7 +2216,7 @@ class RoutePlanner(Node):
         self._nav_sent_key = None
 
     def _clear_costmaps(self, pass_label="immediate"):
-        """Best-effort clear of Nav2 costmaps and the source elevation map.
+        """Best-effort clear of the Nav2 global/local costmaps.
 
         Never blocks the caller: if a service is not up (e.g. Nav2 not running)
         we warn and move on. The result is reported from a done-callback rather
@@ -2233,10 +2231,6 @@ class RoutePlanner(Node):
             self._local_clear_cli = self.create_client(
                 ClearEntireCostmap,
                 self.get_parameter("local_costmap_clear_service").value,
-            )
-            self._elevation_clear_cli = self.create_client(
-                Empty,
-                self.get_parameter("elevation_map_clear_service").value,
             )
         for name, cli in (
             ("global", self._global_clear_cli),
@@ -2255,23 +2249,6 @@ class RoutePlanner(Node):
                     f"heading snap [{pass_label}]: {name} costmap clear service "
                     f"'{cli.srv_name}' unavailable; skipping."
                 )
-
-        cli = self._elevation_clear_cli
-        if cli.service_is_ready() or cli.wait_for_service(timeout_sec=1.0):
-            future = cli.call_async(Empty.Request())
-            self.get_logger().info(
-                f"heading snap [{pass_label}]: requested elevation map clear."
-            )
-            future.add_done_callback(
-                lambda f, p=pass_label: self._on_clear_done(
-                    f, "elevation map", p
-                )
-            )
-        else:
-            self.get_logger().warn(
-                f"heading snap [{pass_label}]: elevation map clear service "
-                f"'{cli.srv_name}' unavailable; skipping."
-            )
 
     def _on_clear_done(self, future, target, pass_label):
         try:

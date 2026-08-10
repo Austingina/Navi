@@ -28,6 +28,7 @@
 #include "nav2_costmap_2d/layered_costmap.hpp"
 #include "geometry_msgs/msg/point.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
+#include "std_srvs/srv/empty.hpp"
 #include "tf2/time.h"
 
 namespace terrain_costmap_layer
@@ -54,6 +55,7 @@ private:
   void cloudCallback(sensor_msgs::msg::PointCloud2::ConstSharedPtr msg);
 
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub_;
+  rclcpp::Client<std_srvs::srv::Empty>::SharedPtr elevation_clear_client_;
   std::mutex cloud_mutex_;
   sensor_msgs::msg::PointCloud2::ConstSharedPtr latest_cloud_;
 
@@ -71,6 +73,8 @@ private:
   // 脚印清除：每周期把机器人当前脚印内的格子在本层清成 FREE，
   // 保证 terrain 代价永远不会把机器人自己困住（对齐 ObstacleLayer）。
   bool footprint_clearing_enabled_{true};
+  bool clear_elevation_on_reset_{true};
+  std::string elevation_clear_service_;
   std::vector<geometry_msgs::msg::Point> transformed_footprint_;
 };
 

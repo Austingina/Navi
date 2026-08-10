@@ -36,7 +36,9 @@
     # Rolling waypoint batching: keep every Nav2 goal inside the global costmap
     # window. nav2_batch_radius_m must stay < global_costmap half-size (width/2).
     nav2_batch_enable: true
-    nav2_batch_radius_m: 9.0
+    # 200x200 m rolling global costmap has a 100 m half-size. Keep 10 m for
+    # TF jitter, window motion and footprint/inflation near the boundary.
+    nav2_batch_radius_m: 90.0
     nav2_batch_advance_m: 5.0
     nav2_reach_tol_m: 2.0
     nav2_batch_period_s: 1.0
@@ -59,12 +61,15 @@
     entry_table: entries
     off_network_m: 5.0
     # Also caps the access leg (entry -> goal), which Nav2 plans in one shot:
-    # global_costmap is a 100x100 m rolling window centred on the robot, and
-    # NavfnPlanner throws GoalOutsideMapBounds past its edge (50 m). If a goal
+    # global_costmap is a 200x200 m rolling window centred on the robot, and
+    # NavfnPlanner throws GoalOutsideMapBounds past its edge (100 m). If a goal
     # is further than this from every opening the planner warns; add another
     # entry point rather than raising the radius.
     entry_search_radius_m: 50.0
-    entry_offroad_weight: 1.0
+    entry_offroad_weight: 2.0
+    # Reject an entry when its straight access line to the off-network point
+    # crosses a different campus road. Contact at the entry endpoint is allowed.
+    reject_entry_network_crossing: true
     entry_markers_topic: campus_entry_markers
     entry_marker_size_m: 1.0
 
@@ -77,9 +82,9 @@
     # RouteGraph.plan_auto for the ordered rules. Set false to always follow the
     # road network (behaviour before this was added).
     auto_channel_enable: true
-    # Hard ceiling on any hop handed to Nav2 as a single goal. Same 50 m costmap
+    # Hard ceiling on any hop handed to Nav2 as a single goal. Same 100 m costmap
     # limit that bounds entry_search_radius_m above — keep the two in step.
-    direct_max_m: 49.5
+    direct_max_m: 99.5
     # Below this, drive straight there unconditionally: projecting onto a road
     # and back off it costs more than the trip itself.
     always_direct_m: 8.0

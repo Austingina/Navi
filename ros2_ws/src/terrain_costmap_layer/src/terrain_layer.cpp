@@ -36,6 +36,10 @@ void TerrainLayer::onInitialize()
   declareParameter("transform_tolerance", rclcpp::ParameterValue(0.1));
   declareParameter("footprint_clearing_enabled", rclcpp::ParameterValue(true));
   declareParameter("clearing_enabled", rclcpp::ParameterValue(true));
+  declareParameter("clear_elevation_on_reset", rclcpp::ParameterValue(true));
+  declareParameter(
+    "elevation_clear_service",
+    rclcpp::ParameterValue(std::string("/elevation_mapping_cupy/clear_map")));
 
   node->get_parameter(name_ + "." + "enabled", enabled_);
   node->get_parameter(name_ + "." + "cost_topic", cost_topic_);
@@ -43,6 +47,8 @@ void TerrainLayer::onInitialize()
   node->get_parameter(name_ + "." + "lethal_cost_threshold", lethal_cost_threshold_);
   node->get_parameter(name_ + "." + "footprint_clearing_enabled", footprint_clearing_enabled_);
   node->get_parameter(name_ + "." + "clearing_enabled", clearing_enabled_);
+  node->get_parameter(name_ + "." + "clear_elevation_on_reset", clear_elevation_on_reset_);
+  node->get_parameter(name_ + "." + "elevation_clear_service", elevation_clear_service_);
   double tf_tol = 0.1;
   node->get_parameter(name_ + "." + "transform_tolerance", tf_tol);
   transform_tolerance_ = tf2::durationFromSec(tf_tol);
@@ -61,6 +67,10 @@ void TerrainLayer::onInitialize()
   cloud_sub_ = node->create_subscription<sensor_msgs::msg::PointCloud2>(
     cost_topic_, rclcpp::SensorDataQoS(),
     std::bind(&TerrainLayer::cloudCallback, this, std::placeholders::_1), sub_opt);
+  if (clear_elevation_on_reset_) {
+    elevation_clear_client_ = node->create_client<std_srvs::srv::Empty>(
+      elevation_clear_service_, rclcpp::ServicesQoS(), callback_group_);
+  }
 
   RCLCPP_INFO(
     logger_,
@@ -82,6 +92,29 @@ void TerrainLayer::reset()
 {
   resetMaps();
   current_ = false;
+
+  // Do not let updateBounds immediately paint the just-cleared layer from the
+  // last cloud retained before ClearEntireCostmap. A fresh elevation message
+  // will repopulate it after the source map starts accumulating again.
+  {
+    std::lock_guard<std::mutex> lk(cloud_mutex_);
+    latest_cloud_.reset();
+  }
+
+  // ClearEntireCostmap calls reset() on every clearable plugin. Forward that
+  // event to the persistent source map, asynchronously so the Nav2 costmap
+  // service never waits for the Python elevation node.
+  if (clear_elevation_on_reset_ && elevation_clear_client_) {
+    if (elevation_clear_client_->service_is_ready()) {
+      elevation_clear_client_->async_send_request(
+        std::make_shared<std_srvs::srv::Empty::Request>());
+      RCLCPP_INFO(logger_, "TerrainLayer reset: requested elevation map clear");
+    } else {
+      RCLCPP_WARN(
+        logger_, "TerrainLayer reset: elevation clear service %s unavailable; skipping",
+        elevation_clear_service_.c_str());
+    }
+  }
 }
 
 void TerrainLayer::cloudCallback(sensor_msgs::msg::PointCloud2::ConstSharedPtr msg)

@@ -180,6 +180,10 @@ local_costmap:
         # True：像 obstacle_layer 那样，重新扫到就用最新观测覆盖该格（扫到平地→清 FREE，
         # 坡度变化→上下修正）；只有没扫到的格子(坡度未知)才保留旧值。False=旧的只增不减。
         clearing_enabled: True
+        # Nav2 ClearEntireCostmap -> TerrainLayer::reset() 时，同时清空持久的
+        # elevation source；否则旧 terrain cloud 会很快把刚清的 costmap 灌回来。
+        clear_elevation_on_reset: True
+        elevation_clear_service: /elevation_mapping_cupy/clear_map
 
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
@@ -224,8 +228,8 @@ global_costmap:
       robot_base_frame: base_link
       transform_tolerance: 0.3
       rolling_window: true
-      width: 100
-      height: 100
+      width: 200
+      height: 200
       resolution: 0.1
       # false：未观测格子当作 FREE，配合 planner allow_unknown:true 可朝远处目标规划。
       track_unknown_space: false
@@ -245,6 +249,8 @@ global_costmap:
         # True：重新扫到就用最新观测覆盖该格（扫到平地→清 FREE，坡度变化→上下修正）；
         # 没扫到的格子(坡度未知)保留旧值。这解决 global 图上地形误报清不掉的问题。
         clearing_enabled: True
+        clear_elevation_on_reset: True
+        elevation_clear_service: /elevation_mapping_cupy/clear_map
 
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
