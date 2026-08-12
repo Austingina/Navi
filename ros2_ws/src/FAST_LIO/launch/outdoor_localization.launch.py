@@ -76,6 +76,12 @@ def generate_launch_description():
         arguments=['0','0','0','0','0','0','body','base_link'],
         output='screen',
     )
+    tf_base_link_to_gps = Node(
+        package='tf2_ros', executable='static_transform_publisher',
+        name='statictf_base_link_to_gps',
+        arguments=['0','0','0','0','0','0','base_link','gps'],
+        output='screen',
+    )
 
 
     # FAST-LIO inertial odometry (pure LIO, builds map online, no global
@@ -188,4 +194,5 @@ def generate_launch_description():
         navsat_node,
         tf_odom_to_camera_init,
         tf_body_to_base_link,
+        tf_base_link_to_gps,
     ])
