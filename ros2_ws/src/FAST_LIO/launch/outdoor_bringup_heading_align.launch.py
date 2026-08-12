@@ -123,7 +123,7 @@ def generate_launch_description():
     # ---- top-level args (透传给子 launch) ----
     declare_args = [
         DeclareLaunchArgument(
-            'use_sim_time', default_value='true',
+            'use_sim_time', default_value='false',
             description='Use simulation clock; shared by all three stacks'),
         DeclareLaunchArgument(
             'map_odom_source', default_value='gps',

@@ -1,5 +1,6 @@
 session_name: slam
-start_directory: /home/nvidia/Navi/scripts
+# 见 navi.base.yaml 的说明：用 $NAVI_SCRIPT_DIR 而非写死 /home/nvidia，便于跨账号部署。
+start_directory: $NAVI_SCRIPT_DIR
 
 # SLAM 室内点云定位栈（session=slam）：FAST-LIO 定位 + r1pro Nav2。
 # 不含 NaviSkill(start_mcp)/雷达——它们在 session=navi（navi.base.yaml）常驻。

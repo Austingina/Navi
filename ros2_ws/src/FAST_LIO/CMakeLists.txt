@@ -91,6 +91,22 @@ find_package(gpu_bbs3d REQUIRED)
 find_package(CUDAToolkit REQUIRED)
 include_directories(${gpu_bbs3d_INCLUDE_DIRS})
 
+# gpu_bbs3d's bbs3d.cuh pulls in <cuda_runtime.h> and <thrust/*.h>, so whoever
+# includes it needs the CUDA toolkit headers. Two gotchas:
+#   1. CUDA::cudart does NOT propagate include dirs on CMake 3.28 (Jazzy/Noble),
+#      so ${CUDAToolkit_INCLUDE_DIRS} has to be added by hand.
+#   2. CUDA 13 moved the CCCL headers (thrust / cub / libcu++) out of
+#      <cuda>/include into <cuda>/include/cccl, so that subdir needs to be on
+#      the path too. On CUDA <= 12 it doesn't exist and the probe is a no-op
+#      (thrust lives directly in <cuda>/include there).
+set(CUDA_BBS3D_INCLUDE_DIRS ${CUDAToolkit_INCLUDE_DIRS})
+foreach(_cuda_inc IN LISTS CUDAToolkit_INCLUDE_DIRS)
+  if(IS_DIRECTORY "${_cuda_inc}/cccl")
+    list(APPEND CUDA_BBS3D_INCLUDE_DIRS "${_cuda_inc}/cccl")
+  endif()
+endforeach()
+message(STATUS "CUDA includes for gpu_bbs3d: ${CUDA_BBS3D_INCLUDE_DIRS}")
+
 message(Eigen: ${EIGEN3_INCLUDE_DIR})
 message(STATUS "PCL: ${PCL_INCLUDE_DIRS}")
 
@@ -117,6 +133,7 @@ target_include_directories(fastlio_odometry PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
   ${PCL_INCLUDE_DIRS}
+  ${CUDA_BBS3D_INCLUDE_DIRS}
 )
 target_link_libraries(fastlio_odometry ${PCL_LIBRARIES} Python3::Python Eigen3::Eigen ${gpu_bbs3d_LIBRARY} CUDA::cudart)
 #teaserpp::teaser_registration teaserpp::teaser_features teaserpp::teaser_io)

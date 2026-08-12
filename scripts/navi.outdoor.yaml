@@ -1,5 +1,6 @@
 session_name: outdoor
-start_directory: /home/nvidia/Navi/scripts
+# 见 navi.base.yaml 的说明：用 $NAVI_SCRIPT_DIR 而非写死 /home/nvidia，便于跨账号部署。
+start_directory: $NAVI_SCRIPT_DIR
 
 # 室外 GPS 栈（session=outdoor）：outdoor_bringup_heading_align（定位 heading-align +
 # Nav2 + campus_nav 路网，一条 launch 全包）。不含 NaviSkill/雷达——它们在 session=navi

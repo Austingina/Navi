@@ -10,7 +10,7 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    use_sim_time = LaunchConfiguration('use_sim_time', default='true')
+    use_sim_time = LaunchConfiguration('use_sim_time', default='false')
 
     fast_lio_dir = get_package_share_directory('fast_lio')
     # Heading-align params (wait_for_datum + absolute yaw). Simulation bringup
@@ -20,7 +20,7 @@ def generate_launch_description():
 
     # FAST-LIO sensor config, overridable from CLI.
     config_path = LaunchConfiguration('config_path', default=os.path.join(
-        fast_lio_dir, 'config', 'mid360_sim.yaml'))
+        fast_lio_dir, 'config', 'mid360.yaml'))
 
     declare_use_sim_time = DeclareLaunchArgument(
         'use_sim_time', default_value='true',

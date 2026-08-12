@@ -6,6 +6,7 @@ from rcl_interfaces.msg import Parameter as ParameterMsg, ParameterValue, Parame
 from rclpy.executors import SingleThreadedExecutor  # 单线程执行器
 from rclpy.parameter import Parameter  # 节点参数（用于 use_sim_time 仿真时钟）
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup  # 回调组（MultiThreadedExecutor 并行调度）
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy  # /gps/fix 需 BEST_EFFORT，见订阅处
 from geometry_msgs.msg import PoseStamped, Twist, TwistStamped  # 位姿消息类型和速度控制消息类型
 from nav_msgs.msg import OccupancyGrid, Odometry, Path  # 占据网格、里程计、全局路径
 from sensor_msgs.msg import CompressedImage  # 压缩图像（用于 VPR 引导）
@@ -295,11 +296,21 @@ class NavNode(Node):
             # 切到 GPS 模式后复位；仅新室外栈的 navsat_transform 发布 /odometry/gps
             # 才会置回 True，作为“新室外栈已就绪”的判据（见 update_robot_pose 门控）。
             self._gps_odom_received = False
+            # QoS 必须是 BEST_EFFORT：GNSS 驱动（unicore_gnss）按传感器数据惯例以
+            # BEST_EFFORT 发布，而默认 QoS（直接传 depth 整数）是 RELIABLE，两者
+            # 不兼容，rclpy 会打印 "incompatible QoS ... No messages will be
+            # received" 并且一帧都收不到，导致 is_gps_localized() 永远为假。
+            # BEST_EFFORT 的订阅端同时兼容 BEST_EFFORT 与 RELIABLE 发布者，是单向
+            # 放宽，故对其它发布 /gps/fix 的实现（如 robo_gateway 桥）同样安全。
             self.gps_fix_sub = self.create_subscription(
                 NavSatFix,
                 gps_fix_topic,
                 self._gps_fix_callback,
-                10,
+                QoSProfile(
+                    reliability=ReliabilityPolicy.BEST_EFFORT,
+                    history=HistoryPolicy.KEEP_LAST,
+                    depth=10,
+                ),
                 callback_group=self._cb_group_bulk,
             )
             # navsat_transform 输出的 GPS 里程（map/odom 系），可选，用于健康度参考

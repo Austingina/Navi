@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import threading
 import webbrowser
 import yaml
@@ -14,16 +13,27 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 
-NAVI_ROOT = Path(__file__).resolve().parents[1]
-CAMPUS_SRC = NAVI_ROOT / "ros2_ws" / "src" / "campus_nav"
-sys.path.insert(0, str(CAMPUS_SRC))
+from ament_index_python.packages import get_package_share_directory
 
-from campus_nav.route_graph import (  # noqa: E402
+from campus_nav.route_graph import (
     build_graph_from_pbf,
     haversine,
     load_entry_points,
     load_stub_entry_points,
 )
+
+
+PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _default_data_root() -> Path:
+    """Prefer the source tree; fall back to the installed package share."""
+    if (PACKAGE_ROOT / "config" / "route_planner.yaml").is_file():
+        return PACKAGE_ROOT
+    return Path(get_package_share_directory("campus_nav"))
+
+
+CAMPUS_DATA = _default_data_root()
 
 
 HTML = r"""<!doctype html>
@@ -245,7 +255,7 @@ def _route_planner_params(config_path):
 
 
 def parse_args():
-    default_config = CAMPUS_SRC / "config" / "route_planner.yaml"
+    default_config = CAMPUS_DATA / "config" / "route_planner.yaml"
     pre = argparse.ArgumentParser(add_help=False)
     pre.add_argument("--config", type=Path, default=default_config)
     known, _ = pre.parse_known_args()
@@ -258,8 +268,8 @@ def parse_args():
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--verbose", action="store_true")
-    parser.add_argument("--pbf", type=Path, default=CAMPUS_SRC / "xili_5km_finetuned.osm.pbf")
-    parser.add_argument("--entries", type=Path, default=CAMPUS_SRC / "campus_entries.gpkg")
+    parser.add_argument("--pbf", type=Path, default=CAMPUS_DATA / "xili_5km_finetuned.osm.pbf")
+    parser.add_argument("--entries", type=Path, default=CAMPUS_DATA / "campus_entries.gpkg")
     parser.add_argument("--datum-lat", type=float, default=params.get("datum_lat", 22.574357630323675))
     parser.add_argument("--datum-lon", type=float, default=params.get("datum_lon", 113.93507078035577))
     parser.add_argument("--off-network-m", type=float, default=params.get("off_network_m", 5.0))

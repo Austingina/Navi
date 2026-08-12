@@ -1,5 +1,7 @@
 session_name: navi
-start_directory: /home/nvidia/Navi/scripts
+# 用 $NAVI_SCRIPT_DIR（由 start_navi.sh 经 common.sh export）而非写死 /home/nvidia/Navi/scripts，
+# 这样在部署账号 nvidia 与其它开发账号下都能用。tmuxp 会对 start_directory 做 expandvars。
+start_directory: $NAVI_SCRIPT_DIR
 
 # 共享常驻栈（session=navi）：雷达驱动 + NaviSkill。
 # 这两者与「定位/Nav2 模式」无关，SLAM(session=slam) 与 室外(session=outdoor) 切换时

@@ -13,6 +13,7 @@ setup(
         ("share/" + package_name, ["package.xml"]),
         ("share/" + package_name + "/launch", glob("launch/*.py")),
         ("share/" + package_name + "/config", glob("config/*.yaml")),
+        ("share/" + package_name, glob("*.gpkg") + glob("*.osm.pbf")),
         (
             "share/" + package_name + "/config/behavior_trees",
             glob("config/behavior_trees/*.xml"),
@@ -28,6 +29,7 @@ setup(
     entry_points={
         "console_scripts": [
             "route_planner_node = campus_nav.route_planner_node:main",
+            "route_plan_gui = campus_nav.route_plan_gui:main",
         ],
     },
 )
