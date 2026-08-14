@@ -1623,63 +1623,105 @@ class NavigationToolManager:
 
         def get_nearest_point() -> Dict[str, Any]:
             """
-            获取当前位置最接近的预设点
-            
-            返回:
-            Dict: 包含最近点信息和所有距离的字典
+            获取当前位置最接近的预设点。
+
+            - SLAM 模式：在当前 submap 语义点中按 map 平面 (x, y) 欧氏距离比较。
+            - 室外 GPS 模式：在场景语义点中按经纬度近似平面距离比较，返回经纬度及
+              场景点字段（lon/lat/area/heading_deg/type 等）。
             """
-            """获取当前位置最接近的预设点"""
             try:
-                # 获取当前里程计数据
+                nav_mode = self.ros_node.get_nav_mode()
+
+                # ── 室外 GPS：按经纬度在场景语义点中找最近点 ──
+                if nav_mode == NavNode.NAV_MODE_GPS:
+                    if not self.map_manager:
+                        return {"success": False, "msg": "MapManager 未配置"}
+                    gps_fix = self.ros_node.get_latest_gps_fix()
+                    if not gps_fix or gps_fix.get("lon") is None or gps_fix.get("lat") is None:
+                        return {"success": False, "msg": "无室外 GNSS 定位数据"}
+                    cur_lon = float(gps_fix["lon"])
+                    cur_lat = float(gps_fix["lat"])
+
+                    scene_points = self.map_manager.get_scene_semantic_points()
+                    if not scene_points:
+                        return {"success": False, "msg": "场景语义点为空"}
+
+                    nearest_point = None
+                    nearest_info = None
+                    min_distance = float("inf")
+
+                    for point_name, point_data in scene_points.items():
+                        pt_lon = point_data.get("lon")
+                        pt_lat = point_data.get("lat")
+                        if pt_lon is None or pt_lat is None:
+                            continue
+                        distance = self._lonlat_dist_m(cur_lon, cur_lat, float(pt_lon), float(pt_lat))
+                        if distance < min_distance:
+                            min_distance = distance
+                            nearest_point = point_name
+                            nearest_info = dict(point_data)
+
+                    if nearest_point is None:
+                        return {"success": False, "msg": "没有找到有效的场景语义点"}
+
+                    current_position = {
+                        "lon": round(cur_lon, 8),
+                        "lat": round(cur_lat, 8),
+                    }
+                    if gps_fix.get("alt") is not None:
+                        current_position["alt"] = round(float(gps_fix["alt"]), 3)
+
+                    return {
+                        "success": True,
+                        "nav_mode": NavNode.NAV_MODE_GPS,
+                        "nearest_point": nearest_point,
+                        "point_info": nearest_info,
+                        "distance": round(min_distance, 3),
+                        "current_position": current_position,
+                        "msg": (f"当前位置最接近的场景语义点是: {nearest_point} "
+                                f"(距离: {min_distance:.3f}m)"),
+                    }
+
+                # ── SLAM：在当前 submap 语义点中按 (x, y) 比较 ──
                 odom = self.ros_node.current_pose
                 if not odom:
                     return {"success": False, "msg": "无实时位姿数据"}
-                
-                # 获取当前位置坐标
+
                 current_x = odom.pose.position.x
                 current_y = odom.pose.position.y
 
-                # 初始化最近点查找变量
                 nearest_point = None
-                min_distance = float('inf')  # 初始化为无穷大
-                distances = {}  # 存储所有点到当前位置的距离
-                
-                # 遍历所有预设点计算距离
+                nearest_info = None
+                min_distance = float("inf")
+
                 for point_name, point_data in self.map_manager.pose_map_current_submap.items():
-                    # 获取预设点的位姿信息
                     pose_info = point_data.get("pose")
                     if not pose_info:
                         continue
-                    
-                    # 获取预设点坐标
+
                     target_x = pose_info["position"]["x"]
                     target_y = pose_info["position"]["y"]
-                    
-                    # 计算欧几里得距离
                     distance = ((current_x - target_x) ** 2 + (current_y - target_y) ** 2) ** 0.5
-                    # 记录距离
-                    distances[point_name] = distance
-                    
-                    # 更新最近点
+
                     if distance < min_distance:
                         min_distance = distance
                         nearest_point = point_name
-                
-                # 检查是否找到有效点
+                        nearest_info = dict(point_data)
+
                 if nearest_point is None:
                     return {"success": False, "msg": "没有找到有效的预设点"}
-                
-                # 返回结果
+
                 return {
                     "success": True,
-                    "nearest_point": nearest_point,  # 最近点名称
-                    "distance": round(min_distance, 3),  # 最近距离（保留3位小数）
-                    "current_position": {  # 当前位置
+                    "nav_mode": NavNode.NAV_MODE_SLAM,
+                    "nearest_point": nearest_point,
+                    "point_info": nearest_info,
+                    "distance": round(min_distance, 3),
+                    "current_position": {
                         "x": round(current_x, 3),
-                        "y": round(current_y, 3)
+                        "y": round(current_y, 3),
                     },
-                    "all_distances": {k: round(v, 3) for k, v in distances.items()},  # 所有距离
-                    "msg": f"当前位置最接近的预设点是: {nearest_point} (距离: {min_distance:.3f}m)"
+                    "msg": f"当前位置最接近的预设点是: {nearest_point} (距离: {min_distance:.3f}m)",
                 }
             except Exception as e:
                 return {"success": False, "msg": f"获取最近点失败: {str(e)}"}
