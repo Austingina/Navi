@@ -90,7 +90,7 @@ def generate_launch_description():
             'obstacle_min_height': 0.15,
             'obstacle_max_height': 1.6,
             # 地面未知的格子回退到脚底高度带(用 TF odom->base_link 的 z)。
-            'fallback_on_unknown_elevation': True,
+            'fallback_on_unknown_elevation': False,
             'fallback_min_height': 0.3,
             'fallback_max_height': 1.6,
             # 坡度：地面层梯度 -> 分级代价 OccupancyGrid(/slope_costmap)。
@@ -98,6 +98,19 @@ def generate_launch_description():
             # >=lethal_deg 记 100(lethal，基本过不去)。不再往 scan 里塞假障碍点。
             'slope_enable': True,
             'slope_window': 3,
+            # 地形掩码：把"物体"格子从坡度链剔除，否则人/灌木/墙的台阶会被当成陡坡
+            # 写进持久化的 TerrainLayer，人走开也不消失（实测 63.7% 的有效 slope
+            # 格 >=15°，而地形相邻格高差中位只有 0.4 cm）。
+            # slope_object_height: elevation-ground 超过它即判物体。取值要落在
+            #   "obstacle 链开始可靠接管"的高度上，两条链才无缝交接：
+            #     <0.3 m 的路沿/缓台阶 -> obstacle 链抓不到(被 h<=0.15 滤掉)，
+            #                            必须留给 terrain 链，且需要长记忆；
+            #     >0.3 m 的人/灌木/车/墙 -> obstacle 链的高度带(地面上 0.15~1.6 m)
+            #                            抓得到，且带 raytrace 清除，该归它。
+            #   所以是 0.30 而不是 0.15 —— 用 0.15 会把 20 cm 的路沿判成物体剔除，
+            #   等于关掉了 terrain 链本来要抓的东西。
+            'slope_object_height': 0.30,
+            'slope_terrain_band': 0.0,
             'slope_free_deg': 5.0,
             # 统一阈值：>=15° 判不能通行(TerrainLayer 记 LETHAL 并 60m 持久)，
             # 8~12° 路口斜坡落在软代价区间仍可走。
@@ -107,6 +120,13 @@ def generate_launch_description():
             # 地形代价点云(给自定义 TerrainLayer 用)。
             'cost_cloud_enable': True,
             'cost_cloud_topic': '/terrain_cost_cloud',
+            # 空格清除：TerrainLayer 只会碰 cost cloud 里出现过的格子，没出现的
+            # 旧值永久保留。所以"车附近、连高程都没有"的格子要当成"观测到是空的"
+            # 发 cost=0，否则人走开后高程图清了、costmap 上的 lethal 却清不掉。
+            # 半径取 4.5 m：略小于高程图半边长(map_length=10 -> 5 m)，避免把
+            # 边缘从未扫到的区域也判成空。
+            'free_on_empty': True,
+            'free_on_empty_radius': 4.5,
             # 多帧累积：把最近若干帧的存活障碍点在 odom 系累起来再投 2D，
             # 单帧稀疏被时间窗补满，障碍不再闪烁/缺角。
             'accumulate_enable': True,

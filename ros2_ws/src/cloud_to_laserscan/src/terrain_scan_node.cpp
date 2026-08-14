@@ -64,6 +64,12 @@ public:
     cost_cloud_enable_ = declare_parameter<bool>("cost_cloud_enable", true);
     cost_cloud_topic_ =
       declare_parameter<std::string>("cost_cloud_topic", "/terrain_cost_cloud");
+    // 空格清除: 把"车附近、连高程都没有"的格子当作"观测到是空的", 发 cost=0,
+    // 让 TerrainLayer 能清掉旧值(它只会碰点云里出现过的格子). 见 publishCostCloud.
+    free_on_empty_ = declare_parameter<bool>("free_on_empty", true);
+    // 可信半径: 只在这个范围内把"无数据"解释成"空". 太大会把远处从未扫到的
+    // 区域也说成空; 取值应 <= 高程图半边长(map_length/2).
+    free_on_empty_radius_ = declare_parameter<double>("free_on_empty_radius", 4.5);
     base_frame_ = declare_parameter<std::string>("base_frame", "base_link");
 
     // ---- 地面层（邻域低分位）------------------------------------------------
@@ -86,6 +92,13 @@ public:
     // slope >= lethal_deg         -> 100（lethal，基本过不去）
     slope_enable_ = declare_parameter<bool>("slope_enable", true);
     slope_window_ = declare_parameter<int>("slope_window", 2);        // 中心差分步长(格)
+    // 地形掩码阈值：把"物体"格子从坡度链里剔除，见 addTerrainMask 的说明。
+    // <=0 关闭对应判据。
+    // 0.30 = 两条链的交接高度: 更低的路沿 obstacle 链抓不到(被 obstacle_min_height
+    // 滤掉), 必须留给需要长记忆的 terrain 链; 更高的人/灌木/车归 obstacle 链(带
+    // raytrace 清除). 定成 0.15 会把 20 cm 路沿当物体剔除, 反而关掉了本要抓的东西.
+    slope_object_height_ = declare_parameter<double>("slope_object_height", 0.30);
+    slope_terrain_band_ = declare_parameter<double>("slope_terrain_band", 1.0);
     slope_free_deg_ = declare_parameter<double>("slope_free_deg", 5.0);
     slope_lethal_deg_ = declare_parameter<double>("slope_lethal_deg", 25.0);
     // 代价曲线弯曲度：cost = 1 + pow(t, gamma)*98, t=(slope-free)/(lethal-free)。
@@ -166,8 +179,28 @@ private:
       return;
     }
 
+    // 车体在 grid 系下的位置：z 给地形掩码的高度带判据用，xy 给"空格清除"的
+    // 可信半径用。拿不到就退化（掩码只用物体判据、不发空格清除），不影响主路径。
+    bool have_foot = false;
+    double x_foot = 0.0, y_foot = 0.0, z_foot = 0.0;
+    try {
+      auto t_foot = tf_buffer_->lookupTransform(
+        grid->getFrameId(), base_frame_, msg->header.stamp,
+        tf2::durationFromSec(0.2));
+      x_foot = t_foot.transform.translation.x;
+      y_foot = t_foot.transform.translation.y;
+      z_foot = t_foot.transform.translation.z;
+      have_foot = true;
+    } catch (const std::exception & e) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 5000,
+        "foot TF %s<-%s failed (%s); 掩码只用物体判据, 且不发空格清除",
+        grid->getFrameId().c_str(), base_frame_.c_str(), e.what());
+    }
+
     addGroundLayer(*grid);
     if (slope_enable_) {
+      addTerrainMask(*grid, z_foot, have_foot);
       addSlopeLayer(*grid);
       addSlopeCostLayer(*grid);
     }
@@ -188,16 +221,33 @@ private:
 
       // 地形代价点云(给 TerrainLayer): 每个有效格发一个点, 附 cost=0..100.
       if (cost_cloud_enable_ && cost_cloud_pub_) {
-        publishCostCloud(*grid, msg->header.stamp);
+        publishCostCloud(*grid, msg->header.stamp, x_foot, y_foot, have_foot);
       }
     }
   }
 
   // 把 slope_cost 层拍成 PointCloud2(x,y=格心, z=0, float cost=0..100), grid(odom) 系.
-  void publishCostCloud(const grid_map::GridMap & grid, const rclcpp::Time & stamp)
+  //
+  // 除了有效 slope_cost, 还会为"观测到是空的"格子发 cost=0. 这是必需的:
+  // TerrainLayer 只遍历本点云里的点, 没出现的格子它一律不碰、旧值永久保留
+  // (见 terrain_layer.cpp cloudCallback 的循环). 而 NaN 有两种完全不同的含义:
+  //   * 该格有高程数据但坡度不可信(物体/边界) -> 我们确实不知道地形, 不能清
+  //   * 该格连高程数据都没有, 且在车附近可信半径内 -> 看过了, 那儿什么都没有,
+  //     这是一次有效的"清除观测"
+  // 少了后者, 人走开后高程图虽然清了, 那些格子仍然进不了点云, 之前写下的
+  // lethal 就永久留在 costmap 上 —— 实测就是这个现象.
+  //
+  // 负障碍(下沉台阶/悬崖)不会因此变危险: 空洞边缘的上沿格子有数据、会照常算出
+  // 陡坡判 lethal, 车要进空洞必须先穿过那圈 lethal.
+  void publishCostCloud(
+    const grid_map::GridMap & grid, const rclcpp::Time & stamp,
+    double x_robot, double y_robot, bool have_robot)
   {
     const grid_map::Matrix & cost = grid["slope_cost"];
+    const grid_map::Matrix & elev = grid[elevation_layer_];
     const grid_map::Size size = grid.getSize();
+    const bool clear_empty = free_on_empty_ && have_robot;
+    const double r2 = free_on_empty_radius_ * free_on_empty_radius_;
 
     sensor_msgs::msg::PointCloud2 cloud;
     cloud.header.frame_id = grid.getFrameId();
@@ -221,18 +271,35 @@ private:
     sensor_msgs::PointCloud2Iterator<float> oc(cloud, "cost");
 
     size_t n = 0;
+    size_t n_empty = 0;
     for (grid_map::GridMapIterator it(grid); !it.isPastEnd(); ++it) {
       const grid_map::Index idx(*it);
       const float c = cost(idx(0), idx(1));
-      if (!std::isfinite(c)) continue;
+      float out_cost;
       grid_map::Position pos;
-      grid.getPosition(idx, pos);
+      if (std::isfinite(c)) {
+        out_cost = c;
+        grid.getPosition(idx, pos);
+      } else {
+        // 只有"连高程都没有"且在可信半径内的格子, 才算观测到空 -> 发 0 去清除.
+        // 有高程但坡度 NaN(物体/差分边界) 的格子跳过: 那是真的不知道.
+        if (!clear_empty || std::isfinite(elev(idx(0), idx(1)))) continue;
+        grid.getPosition(idx, pos);
+        const double dx = pos.x() - x_robot;
+        const double dy = pos.y() - y_robot;
+        if (dx * dx + dy * dy > r2) continue;
+        out_cost = 0.0f;
+        ++n_empty;
+      }
       *ox = static_cast<float>(pos.x());
       *oy = static_cast<float>(pos.y());
       *oz = 0.0f;
-      *oc = c;
+      *oc = out_cost;
       ++ox; ++oy; ++oz; ++oc; ++n;
     }
+    RCLCPP_DEBUG_THROTTLE(
+      get_logger(), *get_clock(), 5000,
+      "cost cloud: %zu 点 (其中 %zu 个为空格清除)", n, n_empty);
     mod.resize(n);
     cost_cloud_pub_->publish(cloud);
   }
@@ -273,11 +340,61 @@ private:
     grid.add("ground", ground);
   }
 
+  // 地形掩码: 标出"哪些格子是车能走的地形", 把物体格子从坡度链里剔除.
+  //
+  // 为什么必须有: slope 是 ground 层的梯度, 而人/灌木/墙这类竖直物体会在 ground 上
+  // 造成 10~150 cm 的台阶; slope_window=3 时 span=0.6 m, 只要 16 cm 高差就判 15°
+  // (lethal), 中心差分又把每个台阶摊到 ±window 格宽的带上. 于是物体边缘被当成陡坡
+  // 写进 TerrainLayer, 而该层对"没重新观测到"的格子保留旧值, 人走开后那圈 lethal
+  // 就永久留下了.
+  // 实测(10x10 m 窗, res=0.1): 有效 slope 格里 63.7% >=15°, 而地形本身相邻格高差
+  // 中位仅 0.4 cm —— 即坡度链当时基本在测物体边缘, 不是地形.
+  // 动态障碍归 scan 链(有 raytrace 清除), 不该进这条持久化的地形代价链.
+  void addTerrainMask(grid_map::GridMap & grid, double z_foot, bool have_foot) const
+  {
+    if (!grid.exists("ground") || !grid.exists(elevation_layer_)) return;
+    const grid_map::Matrix & elev = grid[elevation_layer_];
+    const grid_map::Matrix & g = grid["ground"];
+    const grid_map::Size size = grid.getSize();
+
+    grid_map::Matrix ok(size(0), size(1));
+    ok.setZero();
+    for (int i = 0; i < size(0); ++i) {
+      for (int j = 0; j < size(1); ++j) {
+        const float gv = g(i, j);
+        if (!std::isfinite(gv)) continue;
+        // 判据 1(物体): 该格高出局部地面太多 -> 是物体, 不是地形.
+        const float ev = elev(i, j);
+        if (slope_object_height_ > 0.0 && std::isfinite(ev) &&
+          (ev - gv) > slope_object_height_)
+        {
+          continue;
+        }
+        // 判据 2(高度带): 物体核心区的 ground 会被物体自己顶起来, 此时
+        // elevation-ground≈0, 判据 1 抓不到. 用"地面层相对脚底的高度"兜住
+        // 花台/墙顶这类抬升结构. 真实斜坡在 10 m 窗内的高差远小于该带宽
+        // (15° 走 5 m 也只升 1.34 m), 所以不会误杀坡道.
+        if (have_foot && slope_terrain_band_ > 0.0 &&
+          std::abs(static_cast<double>(gv) - z_foot) > slope_terrain_band_)
+        {
+          continue;
+        }
+        ok(i, j) = 1.0f;
+      }
+    }
+    grid.add("terrain_ok", ok);
+  }
+
   // 坡度层 = 地面层的空间梯度(中心差分), 单位: 度.
+  // 只在中心与四个差分邻居都是地形(terrain_ok)时计算, 否则留 NaN —— 物体边缘
+  // 不再产生假陡坡.
   void addSlopeLayer(grid_map::GridMap & grid) const
   {
     if (!grid.exists("ground")) return;
     const grid_map::Matrix & g = grid["ground"];
+    const bool has_mask = grid.exists("terrain_ok");
+    const grid_map::Matrix & mask =
+      has_mask ? grid["terrain_ok"] : grid["ground"];  // has_mask=false 时不会被读
     const grid_map::Size size = grid.getSize();
     const int rows = size(0), cols = size(1);
     const int w = std::max(1, slope_window_);
@@ -292,6 +409,14 @@ private:
         const float gya = g(i, j - w), gyb = g(i, j + w);
         if (!std::isfinite(gxa) || !std::isfinite(gxb) ||
           !std::isfinite(gya) || !std::isfinite(gyb))
+        {
+          continue;
+        }
+        // 差分模板里只要碰到非地形格, 这个坡度就不可信 -> 留 NaN.
+        if (has_mask &&
+          (mask(i, j) < 0.5f ||
+          mask(i - w, j) < 0.5f || mask(i + w, j) < 0.5f ||
+          mask(i, j - w) < 0.5f || mask(i, j + w) < 0.5f))
         {
           continue;
         }
@@ -507,6 +632,8 @@ private:
   std::string output_topic_, grid_output_topic_, slope_cost_topic_, base_frame_;
   bool cost_cloud_enable_;
   std::string cost_cloud_topic_;
+  bool free_on_empty_;
+  double free_on_empty_radius_;
   double ground_percentile_;
   int ground_radius_, ground_min_cells_;
   double obstacle_min_height_, obstacle_max_height_;
@@ -514,6 +641,7 @@ private:
   double fallback_min_height_, fallback_max_height_;
   bool slope_enable_;
   int slope_window_;
+  double slope_object_height_, slope_terrain_band_;
   double slope_free_deg_, slope_lethal_deg_, slope_gamma_;
   double angle_min_, angle_max_, angle_increment_, range_min_, range_max_;
   bool accumulate_enable_;
