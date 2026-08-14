@@ -18,9 +18,38 @@ def generate_launch_description():
     params_file = LaunchConfiguration('params', default=os.path.join(
         fast_lio_dir, 'config', 'dual_ekf_navsat_heading_align.yaml'))
 
-    # FAST-LIO sensor config, overridable from CLI.
-    config_path = LaunchConfiguration('config_path', default=os.path.join(
-        fast_lio_dir, 'config', 'mid360.yaml'))
+    # sim 与 use_sim_time 是两件事：use_sim_time 只管时钟源，sim 管「传感器话题名 +
+    # 雷达安装外参」这类硬件差异。start_outdoor.bash 的 -s 会同时置上两者。
+    sim = LaunchConfiguration('sim')
+    declare_sim = DeclareLaunchArgument(
+        'sim', default_value='false',
+        description='Simulation hardware profile: picks the sim sensor topics '
+                    '(mid360_sim.yaml) and drops the real robot 90 deg lidar '
+                    'mounting rotation. Independent of use_sim_time.')
+
+    # FAST-LIO sensor config, overridable from CLI. 默认值按 sim 选：
+    #   mid360.yaml      -> /livox/front_lidar, /livox/front_imu  (robot-sensors 的驱动)
+    #   mid360_sim.yaml  -> /livox/lidar,       /livox/imu        (Isaac 转出来的 Livox 消息)
+    config_path = LaunchConfiguration('config_path', default=PythonExpression([
+        "'", os.path.join(fast_lio_dir, 'config', 'mid360_sim.yaml'), "'",
+        " if '", sim, "' == 'true' else ",
+        "'", os.path.join(fast_lio_dir, 'config', 'mid360.yaml'), "'",
+    ]))
+
+    # 真机 Mid360（连带它的 IMU —— FAST-LIO 的 body 系就是 IMU 系）相对 base_link
+    # 绕 Z 装反了 90°，仿真 USD 里没有这个安装旋转，故仿真下必须回到 0（这也是
+    # 0fa863a4 之前的原值，仿真当年就是靠它跑通的）。室内栈同一处补偿写在
+    # odometry_lslidar.launch.py 的 imu_link->base_link 上，两栈取值须一致。
+    body_base_yaw = LaunchConfiguration('body_base_yaw', default=PythonExpression(
+        ["'0.0' if '", sim, "' == 'true' else '-1.5708'"]))
+
+    # 只给 navsat_transform 的 imu remap 用。必须与所选 config_path 里的
+    # common.imu_topic 一致 —— 这里没法从 yaml 里读，只能并行维护一份，改一处记得改另一处。
+    # 当前 dual_ekf_navsat_heading_align.yaml 是 use_odometry_yaw: true，
+    # navsat_transform 忽略 IMU 数据（订阅悬空、无功能影响），但把仿真话题名写死在
+    # 真机路径上迟早埋坑，故一并按 profile 选。
+    imu_topic = LaunchConfiguration('imu_topic', default=PythonExpression(
+        ["'/livox/imu' if '", sim, "' == 'true' else '/livox/front_imu'"]))
 
     declare_use_sim_time = DeclareLaunchArgument(
         'use_sim_time', default_value='true',
@@ -30,7 +59,15 @@ def generate_launch_description():
         description='robot_localization params (ekf + navsat); default=heading_align')
     declare_config_path = DeclareLaunchArgument(
         'config_path', default_value=config_path,
-        description='FAST-LIO sensor yaml config path')
+        description='FAST-LIO sensor yaml config path (defaults by `sim`)')
+    declare_body_base_yaw = DeclareLaunchArgument(
+        'body_base_yaw', default_value=body_base_yaw,
+        description='Yaw of the body->base_link static TF. -1.5708 on the real '
+                    'robot (Mid-360 mounted 90 deg off), 0 in simulation.')
+    declare_imu_topic = DeclareLaunchArgument(
+        'imu_topic', default_value=imu_topic,
+        description='IMU topic for navsat_transform (defaults by `sim`); keep '
+                    'in sync with common.imu_topic in the selected config_path')
     enable_elevation = LaunchConfiguration('enable_elevation')
     declare_enable_elevation = DeclareLaunchArgument(
         'enable_elevation', default_value='true',
@@ -73,7 +110,7 @@ def generate_launch_description():
     tf_body_to_base_link = Node(
         package='tf2_ros', executable='static_transform_publisher',
         name='statictf_body_to_base_link',
-        arguments=['0','0','0','-1.5708','0','0','body','base_link'],
+        arguments=['0','0','0', body_base_yaw, '0','0','body','base_link'],
         output='screen',
     )
     tf_base_link_to_gps = Node(
@@ -170,7 +207,7 @@ def generate_launch_description():
         arguments=['--ros-args', '--log-level', 'navsat_transform:=warn'],
         parameters=[params_file, {'use_sim_time': use_sim_time}],
         remappings=[
-            ('imu', '/livox/imu'),
+            ('imu', imu_topic),
             ('gps/fix', '/gps/fix'),
             ('odometry/filtered', '/odometry/absolute_yaw'),
             ('odometry/gps', '/odometry/gps'),
@@ -179,9 +216,14 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
+        # declare_sim 必须排在最前：下面几个 argument 的默认值都是引用 `sim` 的
+        # PythonExpression，launch 按顺序访问 action，sim 未声明时它们解析不出来。
+        declare_sim,
         declare_use_sim_time,
         declare_params,
         declare_config_path,
+        declare_body_base_yaw,
+        declare_imu_topic,
         declare_enable_elevation,
         declare_map_odom_source,
         declare_datum_lat,

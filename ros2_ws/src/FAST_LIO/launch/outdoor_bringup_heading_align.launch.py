@@ -108,6 +108,10 @@ def generate_launch_description():
         get_package_share_directory('campus_nav'), 'launch')
 
     use_sim_time = LaunchConfiguration('use_sim_time')
+    # sim 与 use_sim_time 分开：use_sim_time 只管时钟源，sim 管「传感器话题名 + 雷达
+    # 安装外参」这类硬件差异（仿真无 Mid360 的 90° 安装旋转）。只有 localization 需要
+    # 它 —— Nav2 和 route_planner 吃的都是派生话题，与硬件无关。
+    sim = LaunchConfiguration('sim')
     map_odom_source = LaunchConfiguration('map_odom_source')
     enable_elevation = LaunchConfiguration('enable_elevation')
     nav_params = LaunchConfiguration('nav_params')
@@ -125,6 +129,11 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'use_sim_time', default_value='false',
             description='Use simulation clock; shared by all three stacks'),
+        DeclareLaunchArgument(
+            'sim', default_value='false',
+            description='Simulation hardware profile: sim sensor topics + no '
+                        '90 deg lidar mounting rotation. Independent of '
+                        'use_sim_time; only localization consumes it.'),
         DeclareLaunchArgument(
             'map_odom_source', default_value='gps',
             description="localization map->odom source: 'ekf' or 'gps'"),
@@ -182,6 +191,7 @@ def generate_launch_description():
             os.path.join(fast_lio_launch, 'outdoor_localization.launch.py')),
         launch_arguments={
             'use_sim_time': use_sim_time,
+            'sim': sim,
             'map_odom_source': map_odom_source,
             'enable_elevation': enable_elevation,
             'datum_lat': datum_lat,

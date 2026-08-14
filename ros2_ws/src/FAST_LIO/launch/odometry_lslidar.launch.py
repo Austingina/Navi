@@ -4,7 +4,7 @@ from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch.conditions import IfCondition
 from launch_ros.actions import Node #, SetUseSimTime
 
@@ -22,23 +22,56 @@ def generate_launch_description():
     map_file_path = LaunchConfiguration('map_file_path', default='/home/nvidia/maps/share525_1.pcd')         # double
     runtime_pos_log_enable_param = LaunchConfiguration('runtime_pos_log_enable', default='false')  # bool
 
-    default_config_path = os.path.join(package_path, 'config', 'mid360.yaml')
+    # sim 与 use_sim_time 是两件事，故分开：use_sim_time 只管时钟源，sim 管
+    # 「传感器话题名 + 雷达安装外参」这类硬件差异。启动脚本的 -s 会同时置上两者
+    # （见 start_localization.bash），但手工 launch 时可以只要其中一个。
+    sim = LaunchConfiguration('sim')
+
+    # 仿真(Isaac)与真机的雷达/IMU 话题名不同，分别写在两个 yaml 里：
+    #   mid360.yaml      -> /livox/front_lidar, /livox/front_imu  (robot-sensors 的驱动)
+    #   mid360_sim.yaml  -> /livox/lidar,       /livox/imu        (Isaac 转出来的 Livox 消息)
+    # 只改默认值：显式传 config_path:= 仍然优先（LaunchConfiguration 的固有语义），
+    # 保留手工指定任意配置的能力。
+    default_config_path = PythonExpression([
+        "'", os.path.join(package_path, 'config', 'mid360_sim.yaml'), "'",
+        " if '", sim, "' == 'true' else ",
+        "'", os.path.join(package_path, 'config', 'mid360.yaml'), "'",
+    ])
     default_rviz_config_path = os.path.join(
         package_path, 'rviz', 'fastlio-localize.rviz')
 
+    # 真机 Mid360（连带它的 IMU —— FAST-LIO 的 body/imu_link 系就是 IMU 系）相对
+    # base_link 绕 Z 装反了 90°，仿真 USD 里没有这个安装旋转。室外栈同一处补偿写在
+    # outdoor_localization.launch.py 的 body->base_link 上，两栈取值须一致。
+    # 平移 (-0.16, -0.26, 0) 两个环境都沿用原值 —— 注意它与室外栈声明的 (0,0,0)
+    # 矛盾，同一台车同一个 IMU 不该有两个答案，待实车量一次机械尺寸后统一。
+    default_imu_base_yaw = PythonExpression(
+        ["'0.0' if '", sim, "' == 'true' else '-1.5708'"])
 
     use_sim_time = LaunchConfiguration('use_sim_time')
     config_path = LaunchConfiguration('config_path')
+    imu_base_yaw = LaunchConfiguration('imu_base_yaw')
     rviz_use = LaunchConfiguration('rviz')
     rviz_cfg = LaunchConfiguration('rviz_cfg')
 
+    declare_sim_cmd = DeclareLaunchArgument(
+        'sim', default_value='false',
+        description='Simulation hardware profile: picks the sim sensor topics '
+                    '(mid360_sim.yaml) and drops the real robot 90 deg lidar '
+                    'mounting rotation. Independent of use_sim_time.'
+    )
     declare_use_sim_time_cmd = DeclareLaunchArgument(
         'use_sim_time', default_value='false',
         description='Use simulation (Gazebo) clock if true'
     )
     declare_config_path_cmd = DeclareLaunchArgument(
         'config_path', default_value=default_config_path,
-        description='Yaml config file path'
+        description='Yaml config file path (defaults by `sim`)'
+    )
+    declare_imu_base_yaw_cmd = DeclareLaunchArgument(
+        'imu_base_yaw', default_value=default_imu_base_yaw,
+        description='Yaw of the imu_link->base_link static TF. -1.5708 on the '
+                    'real robot (Mid-360 mounted 90 deg off), 0 in simulation.'
     )
     declare_rviz_cmd = DeclareLaunchArgument(
         'rviz', default_value='true',
@@ -53,7 +86,7 @@ def generate_launch_description():
         package='tf2_ros',
         executable='static_transform_publisher',
         name='statictf_imu_to_base_link',
-        arguments=['-0.16', '-0.26', '0', '0', '0', '0', 'imu_link', 'base_link'],
+        arguments=['-0.16', '-0.26', '0', imu_base_yaw, '0', '0', 'imu_link', 'base_link'],
         output='screen'
     )
     
@@ -93,14 +126,20 @@ def generate_launch_description():
         output='screen'
     )
 
-    # Standalone chassis EKF: fuses /motion_control/chassis_speed + /livox/imu
+    # Standalone chassis EKF: fuses /motion_control/chassis_speed + the IMU
     # + /Odometry (from fastlio_odometry) into /odom.
     # Runs in its own process to keep the laser_mapping CPU isolated.
+    #
+    # config_path 也喂给它，是为了拿到里面平铺的 `imu_topic`（chassis_ekf_node.cpp
+    # 声明的是平铺名，而 FAST-LIO 读的是嵌套的 common.imu_topic，两者互不干扰）。
+    # 不喂的话它就用代码里的默认值 /livox/imu —— 真机上根本没有这个话题，底盘 EKF
+    # 会静默地一帧 IMU 都收不到。两个 yaml 顶层都是 /**: 通配，所以话题名只需在
+    # yaml 里定义一次，两个节点各取自己那份。
     chassis_ekf_node = Node(
         package='fast_lio',
         executable='chassis_ekf',
         name='chassis_ekf',
-        parameters=[{'use_sim_time': use_sim_time}],
+        parameters=[config_path, {'use_sim_time': use_sim_time}],
         output='screen'
     )
 
@@ -163,8 +202,10 @@ def generate_launch_description():
     )
 
     ld = LaunchDescription()
+    ld.add_action(declare_sim_cmd)
     ld.add_action(declare_use_sim_time_cmd)
     ld.add_action(declare_config_path_cmd)
+    ld.add_action(declare_imu_base_yaw_cmd)
     ld.add_action(declare_rviz_cmd)
     ld.add_action(declare_rviz_config_path_cmd)
     ld.add_action(tf_imu2base_link)

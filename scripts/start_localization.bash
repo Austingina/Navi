@@ -10,8 +10,15 @@ export RCUTILS_LOGGING_BUFFERED_STREAM=0
 export RCUTILS_COLORIZED_OUTPUT=0
 export PYTHONUNBUFFERED=1
 
-# 解析参数：-v 打开 rviz；-s/--simulated 使用仿真时钟 (use_sim_time:=true)；
+# 解析参数：-v 打开 rviz；-s/--simulated 走仿真（use_sim_time:=true + sim:=true）；
 # -m/--map <pcd> 指定加载的点云地图（空值/缺省时回退到默认 pcd）。
+#
+# -s 同时置上 use_sim_time 和 sim 两个 launch 参数，它们管的是两件事：
+#   use_sim_time -> 时钟源走 /clock
+#   sim          -> 硬件 profile：选 mid360_sim.yaml（/livox/lidar,/livox/imu，
+#                   而真机是 /livox/front_lidar,/livox/front_imu），并把
+#                   imu_link->base_link 的 90° 雷达安装旋转归零（仿真里没有）。
+# launch 侧两者独立声明，需要时可以只给其中一个。
 RVIZ_USE=false
 USE_SIM_TIME=false
 MAP_PCD=""
@@ -42,5 +49,6 @@ LOG_FILE="$LOG_DIR/localization_$(date +%Y%m%d_%H%M%S).log"
 echo "logging to $LOG_FILE"
 echo "map_file_path=$MAP_PCD"
 
-ros2 launch fast_lio odometry_lslidar.launch.py rviz:=$RVIZ_USE use_sim_time:=$USE_SIM_TIME map_file_path:=$MAP_PCD 2>&1 \
+ros2 launch fast_lio odometry_lslidar.launch.py rviz:=$RVIZ_USE \
+    use_sim_time:=$USE_SIM_TIME sim:=$USE_SIM_TIME map_file_path:=$MAP_PCD 2>&1 \
     | stdbuf -oL -eL tee -a "$LOG_FILE"

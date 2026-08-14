@@ -9,6 +9,12 @@
     runtime_pos_log_enable: false
     map_file_path: ""
 
+    # 给 chassis_ekf 用（chassis_ekf_node.cpp 声明的是平铺的 imu_topic，而
+    # FAST-LIO 读的是下面嵌套的 common.imu_topic，两者互不干扰）。顶层是 /**:
+    # 通配，同一份文件喂两个节点，话题名只在这个文件里定义一次。
+    # 改仿真 IMU 话题时这两处要一起改。
+    imu_topic: "/livox/imu"
+
     common:
       # Keep the existing Isaac-to-Livox conversion path. The converted topic
       # is the Livox message input already verified by this workspace.
