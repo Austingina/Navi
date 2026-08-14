@@ -70,7 +70,11 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'use_sim_time': use_sim_time,
-            'cloud_topic': '/livox/points',
+            # 真机上没有 /livox/points：雷达由 robot-sensors 的 livox_lidar_publisher
+            # 提供，只发 CustomMsg(/livox/front_lidar,/livox/back_lidar)，不发
+            # PointCloud2。改吃 FAST-LIO 去畸变后的当前帧(base_link 系, ~10Hz)。
+            # 代价：只含前雷达，且依赖 laser_mapping 存活。
+            'cloud_topic': '/cloud_registered_body',
             'elevation_topic': '/grid_map_from_raw_pointcloud',
             'elevation_layer': 'elevation',
             'output_topic': '/livox_scan2',
@@ -86,8 +90,8 @@ def generate_launch_description():
             'obstacle_min_height': 0.15,
             'obstacle_max_height': 1.6,
             # 地面未知的格子回退到脚底高度带(用 TF odom->base_link 的 z)。
-            'fallback_on_unknown_elevation': False,
-            'fallback_min_height': 0.2,
+            'fallback_on_unknown_elevation': True,
+            'fallback_min_height': 0.3,
             'fallback_max_height': 1.6,
             # 坡度：地面层梯度 -> 分级代价 OccupancyGrid(/slope_costmap)。
             # <=free_deg 记 0；free~lethal 线性升到 99（缓坡代价递增，同等条件优先平地）；

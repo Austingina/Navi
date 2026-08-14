@@ -33,9 +33,13 @@ elevation_mapping_node:
     initialize_frame_id: [body]
     initialize_tf_offset: [0.0]
 
+    # 真机上 /livox/points 无发布者（robot-sensors 的驱动只发 CustomMsg
+    # /livox/front_lidar,/livox/back_lidar）。改吃 FAST-LIO 去畸变后的当前帧,
+    # frame=base_link, ~10Hz。注意 ray 原点被当作 base_link 原点而非雷达实际
+    # 安装位置，visibility_cleanup 会有该安装偏置量级的误差。
     subscribers:
       mid360:
-        topic_name: /livox/points
+        topic_name: /cloud_registered_body
         data_type: pointcloud
 
     publishers:

@@ -23,8 +23,11 @@ while [ $# -gt 0 ]; do
 done
 
 # 互斥：切到 SLAM 前先停室外会话；再重启 slam 会话本身。
-tmux kill-session -t outdoor 2>/dev/null
-tmux kill-session -t slam 2>/dev/null
+# 必须用 navi_kill_session_wait 而非裸 kill-session：后者立即返回，旧栈的同名 nav2
+# 节点还在退出中就被新栈的 lifecycle_manager 发现，会永久卡在
+# "Waiting for service <node>/get_state..."。详见 common.sh 里的说明。
+navi_kill_session_wait outdoor
+navi_kill_session_wait slam
 # 同 start_navi.sh：export 保证 tmuxp 拉起 server 时能继承；set-environment 覆盖 server 已存在的时序。
 export NAVI_SIM_ARG="$SIM_ARG"
 export NAVI_MAP_PCD="$MAP_PCD"

@@ -69,11 +69,11 @@ def generate_launch_description():
         arguments=['0','0','0','0','0','0','odom','camera_init'],
         output='screen',
     )
+
     tf_body_to_base_link = Node(
         package='tf2_ros', executable='static_transform_publisher',
         name='statictf_body_to_base_link',
-        # TODO: 换成 IMU->base_link 实测外参
-        arguments=['0','0','0','0','0','0','body','base_link'],
+        arguments=['0','0','0','-1.5708','0','0','body','base_link'],
         output='screen',
     )
     tf_base_link_to_gps = Node(

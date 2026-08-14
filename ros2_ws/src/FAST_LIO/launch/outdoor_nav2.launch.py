@@ -10,7 +10,12 @@ from launch.substitutions import LaunchConfiguration
 
 def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time', default='true')
-    use_composition = LaunchConfiguration('use_composition', default='False')
+    # True = 全部 nav2 生命周期节点装进单个 component_container_isolated。
+    # 非 composition 模式下 9 个节点是 9 个独立进程/9 个 DDS participant，同一秒一起抢
+    # 服务发现，lifecycle_manager 会随机卡死在某个节点的 get_state 上
+    # （"Waiting for service behavior_server/get_state..." 刷屏，Nav2 一个节点都不 configure）。
+    # 室内 slam 栈走 bringup_launch.py 的默认 True，从未出现过该问题。
+    use_composition = LaunchConfiguration('use_composition', default='True')
 
     fast_lio_dir = get_package_share_directory('fast_lio')
     fast_lio_launch = os.path.join(fast_lio_dir, 'launch')
@@ -62,7 +67,7 @@ def generate_launch_description():
             description='Use simulation clock if true'),
         DeclareLaunchArgument(
             'use_composition',
-            default_value='False',
+            default_value='True',
             description='Use Nav2 composable container if true'),
 
 
