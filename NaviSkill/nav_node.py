@@ -57,7 +57,16 @@ class NavNode(Node):
     # 室外 GPS 目标点经纬度按此 datum 换算成 campus_map 平面坐标下发给路网规划器。
     DEFAULT_GPS_DATUM_LAT = 22.574357630323675
     DEFAULT_GPS_DATUM_LON = 113.93507078035577
-    _EARTH_R = 6378137.0  # WGS84 平均半径（m），与 campus_nav.route_graph 保持一致
+
+    # 局部切平面投影用的椭球参数。车自身在 map 系的位置由 navsat_transform 经 UTM
+    # 投影得出，目标点必须用同一个度量，否则两者的比例差会随离 datum 的距离线性
+    # 放大（2026-08-16 实测：4032 m 处恒定偏 10.67 m，成因是把赤道半径当成了子午
+    # 圈曲率半径）。UTM 的格网收敛角由 navsat_transform 内部补偿，故这里只需补分
+    # 轴曲率半径与 datum 处的尺度因子两项。详见 _projection_radii。
+    _WGS84_A = 6378137.0                       # 长半轴（m）
+    _WGS84_F = 1.0 / 298.257223563             # 扁率
+    _WGS84_E2 = _WGS84_F * (2.0 - _WGS84_F)    # 第一偏心率平方
+    _UTM_K0 = 0.9996                           # UTM 中央经线尺度因子
 
     def __init__(
         self,
@@ -327,10 +336,12 @@ class NavNode(Node):
             self.campus_frame = campus_frame
             self.campus_goal_pub = self.create_publisher(
                 PoseStamped, campus_goal_topic, 10)
-            # 经纬度 ↔ campus_map 平面（等距圆柱投影，与 route_graph.ENU 完全一致）
+            # 经纬度 ↔ campus_map 平面（局部切平面投影，与 route_graph.ENU 完全一致）
             self.gps_datum_lat = float(gps_datum_lat)
             self.gps_datum_lon = float(gps_datum_lon)
             self._gps_datum_cos0 = math.cos(math.radians(self.gps_datum_lat))
+            self._r_east, self._r_north = self._projection_radii(
+                self.gps_datum_lat, self.gps_datum_lon)
             # 室外当前目标（campus_frame 下的 PoseStamped）及运行标志
             self._outdoor_goal: Optional[PoseStamped] = None
             self._outdoor_nav_active = False
@@ -1130,16 +1141,35 @@ class NavNode(Node):
         return self.is_map_localized()
 
     # ── 室外目标下发（经 campus_nav 路网规划器）─────────────────────────────
+    @classmethod
+    def _projection_radii(cls, lat0: float, lon0: float) -> Tuple[float, float]:
+        """datum 处的 (r_east, r_north)：卯酉圈 N 与子午圈 M，各乘 UTM 尺度因子 k。
+
+        在智城 datum（22.574358, 113.935071）处得 r_east = 6385869.0、
+        r_north = 6349383.3（N = 6381285.4，M = 6344826.0，k = 1.0007183）。
+
+        必须与 campus_nav/route_graph.py 的 projection_radii 及
+        PointMarker/geo.py 保持一致。
+        """
+        p = math.radians(lat0)
+        w = math.sqrt(1.0 - cls._WGS84_E2 * math.sin(p) ** 2)
+        n = cls._WGS84_A / w                                  # 卯酉圈，东向
+        m = cls._WGS84_A * (1.0 - cls._WGS84_E2) / w ** 3      # 子午圈，北向
+        zone = int((lon0 + 180.0) // 6) + 1
+        dlon = math.radians(lon0 - (6 * zone - 183))          # 离中央经线的经差
+        k = cls._UTM_K0 * (1.0 + (dlon * math.cos(p)) ** 2 / 2.0)
+        return n * k, m * k
+
     def _lonlat_to_campus_xy(self, lon: float, lat: float) -> Tuple[float, float]:
-        """经纬度 → campus_map 平面 (east, north)，等距圆柱投影（同 route_graph.ENU）。"""
-        east = math.radians(lon - self.gps_datum_lon) * self._EARTH_R * self._gps_datum_cos0
-        north = math.radians(lat - self.gps_datum_lat) * self._EARTH_R
+        """经纬度 → campus_map 平面 (east, north)，局部切平面（同 route_graph.ENU）。"""
+        east = math.radians(lon - self.gps_datum_lon) * self._r_east * self._gps_datum_cos0
+        north = math.radians(lat - self.gps_datum_lat) * self._r_north
         return east, north
 
     def _campus_xy_to_lonlat(self, east: float, north: float) -> Tuple[float, float]:
         """campus_map 平面 (east, north) → 经纬度，_lonlat_to_campus_xy 的逆变换。"""
-        lat = self.gps_datum_lat + math.degrees(north / self._EARTH_R)
-        lon = self.gps_datum_lon + math.degrees(east / (self._EARTH_R * self._gps_datum_cos0))
+        lat = self.gps_datum_lat + math.degrees(north / self._r_north)
+        lon = self.gps_datum_lon + math.degrees(east / (self._r_east * self._gps_datum_cos0))
         return lon, lat
 
     def send_campus_goal(self, pose: PoseStamped,

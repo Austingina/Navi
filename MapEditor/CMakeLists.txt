@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.24)
 
 # CUDA is enabled below rather than here, because the architecture has to be
 # chosen from CMAKE_SYSTEM_PROCESSOR, which project() is what defines.
-project(MapEditor VERSION 1.0.0 LANGUAGES CXX)
+project(MapEditor VERSION 1.0.0 LANGUAGES C CXX)
 
 # Without this, enabling the CUDA language leaves nvcc on its built-in default
 # (sm_52). "native" is not used because nvcc resolves it off the local driver,
@@ -29,6 +29,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
 # ── Dependencies ──────────────────────────────────────────────────────
+find_package(MPI REQUIRED COMPONENTS C)
 find_package(Qt5 REQUIRED COMPONENTS Widgets OpenGL)
 find_package(PCL 1.10 REQUIRED COMPONENTS common io filters registration)
 find_package(Eigen3 REQUIRED)

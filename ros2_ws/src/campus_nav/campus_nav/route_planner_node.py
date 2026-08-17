@@ -1430,6 +1430,10 @@ class RoutePlanner(Node):
                 "lat": self.get_parameter("datum_lat").value,
                 "lon": self.get_parameter("datum_lon").value,
             },
+            "projection": {
+                "r_east": self.enu.r_east,
+                "r_north": self.enu.r_north,
+            },
             "loop": bool(close),
             "length_m": total,
             "leg_lengths_m": legs,
@@ -1508,6 +1512,26 @@ class RoutePlanner(Node):
                 f"Loaded patrol datum ({d_lat},{d_lon}) != node datum "
                 f"({self.enu.lat0},{self.enu.lon0}); markers use the file's "
                 "stored map_x/map_y, so set the node datum to match for alignment."
+            )
+
+        # Files written before the per-axis curvature fix carry no projection
+        # block and their map_x/map_y are off by ~0.26% of the distance to the
+        # datum (0.5 m at 200 m, 10 m at 4 km).
+        proj = d.get("projection") or {}
+        p_east, p_north = proj.get("r_east"), proj.get("r_north")
+        if p_east is None or p_north is None:
+            self.get_logger().warn(
+                "Loaded patrol has no projection fingerprint (saved before the "
+                "per-axis curvature fix). Its map_x/map_y are stale; run "
+                "`patrol_cmd save` to recompute them under the current radii."
+            )
+        elif (abs(p_east - self.enu.r_east) > 1.0
+                or abs(p_north - self.enu.r_north) > 1.0):
+            self.get_logger().warn(
+                f"Loaded patrol projection (r_east={p_east:.1f}, "
+                f"r_north={p_north:.1f}) != node projection "
+                f"(r_east={self.enu.r_east:.1f}, r_north={self.enu.r_north:.1f}); "
+                "stored map_x/map_y are stale, re-save to recompute."
             )
 
         stamp = _latest_tf_stamp()

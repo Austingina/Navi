@@ -1167,22 +1167,66 @@ def load_stub_entry_points(pbf_path: str, graph, tag: str = "campus_entry"):
 # ---------------------------------------------------------------------------
 # Local ENU projection (for ROS map frame)
 # ---------------------------------------------------------------------------
+# The vehicle's own position in the map frame is produced by navsat_transform,
+# which projects lon/lat through UTM. Goal points and the road network must use
+# the same metric, or the two disagree by a scale error that grows linearly with
+# the distance from the datum. Measured 2026-08-16 at 4032 m from the datum: a
+# constant 10.67 m offset, caused by using the equatorial radius where the
+# meridional radius of curvature belongs.
+#
+# Grid convergence (1.128 deg here) is already compensated inside
+# navsat_transform -- if it were not, the offset would have been ~79 m rather
+# than 10.67 m -- so only two corrections are needed: per-axis curvature radii,
+# and the UTM point scale factor at the datum.
+_WGS84_A = 6378137.0                                  # semi-major axis (m)
+_WGS84_F = 1.0 / 298.257223563                        # flattening
+_WGS84_E2 = _WGS84_F * (2.0 - _WGS84_F)               # first eccentricity squared
+_UTM_K0 = 0.9996                                      # UTM central scale factor
+
+
+def projection_radii(lat0, lon0):
+    """Return (r_east, r_north) for a local tangent plane at (lat0, lon0).
+
+    r_east is the prime-vertical radius of curvature N, r_north the meridional
+    radius M, each scaled by the UTM point scale factor k at the datum so the
+    result matches navsat_transform's UTM metric.
+
+    At the Zhicheng datum (22.574358, 113.935071) this yields
+    r_east = 6385869.0, r_north = 6349383.3 (N = 6381285.4, M = 6344826.0,
+    k = 1.0007183).
+
+    """
+    p = math.radians(lat0)
+    w = math.sqrt(1.0 - _WGS84_E2 * math.sin(p) ** 2)
+    n = _WGS84_A / w                                  # prime vertical (east)
+    m = _WGS84_A * (1.0 - _WGS84_E2) / w ** 3         # meridional (north)
+    zone = int((lon0 + 180.0) // 6) + 1
+    dlon = math.radians(lon0 - (6 * zone - 183))      # offset from central meridian
+    k = _UTM_K0 * (1.0 + (dlon * math.cos(p)) ** 2 / 2.0)
+    return n * k, m * k
+
+
 class ENU:
-    """Equirectangular local tangent plane around a datum (good for a few km)."""
+    """Local tangent plane around a datum, matching navsat_transform's UTM.
+
+    Residual at 4 km from the datum is ~0.6 m (second-order terms: M, N and k
+    all vary slightly with latitude, and this linearizes them at the datum).
+    """
 
     def __init__(self, lat0, lon0):
         self.lat0 = lat0
         self.lon0 = lon0
         self.cos0 = math.cos(math.radians(lat0))
+        self.r_east, self.r_north = projection_radii(lat0, lon0)
 
     def to_xy(self, lon, lat):
-        east = math.radians(lon - self.lon0) * EARTH_R * self.cos0
-        north = math.radians(lat - self.lat0) * EARTH_R
+        east = math.radians(lon - self.lon0) * self.r_east * self.cos0
+        north = math.radians(lat - self.lat0) * self.r_north
         return east, north
 
     def to_lonlat(self, east, north):
-        lat = self.lat0 + math.degrees(north / EARTH_R)
-        lon = self.lon0 + math.degrees(east / (EARTH_R * self.cos0))
+        lat = self.lat0 + math.degrees(north / self.r_north)
+        lon = self.lon0 + math.degrees(east / (self.r_east * self.cos0))
         return lon, lat
 
 

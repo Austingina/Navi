@@ -110,7 +110,7 @@ def generate_launch_description():
     tf_body_to_base_link = Node(
         package='tf2_ros', executable='static_transform_publisher',
         name='statictf_body_to_base_link',
-        arguments=['0','0','0', body_base_yaw, '0','0','body','base_link'],
+        arguments=['-0.22','-0.19','0', body_base_yaw, '0','0','body','base_link'],
         output='screen',
     )
     tf_base_link_to_gps = Node(
