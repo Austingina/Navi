@@ -730,10 +730,13 @@ class RoutePlanner(Node):
             Path, self.get_parameter("nav_waypoints_topic").value, rviz_qos()
         )
         if HAVE_MARKERS:
+            # Latched: markers never expire, so an RViz started mid-route needs
+            # the last array replayed. Transient local also stays compatible
+            # with volatile subscribers, unlike the reverse.
             self.nav_wp_marker_pub = self.create_publisher(
                 MarkerArray,
                 self.get_parameter("nav_waypoint_markers_topic").value,
-                rviz_qos(),
+                latched_qos(),
             )
             # Latched: entries are static, so RViz picks them up whenever it
             # subscribes rather than only on the next route.
