@@ -36,12 +36,16 @@ def generate_launch_description():
         "'", os.path.join(fast_lio_dir, 'config', 'mid360.yaml'), "'",
     ]))
 
-    # 真机 Mid360（连带它的 IMU —— FAST-LIO 的 body 系就是 IMU 系）相对 base_link
-    # 绕 Z 装反了 90°，仿真 USD 里没有这个安装旋转，故仿真下必须回到 0（这也是
+    # 真机 Mid360（连带它的 IMU —— FAST-LIO 的 body 系就是 IMU 系）相对 base_link：
+    # 位于前方 0.19 m、左方 0.105 m，绕 Z 逆时针 90°，并向车头前倾 15°。
+    # 此处发布的是逆向 body->base_link TF，故真机 yaw=-90°、pitch=-15°；
+    # 仿真 USD 里没有这些安装旋转，故仿真下必须回到 0（这也是
     # 0fa863a4 之前的原值，仿真当年就是靠它跑通的）。室内栈同一处补偿写在
     # odometry_lslidar.launch.py 的 imu_link->base_link 上，两栈取值须一致。
     body_base_yaw = LaunchConfiguration('body_base_yaw', default=PythonExpression(
         ["'0.0' if '", sim, "' == 'true' else '-1.5708'"]))
+    body_base_pitch = LaunchConfiguration('body_base_pitch', default=PythonExpression(
+        ["'0.0' if '", sim, "' == 'true' else '-0.261799'"]))
 
     # 只给 navsat_transform 的 imu remap 用。必须与所选 config_path 里的
     # common.imu_topic 一致 —— 这里没法从 yaml 里读，只能并行维护一份，改一处记得改另一处。
@@ -64,6 +68,10 @@ def generate_launch_description():
         'body_base_yaw', default_value=body_base_yaw,
         description='Yaw of the body->base_link static TF. -1.5708 on the real '
                     'robot (Mid-360 mounted 90 deg off), 0 in simulation.')
+    declare_body_base_pitch = DeclareLaunchArgument(
+        'body_base_pitch', default_value=body_base_pitch,
+        description='Pitch of the body->base_link static TF. -0.261799 on the '
+                    'real robot (Mid-360 tilted 15 deg forward), 0 in simulation.')
     declare_imu_topic = DeclareLaunchArgument(
         'imu_topic', default_value=imu_topic,
         description='IMU topic for navsat_transform (defaults by `sim`); keep '
@@ -110,7 +118,10 @@ def generate_launch_description():
     tf_body_to_base_link = Node(
         package='tf2_ros', executable='static_transform_publisher',
         name='statictf_body_to_base_link',
-        arguments=['-0.22','-0.19','0', body_base_yaw, '0','0','body','base_link'],
+        # Inverse of base_link->body:
+        # position=(+0.19,+0.105,0), rotation=Ry(+15deg)*Rz(+90deg).
+        arguments=['-0.105', '0.183526', '-0.049176',
+                   body_base_yaw, body_base_pitch, '0', 'body', 'base_link'],
         output='screen',
     )
     tf_base_link_to_gps = Node(
@@ -240,6 +251,7 @@ def generate_launch_description():
         declare_params,
         declare_config_path,
         declare_body_base_yaw,
+        declare_body_base_pitch,
         declare_imu_topic,
         declare_enable_elevation,
         declare_map_odom_source,
