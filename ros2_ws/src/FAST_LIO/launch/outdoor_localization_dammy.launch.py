@@ -100,13 +100,27 @@ def generate_launch_description():
         executable='map_odom_from_gps.py',
         name='map_odom_from_gps',
         output='screen',
+        # 与 outdoor_localization.launch.py 保持同一套信任策略/限速参数，
+        # 否则仿真验不出真机的行为。改一处记得改另一处。
         parameters=[{'use_sim_time': use_sim_time,
                      'gps_topic': '/odometry/gps',
                      'publish_rate': 20.0,
                      'process_noise': 0.05,       # LIO 漂移速率(m^2/s)
                      'gps_variance_default': 1.0,  # GPS 消息无协方差时的兜底
                      'use_msg_covariance': True,   # 优先用 GPS 自带协方差当 R
-                     'gps_gate_sigma': 5.0}],      # 突跳门限(sigma)，0=关
+                     'gps_gate_sigma': 5.0,        # 突跳门限(sigma)，0=关
+                     'max_correction_speed': 0.3,  # map->odom 修正限速(m/s)
+                     'gps_variance_scale': 4.0,
+                     'gps_variance_floor': 0.09,
+                     'max_gps_variance': 400.0,
+                     'var_scale_status_gbas': 1.0,
+                     'var_scale_status_sbas': 4.0,
+                     'var_scale_status_fix': 9.0,
+                     'min_fix_status': 0,
+                     'max_h_var': 25.0,
+                     'max_variance': 4.0,
+                     'sustained_offset_sec': 3.0,
+                     'bad_gps_hold_sec': 3.0}],
         condition=use_gps_simple,
     )
 

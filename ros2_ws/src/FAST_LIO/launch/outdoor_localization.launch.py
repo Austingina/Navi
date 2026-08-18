@@ -116,7 +116,7 @@ def generate_launch_description():
     tf_base_link_to_gps = Node(
         package='tf2_ros', executable='static_transform_publisher',
         name='statictf_base_link_to_gps',
-        arguments=['0','0','0','0','0','0','base_link','gps'],
+        arguments=['-0.10','-0.15','0','0','0','0','base_link','gps'],
         output='screen',
     )
 
@@ -191,6 +191,23 @@ def generate_launch_description():
                      'gps_variance_default': 1.0,  # GPS 消息无协方差时的兜底
                      'use_msg_covariance': True,   # 优先用 GPS 自带协方差当 R
                      'gps_gate_sigma': 5.0,        # 突跳门限(sigma)，0=关
+                     # 输出限速：map->odom 单周期位移上界 = 该值/publish_rate
+                     # (0.3/20 = 0.015m)。这是真正消除"瞬时传送"的一条，0=关。
+                     'max_correction_speed': 0.3,
+                     # R 信任策略：膨胀倍数 / 下限 / 上限
+                     'gps_variance_scale': 4.0,    # sigma x2，抵消上报的乐观
+                     'gps_variance_floor': 0.09,   # sigma 0.3m，不信 cm 级
+                     'max_gps_variance': 400.0,    # sigma 20m 以上视为无信息
+                     # 按 NavSatStatus 追加惩罚（解越差、上报的 sigma 越乐观）
+                     'var_scale_status_gbas': 1.0,  # status 2: RTK
+                     'var_scale_status_sbas': 4.0,  # status 1
+                     'var_scale_status_fix': 9.0,   # status 0: SINGLE
+                     # 差解判定，与 gps_heading_align 同名同义
+                     'min_fix_status': 0,
+                     'max_h_var': 25.0,
+                     'max_variance': 4.0,          # var 封顶，防增益趋 1
+                     'sustained_offset_sec': 3.0,  # 持续偏移改为限速爬入
+                     'bad_gps_hold_sec': 3.0,      # 差解超时 -> 纯 LIO 推算
                      'datum_lat': datum_lat,        # 与 gps_heading_align / campus_nav 一致
                      'datum_lon': datum_lon}],
         condition=use_gps_simple,
