@@ -41,10 +41,33 @@
                     "scene_point": "智城先创路西出口"
                 }
             ]
+        },
+        "route_tsinghua_library": {
+            "description": "",
+            "waypoints": [
+                {
+                    "scene_point": "图书馆广场"
+                },
+                {
+                    "scene_point": "桥下进入点"
+                },
+                {
+                    "scene_point": "桥下120度"
+                },
+                {
+                    "scene_point": "桥下240度"
+                },
+                {
+                    "scene_point": "出桥下点"
+                },
+                {
+                    "scene_point": "图书馆广场"
+                }
+            ]
         }
     },
     "scene": {
-        "build_no": 20260810170335,
+        "build_no": 20260818172001,
         "crs": "WGS84",
         "name": "xili",
         "origin": {
@@ -77,7 +100,8 @@
         },
         "semantic_point_areas": [
             "智城",
-            "彩虹"
+            "彩虹",
+            "tsinghua"
         ],
         "semantic_points": {
             "A1西广场": {
@@ -104,6 +128,24 @@
                 "heading_deg": 0,
                 "lat": 22.574119885718304,
                 "lon": 113.93440198080116,
+                "need_inspect": false,
+                "type": "single_pose"
+            },
+            "出桥下点": {
+                "alt": 0,
+                "area": "tsinghua",
+                "heading_deg": 0,
+                "lat": 22.59505098,
+                "lon": 113.96787303,
+                "need_inspect": false,
+                "type": "single_pose"
+            },
+            "图书馆广场": {
+                "alt": 0,
+                "area": "tsinghua",
+                "heading_deg": 0,
+                "lat": 22.59501134,
+                "lon": 113.96745339,
                 "need_inspect": false,
                 "type": "single_pose"
             },
@@ -167,6 +209,33 @@
                 "heading_deg": 90,
                 "lat": 22.57441959,
                 "lon": 113.9344381,
+                "need_inspect": false,
+                "type": "single_pose"
+            },
+            "桥下120度": {
+                "alt": 0,
+                "area": "tsinghua",
+                "heading_deg": 0,
+                "lat": 22.59399386,
+                "lon": 113.96742022,
+                "need_inspect": false,
+                "type": "single_pose"
+            },
+            "桥下240度": {
+                "alt": 0,
+                "area": "tsinghua",
+                "heading_deg": 0,
+                "lat": 22.59417667,
+                "lon": 113.96820512,
+                "need_inspect": false,
+                "type": "single_pose"
+            },
+            "桥下进入点": {
+                "alt": 0,
+                "area": "tsinghua",
+                "heading_deg": 0,
+                "lat": 22.59477236,
+                "lon": 113.96718119,
                 "need_inspect": false,
                 "type": "single_pose"
             }
@@ -2222,6 +2291,54 @@
                 }
             }
         },
+        "tsinghua": {
+            "_comment": "多楼层地图配置文件 / Multi-floor map configuration",
+            "geo_anchor": {
+                "heading_deg": 16.92289787543415,
+                "origin": {
+                    "alt": 0,
+                    "lat": 22.595055195820716,
+                    "lon": 113.96755893752157
+                },
+                "scale": 1
+            },
+            "global": {
+                "build_no": 20260818170750,
+                "default_route": "",
+                "default_submap": "",
+                "version": "1.0"
+            },
+            "locked": true,
+            "name": "大学城清华园区",
+            "ortho_visible": true,
+            "pcd_base": "tsinghua",
+            "routes": {
+            },
+            "submaps": {
+                "1f": {
+                    "description": "",
+                    "map_file": "library.pcd",
+                    "name": "ground",
+                    "semantic_points": {
+                    },
+                    "submap_portals": [
+                    ],
+                    "transform": {
+                        "rotation": {
+                            "w": 1,
+                            "x": 0,
+                            "y": 0,
+                            "z": 0
+                        },
+                        "translation": {
+                            "x": 0,
+                            "y": 0,
+                            "z": 0
+                        }
+                    }
+                }
+            }
+        },
         "zhichengA1": {
             "_comment": "多楼层地图配置文件 / Multi-floor map configuration",
             "geo_anchor": {
@@ -2229,7 +2346,7 @@
                 "origin": {
                     "alt": 0,
                     "lat": 22.57379009,
-                    "lon": 113.93448130
+                    "lon": 113.9344813
                 },
                 "scale": 1
             },
