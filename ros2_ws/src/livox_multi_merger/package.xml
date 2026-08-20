@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>livox_multi_merger</name>
+  <version>0.1.0</version>
+  <description>
+    Merge N Livox CustomMsg point cloud streams (front/back/left/right) into a single
+    CustomMsg stream so that FAST-LIO, which accepts only one lid_topic, can consume
+    all of them. Preserves per-point offset_time and line so LiDAR de-skewing stays
+    correct.
+  </description>
+  <maintainer email="you@example.com">You</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>livox_ros_driver2</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  <depend>eigen</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
