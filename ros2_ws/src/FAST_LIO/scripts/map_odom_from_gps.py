@@ -203,18 +203,22 @@ class MapOdomFromGps(Node):
 
         # ENU conversion for the raw /gps/fix path. The projection must match
         # navsat_transform's UTM metric, because /odometry/gps (the other
-        # measurement source) comes out of navsat: any scale mismatch shows up
-        # as a position step the moment the filter switches sources, and grows
-        # linearly with the distance from the datum. Using the equatorial radius
-        # for both axes cost a constant 10.67 m at 4032 m out (measured
-        # 2026-08-16), which is why per-axis curvature radii are needed here.
+        # measurement source) comes out of navsat: any mismatch shows up as a
+        # position step the moment the filter switches sources. A tangent plane
+        # linearized at the datum left 0.61 m of it at 4 km (the Daxuecheng
+        # site), so this goes through the same UTM series instead and the step is
+        # gone at any distance.
         _datum_lat_deg = self.get_parameter('datum_lat').value
         _datum_lon_deg = self.get_parameter('datum_lon').value
         self._datum_lat_deg = _datum_lat_deg
         self._datum_lon_deg = _datum_lon_deg
-        self._cos_datum_lat = math.cos(math.radians(_datum_lat_deg))
-        self._r_east, self._r_north = self._projection_radii(
-            _datum_lat_deg, _datum_lon_deg)
+        self._utm_zone = int((_datum_lon_deg + 180.0) // 6) + 1
+        self._datum_e, self._datum_n = self._lonlat_to_utm(
+            _datum_lon_deg, _datum_lat_deg, self._utm_zone)
+        _gamma = self._grid_convergence(
+            _datum_lat_deg, _datum_lon_deg, self._utm_zone)
+        self._cos_gamma = math.cos(_gamma)
+        self._sin_gamma = math.sin(_gamma)
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
@@ -300,42 +304,71 @@ class MapOdomFromGps(Node):
                 f'yaw_offset locked: {math.degrees(self.yaw_offset):.1f} deg; '
                 f'map->odom now rotates odom(LIO) into ENU/north')
 
-    # WGS84 + UTM constants for the local tangent plane. Kept inline rather than
-    # imported: this is a standalone script, and campus_nav is only an
-    # exec_depend. Same trade-off as NavNode._projection_radii.
-    _WGS84_A = 6378137.0                      # semi-major axis (m)
-    _WGS84_F = 1.0 / 298.257223563            # flattening
-    _WGS84_E2 = _WGS84_F * (2.0 - _WGS84_F)   # first eccentricity squared
-    _UTM_K0 = 0.9996                          # UTM central scale factor
+    # WGS84 + UTM constants. Kept inline rather than imported: this is a
+    # standalone script, and campus_nav is only an exec_depend. Same trade-off as
+    # NavNode's copy.
+    _WGS84_A = 6378137.0                          # semi-major axis (m)
+    _WGS84_F = 1.0 / 298.257223563                # flattening
+    _WGS84_E2 = _WGS84_F * (2.0 - _WGS84_F)       # first eccentricity squared
+    _WGS84_EP2 = _WGS84_E2 / (1.0 - _WGS84_E2)    # second eccentricity squared
+    _UTM_K0 = 0.9996                              # UTM central scale factor
+    _UTM_FALSE_EASTING = 500000.0
 
     @classmethod
-    def _projection_radii(cls, lat0, lon0):
-        """(r_east, r_north) at the datum: prime-vertical N and meridional M,
-        each scaled by the UTM point scale factor k, so the plane matches
-        navsat_transform's UTM metric.
+    def _lonlat_to_utm(cls, lon, lat, zone):
+        """WGS84 lon/lat (deg) -> UTM easting, northing (m). Northern hemisphere.
 
-        At the Zhicheng datum (22.574358, 113.935071): r_east = 6385869.0,
-        r_north = 6349383.3 (N = 6381285.4, M = 6344826.0, k = 1.0007183).
-
-        MUST stay consistent with campus_nav/route_graph.py's projection_radii,
-        NaviSkill/nav_node.py's NavNode._projection_radii and PointMarker/geo.py.
+        Transverse Mercator series (Snyder / USGS PP-1395), sub-millimetre within
+        a zone. MUST stay consistent with campus_nav/route_graph.py's
+        lonlat_to_utm, NaviSkill/nav_node.py's copy and PointMarker/geo.py.
         """
-        p = math.radians(lat0)
-        w = math.sqrt(1.0 - cls._WGS84_E2 * math.sin(p) ** 2)
-        n = cls._WGS84_A / w                              # prime vertical (east)
-        m = cls._WGS84_A * (1.0 - cls._WGS84_E2) / w ** 3  # meridional (north)
-        zone = int((lon0 + 180.0) // 6) + 1
-        dlon = math.radians(lon0 - (6 * zone - 183))      # offset from central meridian
-        k = cls._UTM_K0 * (1.0 + (dlon * math.cos(p)) ** 2 / 2.0)
-        return n * k, m * k
+        p = math.radians(lat)
+        dlon = math.radians(lon - (6 * zone - 183))
+        e2, ep2 = cls._WGS84_E2, cls._WGS84_EP2
+
+        n = cls._WGS84_A / math.sqrt(1.0 - e2 * math.sin(p) ** 2)
+        t = math.tan(p) ** 2
+        c = ep2 * math.cos(p) ** 2
+        a = dlon * math.cos(p)
+        m = cls._WGS84_A * (
+            (1 - e2 / 4 - 3 * e2**2 / 64 - 5 * e2**3 / 256) * p
+            - (3 * e2 / 8 + 3 * e2**2 / 32 + 45 * e2**3 / 1024) * math.sin(2 * p)
+            + (15 * e2**2 / 256 + 45 * e2**3 / 1024) * math.sin(4 * p)
+            - (35 * e2**3 / 3072) * math.sin(6 * p)
+        )
+
+        east = cls._UTM_K0 * n * (
+            a
+            + (1 - t + c) * a**3 / 6
+            + (5 - 18 * t + t**2 + 72 * c - 58 * ep2) * a**5 / 120
+        ) + cls._UTM_FALSE_EASTING
+        north = cls._UTM_K0 * (
+            m
+            + n * math.tan(p) * (
+                a**2 / 2
+                + (5 - t + 9 * c + 4 * c**2) * a**4 / 24
+                + (61 - 58 * t + t**2 + 600 * c - 330 * ep2) * a**6 / 720
+            )
+        )
+        return east, north
+
+    @classmethod
+    def _grid_convergence(cls, lat, lon, zone):
+        """Angle from UTM grid north to true north (rad), positive east of the
+        central meridian. 1.128 deg at the Zhicheng datum."""
+        return math.atan(
+            math.tan(math.radians(lon - (6 * zone - 183)))
+            * math.sin(math.radians(lat)))
 
     def _latlon_to_enu(self, lat, lon):
-        """Local tangent-plane ENU relative to the campus datum, matching
-        navsat_transform's UTM metric (same formula as campus_nav.route_graph's
-        ENU — kept inline to avoid cross-package imports)."""
-        east = self._r_east * self._cos_datum_lat * math.radians(lon - self._datum_lon_deg)
-        north = self._r_north * math.radians(lat - self._datum_lat_deg)
-        return east, north
+        """ENU relative to the campus datum, reproducing navsat_transform's map
+        frame: UTM, then the one grid-convergence de-rotation navsat establishes
+        at the datum. Same formula as campus_nav.route_graph's ENU — kept inline
+        to avoid cross-package imports."""
+        east, north = self._lonlat_to_utm(lon, lat, self._utm_zone)
+        de, dn = east - self._datum_e, north - self._datum_n
+        return (de * self._cos_gamma + dn * self._sin_gamma,
+                -de * self._sin_gamma + dn * self._cos_gamma)
 
     def _now(self) -> float:
         return self.get_clock().now().nanoseconds * 1e-9

@@ -58,15 +58,18 @@ class NavNode(Node):
     DEFAULT_GPS_DATUM_LAT = 22.574357630323675
     DEFAULT_GPS_DATUM_LON = 113.93507078035577
 
-    # 局部切平面投影用的椭球参数。车自身在 map 系的位置由 navsat_transform 经 UTM
-    # 投影得出，目标点必须用同一个度量，否则两者的比例差会随离 datum 的距离线性
-    # 放大（2026-08-16 实测：4032 m 处恒定偏 10.67 m，成因是把赤道半径当成了子午
-    # 圈曲率半径）。UTM 的格网收敛角由 navsat_transform 内部补偿，故这里只需补分
-    # 轴曲率半径与 datum 处的尺度因子两项。详见 _projection_radii。
-    _WGS84_A = 6378137.0                       # 长半轴（m）
-    _WGS84_F = 1.0 / 298.257223563             # 扁率
-    _WGS84_E2 = _WGS84_F * (2.0 - _WGS84_F)    # 第一偏心率平方
-    _UTM_K0 = 0.9996                           # UTM 中央经线尺度因子
+    # 经纬度 → 平面投影用的椭球参数。车自身在 map 系的位置由 navsat_transform 经
+    # UTM 投影得出，目标点必须用同一个度量，否则两者会错开。这里以前是在 datum 处
+    # 线性化的切平面，残差随距 datum 距离的平方增长（600 m 处 1.6 cm，4 km 处
+    # 0.61 m —— 大学城正好在 4 km 上）。改为走同一套 UTM 级数后残差与距离无关。
+    # 必须与 campus_nav/route_graph.py 的 lonlat_to_utm / ENU、
+    # FAST_LIO/scripts/map_odom_from_gps.py 及 PointMarker/geo.py 保持一致。
+    _WGS84_A = 6378137.0                              # 长半轴（m）
+    _WGS84_F = 1.0 / 298.257223563                    # 扁率
+    _WGS84_E2 = _WGS84_F * (2.0 - _WGS84_F)           # 第一偏心率平方
+    _WGS84_EP2 = _WGS84_E2 / (1.0 - _WGS84_E2)        # 第二偏心率平方
+    _UTM_K0 = 0.9996                                  # UTM 中央经线尺度因子
+    _UTM_FALSE_EASTING = 500000.0
 
     def __init__(
         self,
@@ -336,12 +339,18 @@ class NavNode(Node):
             self.campus_frame = campus_frame
             self.campus_goal_pub = self.create_publisher(
                 PoseStamped, campus_goal_topic, 10)
-            # 经纬度 ↔ campus_map 平面（局部切平面投影，与 route_graph.ENU 完全一致）
+            # 经纬度 ↔ campus_map 平面（UTM + datum 处一次性去格网收敛旋转，
+            # 与 route_graph.ENU 完全一致）。分带钉在 datum 所属带上，使跨 114°E
+            # 分带线的场地仍是连续度量。
             self.gps_datum_lat = float(gps_datum_lat)
             self.gps_datum_lon = float(gps_datum_lon)
-            self._gps_datum_cos0 = math.cos(math.radians(self.gps_datum_lat))
-            self._r_east, self._r_north = self._projection_radii(
-                self.gps_datum_lat, self.gps_datum_lon)
+            self._campus_zone = self._utm_zone(self.gps_datum_lon)
+            self._campus_e0, self._campus_n0 = self._lonlat_to_utm(
+                self.gps_datum_lon, self.gps_datum_lat, self._campus_zone)
+            _gamma = self._grid_convergence(
+                self.gps_datum_lat, self.gps_datum_lon, self._campus_zone)
+            self._campus_cos_g = math.cos(_gamma)
+            self._campus_sin_g = math.sin(_gamma)
             # 室外当前目标（campus_frame 下的 PoseStamped）及运行标志
             self._outdoor_goal: Optional[PoseStamped] = None
             self._outdoor_nav_active = False
@@ -1141,36 +1150,112 @@ class NavNode(Node):
         return self.is_map_localized()
 
     # ── 室外目标下发（经 campus_nav 路网规划器）─────────────────────────────
+    @staticmethod
+    def _utm_zone(lon: float) -> int:
+        """经度（度）对应的标准 UTM 分带号。"""
+        return int((lon + 180.0) // 6) + 1
+
+    @staticmethod
+    def _utm_central_meridian(zone: int) -> float:
+        return 6 * zone - 183
+
     @classmethod
-    def _projection_radii(cls, lat0: float, lon0: float) -> Tuple[float, float]:
-        """datum 处的 (r_east, r_north)：卯酉圈 N 与子午圈 M，各乘 UTM 尺度因子 k。
+    def _lonlat_to_utm(cls, lon: float, lat: float,
+                       zone: int) -> Tuple[float, float]:
+        """WGS84 经纬度（度）→ UTM easting/northing（m），北半球。
 
-        在智城 datum（22.574358, 113.935071）处得 r_east = 6385869.0、
-        r_north = 6349383.3（N = 6381285.4，M = 6344826.0，k = 1.0007183）。
-
-        必须与 campus_nav/route_graph.py 的 projection_radii 及
-        PointMarker/geo.py 保持一致。
+        横轴墨卡托级数（Snyder / USGS PP-1395），带内亚毫米级。zone 由调用方显式
+        给出而非从 lon 推导，见 _campus_zone 的说明。
         """
-        p = math.radians(lat0)
-        w = math.sqrt(1.0 - cls._WGS84_E2 * math.sin(p) ** 2)
-        n = cls._WGS84_A / w                                  # 卯酉圈，东向
-        m = cls._WGS84_A * (1.0 - cls._WGS84_E2) / w ** 3      # 子午圈，北向
-        zone = int((lon0 + 180.0) // 6) + 1
-        dlon = math.radians(lon0 - (6 * zone - 183))          # 离中央经线的经差
-        k = cls._UTM_K0 * (1.0 + (dlon * math.cos(p)) ** 2 / 2.0)
-        return n * k, m * k
+        p = math.radians(lat)
+        dlon = math.radians(lon - cls._utm_central_meridian(zone))
+        e2, ep2 = cls._WGS84_E2, cls._WGS84_EP2
+
+        n = cls._WGS84_A / math.sqrt(1.0 - e2 * math.sin(p) ** 2)
+        t = math.tan(p) ** 2
+        c = ep2 * math.cos(p) ** 2
+        a = dlon * math.cos(p)
+        m = cls._WGS84_A * (
+            (1 - e2 / 4 - 3 * e2**2 / 64 - 5 * e2**3 / 256) * p
+            - (3 * e2 / 8 + 3 * e2**2 / 32 + 45 * e2**3 / 1024) * math.sin(2 * p)
+            + (15 * e2**2 / 256 + 45 * e2**3 / 1024) * math.sin(4 * p)
+            - (35 * e2**3 / 3072) * math.sin(6 * p)
+        )
+
+        east = cls._UTM_K0 * n * (
+            a
+            + (1 - t + c) * a**3 / 6
+            + (5 - 18 * t + t**2 + 72 * c - 58 * ep2) * a**5 / 120
+        ) + cls._UTM_FALSE_EASTING
+        north = cls._UTM_K0 * (
+            m
+            + n * math.tan(p) * (
+                a**2 / 2
+                + (5 - t + 9 * c + 4 * c**2) * a**4 / 24
+                + (61 - 58 * t + t**2 + 600 * c - 330 * ep2) * a**6 / 720
+            )
+        )
+        return east, north
+
+    @classmethod
+    def _utm_to_lonlat(cls, east: float, north: float,
+                       zone: int) -> Tuple[float, float]:
+        """UTM easting/northing（m）→ WGS84 经纬度（度），北半球。"""
+        e2, ep2 = cls._WGS84_E2, cls._WGS84_EP2
+        x = east - cls._UTM_FALSE_EASTING
+        m = north / cls._UTM_K0
+        mu = m / (cls._WGS84_A * (1 - e2 / 4 - 3 * e2**2 / 64 - 5 * e2**3 / 256))
+        e1 = (1 - math.sqrt(1 - e2)) / (1 + math.sqrt(1 - e2))
+
+        p1 = (
+            mu
+            + (3 * e1 / 2 - 27 * e1**3 / 32) * math.sin(2 * mu)
+            + (21 * e1**2 / 16 - 55 * e1**4 / 32) * math.sin(4 * mu)
+            + (151 * e1**3 / 96) * math.sin(6 * mu)
+            + (1097 * e1**4 / 512) * math.sin(8 * mu)
+        )
+
+        n1 = cls._WGS84_A / math.sqrt(1 - e2 * math.sin(p1) ** 2)
+        t1 = math.tan(p1) ** 2
+        c1 = ep2 * math.cos(p1) ** 2
+        r1 = cls._WGS84_A * (1 - e2) / (1 - e2 * math.sin(p1) ** 2) ** 1.5
+        d = x / (n1 * cls._UTM_K0)
+
+        lat = p1 - (n1 * math.tan(p1) / r1) * (
+            d**2 / 2
+            - (5 + 3 * t1 + 10 * c1 - 4 * c1**2 - 9 * ep2) * d**4 / 24
+            + (61 + 90 * t1 + 298 * c1 + 45 * t1**2
+               - 252 * ep2 - 3 * c1**2) * d**6 / 720
+        )
+        lon = math.radians(cls._utm_central_meridian(zone)) + (
+            d
+            - (1 + 2 * t1 + c1) * d**3 / 6
+            + (5 - 2 * c1 + 28 * t1 - 3 * c1**2 + 8 * ep2
+               + 24 * t1**2) * d**5 / 120
+        ) / math.cos(p1)
+        return math.degrees(lon), math.degrees(lat)
+
+    @classmethod
+    def _grid_convergence(cls, lat: float, lon: float, zone: int) -> float:
+        """UTM 格网北 → 真北的夹角（rad），中央经线以东为正。智城 datum 处 1.128°。"""
+        return math.atan(
+            math.tan(math.radians(lon - cls._utm_central_meridian(zone)))
+            * math.sin(math.radians(lat))
+        )
 
     def _lonlat_to_campus_xy(self, lon: float, lat: float) -> Tuple[float, float]:
-        """经纬度 → campus_map 平面 (east, north)，局部切平面（同 route_graph.ENU）。"""
-        east = math.radians(lon - self.gps_datum_lon) * self._r_east * self._gps_datum_cos0
-        north = math.radians(lat - self.gps_datum_lat) * self._r_north
-        return east, north
+        """经纬度 → campus_map 平面 (east, north)，与 route_graph.ENU 逐位一致。"""
+        east, north = self._lonlat_to_utm(lon, lat, self._campus_zone)
+        de, dn = east - self._campus_e0, north - self._campus_n0
+        return (de * self._campus_cos_g + dn * self._campus_sin_g,
+                -de * self._campus_sin_g + dn * self._campus_cos_g)
 
     def _campus_xy_to_lonlat(self, east: float, north: float) -> Tuple[float, float]:
         """campus_map 平面 (east, north) → 经纬度，_lonlat_to_campus_xy 的逆变换。"""
-        lat = self.gps_datum_lat + math.degrees(north / self._r_north)
-        lon = self.gps_datum_lon + math.degrees(east / (self._r_east * self._gps_datum_cos0))
-        return lon, lat
+        de = east * self._campus_cos_g - north * self._campus_sin_g
+        dn = east * self._campus_sin_g + north * self._campus_cos_g
+        return self._utm_to_lonlat(
+            self._campus_e0 + de, self._campus_n0 + dn, self._campus_zone)
 
     def send_campus_goal(self, pose: PoseStamped,
                          wait_planner_s: float = 30.0) -> bool:

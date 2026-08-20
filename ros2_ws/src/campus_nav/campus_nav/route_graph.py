@@ -1165,69 +1165,165 @@ def load_stub_entry_points(pbf_path: str, graph, tag: str = "campus_entry"):
 
 
 # ---------------------------------------------------------------------------
-# Local ENU projection (for ROS map frame)
+# Local metric projection (for ROS map frame)
 # ---------------------------------------------------------------------------
 # The vehicle's own position in the map frame is produced by navsat_transform,
-# which projects lon/lat through UTM. Goal points and the road network must use
-# the same metric, or the two disagree by a scale error that grows linearly with
-# the distance from the datum. Measured 2026-08-16 at 4032 m from the datum: a
-# constant 10.67 m offset, caused by using the equatorial radius where the
-# meridional radius of curvature belongs.
+# which projects lon/lat through UTM (GeographicLib UTMUPS::Forward) and then
+# applies one fixed rotation -- established once at the datum -- that takes the
+# UTM grid onto true north. Goal points and the road network must reproduce that
+# same metric, or the two disagree.
 #
-# Grid convergence (1.128 deg here) is already compensated inside
-# navsat_transform -- if it were not, the offset would have been ~79 m rather
-# than 10.67 m -- so only two corrections are needed: per-axis curvature radii,
-# and the UTM point scale factor at the datum.
+# This used to be a tangent plane linearized at the datum. That left an error
+# growing with the square of the distance from the datum: 1.6 cm at 600 m but
+# 0.61 m at 4 km, which is exactly where the Daxuecheng site sits. (An earlier
+# revision was far worse -- 10.67 m at 4032 m, measured 2026-08-16 -- because it
+# used the equatorial radius where the meridional radius of curvature belongs.)
+# Going through the same UTM series as navsat_transform instead makes the
+# residual vanish at any distance, which turns the datum back into a free choice
+# of origin rather than an accuracy trade-off: there is no longer a "make this
+# site accurate at the expense of that one" decision to get wrong.
 _WGS84_A = 6378137.0                                  # semi-major axis (m)
 _WGS84_F = 1.0 / 298.257223563                        # flattening
 _WGS84_E2 = _WGS84_F * (2.0 - _WGS84_F)               # first eccentricity squared
+_WGS84_EP2 = _WGS84_E2 / (1.0 - _WGS84_E2)            # second eccentricity squared
 _UTM_K0 = 0.9996                                      # UTM central scale factor
+_UTM_FALSE_EASTING = 500000.0
 
 
-def projection_radii(lat0, lon0):
-    """Return (r_east, r_north) for a local tangent plane at (lat0, lon0).
+def utm_zone(lon):
+    """Standard UTM zone number for a longitude in degrees."""
+    return int((lon + 180.0) // 6) + 1
 
-    r_east is the prime-vertical radius of curvature N, r_north the meridional
-    radius M, each scaled by the UTM point scale factor k at the datum so the
-    result matches navsat_transform's UTM metric.
 
-    At the Zhicheng datum (22.574358, 113.935071) this yields
-    r_east = 6385869.0, r_north = 6349383.3 (N = 6381285.4, M = 6344826.0,
-    k = 1.0007183).
+def _utm_central_meridian(zone):
+    return 6 * zone - 183
 
+
+def lonlat_to_utm(lon, lat, zone):
+    """WGS84 lon/lat (deg) -> UTM easting, northing (m). Northern hemisphere.
+
+    Transverse Mercator series (Snyder / USGS PP-1395), sub-millimetre within a
+    zone. `zone` is explicit rather than derived from `lon` so a caller can hold
+    one zone across a whole site -- see ENU for why that matters.
     """
-    p = math.radians(lat0)
-    w = math.sqrt(1.0 - _WGS84_E2 * math.sin(p) ** 2)
-    n = _WGS84_A / w                                  # prime vertical (east)
-    m = _WGS84_A * (1.0 - _WGS84_E2) / w ** 3         # meridional (north)
-    zone = int((lon0 + 180.0) // 6) + 1
-    dlon = math.radians(lon0 - (6 * zone - 183))      # offset from central meridian
-    k = _UTM_K0 * (1.0 + (dlon * math.cos(p)) ** 2 / 2.0)
-    return n * k, m * k
+    p = math.radians(lat)
+    dlon = math.radians(lon - _utm_central_meridian(zone))
+
+    n = _WGS84_A / math.sqrt(1.0 - _WGS84_E2 * math.sin(p) ** 2)
+    t = math.tan(p) ** 2
+    c = _WGS84_EP2 * math.cos(p) ** 2
+    a = dlon * math.cos(p)
+    m = _WGS84_A * (
+        (1 - _WGS84_E2 / 4 - 3 * _WGS84_E2**2 / 64 - 5 * _WGS84_E2**3 / 256) * p
+        - (3 * _WGS84_E2 / 8 + 3 * _WGS84_E2**2 / 32
+           + 45 * _WGS84_E2**3 / 1024) * math.sin(2 * p)
+        + (15 * _WGS84_E2**2 / 256 + 45 * _WGS84_E2**3 / 1024) * math.sin(4 * p)
+        - (35 * _WGS84_E2**3 / 3072) * math.sin(6 * p)
+    )
+
+    east = _UTM_K0 * n * (
+        a
+        + (1 - t + c) * a**3 / 6
+        + (5 - 18 * t + t**2 + 72 * c - 58 * _WGS84_EP2) * a**5 / 120
+    ) + _UTM_FALSE_EASTING
+    north = _UTM_K0 * (
+        m
+        + n * math.tan(p) * (
+            a**2 / 2
+            + (5 - t + 9 * c + 4 * c**2) * a**4 / 24
+            + (61 - 58 * t + t**2 + 600 * c - 330 * _WGS84_EP2) * a**6 / 720
+        )
+    )
+    return east, north
+
+
+def utm_to_lonlat(east, north, zone):
+    """UTM easting, northing (m) -> WGS84 lon/lat (deg). Northern hemisphere."""
+    x = east - _UTM_FALSE_EASTING
+    m = north / _UTM_K0
+    mu = m / (_WGS84_A * (1 - _WGS84_E2 / 4 - 3 * _WGS84_E2**2 / 64
+                          - 5 * _WGS84_E2**3 / 256))
+    e1 = (1 - math.sqrt(1 - _WGS84_E2)) / (1 + math.sqrt(1 - _WGS84_E2))
+
+    p1 = (
+        mu
+        + (3 * e1 / 2 - 27 * e1**3 / 32) * math.sin(2 * mu)
+        + (21 * e1**2 / 16 - 55 * e1**4 / 32) * math.sin(4 * mu)
+        + (151 * e1**3 / 96) * math.sin(6 * mu)
+        + (1097 * e1**4 / 512) * math.sin(8 * mu)
+    )
+
+    n1 = _WGS84_A / math.sqrt(1 - _WGS84_E2 * math.sin(p1) ** 2)
+    t1 = math.tan(p1) ** 2
+    c1 = _WGS84_EP2 * math.cos(p1) ** 2
+    r1 = _WGS84_A * (1 - _WGS84_E2) / (1 - _WGS84_E2 * math.sin(p1) ** 2) ** 1.5
+    d = x / (n1 * _UTM_K0)
+
+    lat = p1 - (n1 * math.tan(p1) / r1) * (
+        d**2 / 2
+        - (5 + 3 * t1 + 10 * c1 - 4 * c1**2 - 9 * _WGS84_EP2) * d**4 / 24
+        + (61 + 90 * t1 + 298 * c1 + 45 * t1**2
+           - 252 * _WGS84_EP2 - 3 * c1**2) * d**6 / 720
+    )
+    lon = math.radians(_utm_central_meridian(zone)) + (
+        d
+        - (1 + 2 * t1 + c1) * d**3 / 6
+        + (5 - 2 * c1 + 28 * t1 - 3 * c1**2 + 8 * _WGS84_EP2
+           + 24 * t1**2) * d**5 / 120
+    ) / math.cos(p1)
+    return math.degrees(lon), math.degrees(lat)
+
+
+def grid_convergence(lat, lon, zone):
+    """Angle from UTM grid north to true north (rad), positive east of the
+    central meridian. 1.128 deg at the Zhicheng datum."""
+    return math.atan(
+        math.tan(math.radians(lon - _utm_central_meridian(zone)))
+        * math.sin(math.radians(lat))
+    )
 
 
 class ENU:
-    """Local tangent plane around a datum, matching navsat_transform's UTM.
+    """East/north metric frame reproducing navsat_transform's map frame exactly.
 
-    Residual at 4 km from the datum is ~0.6 m (second-order terms: M, N and k
-    all vary slightly with latitude, and this linearizes them at the datum).
+    Projects through UTM and then de-rotates by the grid convergence *at the
+    datum*, which is what navsat_transform does: it computes the convergence
+    when it establishes the UTM->world transform and keeps that one rotation
+    forever. Residual against it is limited by the series itself (sub-mm), not
+    by the distance from the datum.
+
+    The zone is pinned to the datum's zone instead of being recomputed per
+    point, so a site straddling a zone boundary stays in one continuous metric
+    (UTM tolerates a few km of overhang with negligible distortion). Note that
+    navsat_transform does *not* pin its zone -- GeographicLib picks the standard
+    zone from each fix's longitude and robot_localization exposes no override --
+    so a vehicle crossing a boundary makes its own easting jump by hundreds of
+    km. The nearest boundary to Xili is 114 deg E, ~3.3 km east of Daxuecheng.
     """
 
     def __init__(self, lat0, lon0):
         self.lat0 = lat0
         self.lon0 = lon0
-        self.cos0 = math.cos(math.radians(lat0))
-        self.r_east, self.r_north = projection_radii(lat0, lon0)
+        self.zone = utm_zone(lon0)
+        self.e0, self.n0 = lonlat_to_utm(lon0, lat0, self.zone)
+        gamma = grid_convergence(lat0, lon0, self.zone)
+        self._cos_g = math.cos(gamma)
+        self._sin_g = math.sin(gamma)
+
+    def fingerprint(self):
+        """Identity of the projection, for stamping exported coordinates."""
+        return {"kind": "utm", "zone": self.zone}
 
     def to_xy(self, lon, lat):
-        east = math.radians(lon - self.lon0) * self.r_east * self.cos0
-        north = math.radians(lat - self.lat0) * self.r_north
-        return east, north
+        east, north = lonlat_to_utm(lon, lat, self.zone)
+        de, dn = east - self.e0, north - self.n0
+        return (de * self._cos_g + dn * self._sin_g,
+                -de * self._sin_g + dn * self._cos_g)
 
     def to_lonlat(self, east, north):
-        lat = self.lat0 + math.degrees(north / self.r_north)
-        lon = self.lon0 + math.degrees(east / (self.r_east * self.cos0))
-        return lon, lat
+        de = east * self._cos_g - north * self._sin_g
+        dn = east * self._sin_g + north * self._cos_g
+        return utm_to_lonlat(self.e0 + de, self.n0 + dn, self.zone)
 
 
 def _build_restrictions(restr_raw):

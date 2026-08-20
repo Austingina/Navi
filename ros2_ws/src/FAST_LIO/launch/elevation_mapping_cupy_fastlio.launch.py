@@ -88,13 +88,13 @@ def generate_launch_description():
             'ground_percentile': 0.2,
             'ground_radius': 3,             # (2r+1)^2 窗
             'ground_min_cells': 4,
-            # 障碍高度带(相对局部地面)：地面上方 3cm~1.6m 视为障碍。
+            # 障碍高度带(相对局部地面)：
             'obstacle_min_height': 0.15,
-            'obstacle_max_height': 1.6,
+            'obstacle_max_height': 1.0,
             # 地面未知的格子回退到脚底高度带(用 TF odom->base_link 的 z)。
             'fallback_on_unknown_elevation': False,
             'fallback_min_height': 0.3,
-            'fallback_max_height': 1.6,
+            'fallback_max_height': 1.0,
             # 坡度：地面层梯度 -> 分级代价 OccupancyGrid(/slope_costmap)。
             # <=free_deg 记 0；free~lethal 线性升到 99（缓坡代价递增，同等条件优先平地）；
             # >=lethal_deg 记 100(lethal，基本过不去)。不再往 scan 里塞假障碍点。
@@ -128,7 +128,7 @@ def generate_launch_description():
             # 半径取 4.5 m：略小于高程图半边长(map_length=10 -> 5 m)，避免把
             # 边缘从未扫到的区域也判成空。
             'free_on_empty': True,
-            'free_on_empty_radius': 4.5,
+            'free_on_empty_radius': 1.5,
             # 多帧累积：把最近若干帧的存活障碍点在 odom 系累起来再投 2D，
             # 单帧稀疏被时间窗补满，障碍不再闪烁/缺角。
             'accumulate_enable': True,

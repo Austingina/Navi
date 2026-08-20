@@ -48,7 +48,7 @@
     # is injected by route_planner.launch.py (an absolute path is required).
     nav2_final_precise_enable: true
     nav2_final_approach_m: 8.0
-    nav2_final_reach_tol_m: 0.5
+    nav2_final_reach_tol_m: 0.8
     nav2_final_action_name: navigate_to_pose
     nav2_final_max_retry: 2
     # Off-network goals (plaza / courtyard behind a fence): the goal has no road

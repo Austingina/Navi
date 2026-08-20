@@ -1433,10 +1433,7 @@ class RoutePlanner(Node):
                 "lat": self.get_parameter("datum_lat").value,
                 "lon": self.get_parameter("datum_lon").value,
             },
-            "projection": {
-                "r_east": self.enu.r_east,
-                "r_north": self.enu.r_north,
-            },
+            "projection": self.enu.fingerprint(),
             "loop": bool(close),
             "length_m": total,
             "leg_lengths_m": legs,
@@ -1506,42 +1503,46 @@ class RoutePlanner(Node):
             self.get_logger().error(f"patrol load failed: {e}")
             return
 
+        # Stored map_x/map_y are only valid under the datum + projection they
+        # were written with. Every record also carries lon/lat, which is datum
+        # independent, so a mismatch is recoverable: reproject from lon/lat
+        # instead of trusting the stale metric coordinates. That makes changing
+        # the datum (or the projection, as the switch from the linearized
+        # tangent plane to UTM did) a non-event for saved patrols.
         d_lat = d.get("datum", {}).get("lat")
         d_lon = d.get("datum", {}).get("lon")
-        if d_lat is not None and (
-            abs(d_lat - self.enu.lat0) > 1e-9 or abs(d_lon - self.enu.lon0) > 1e-9
-        ):
+        proj = d.get("projection") or {}
+        reasons = []
+        if d_lat is None or d_lon is None:
+            reasons.append("no datum recorded")
+        elif (abs(d_lat - self.enu.lat0) > 1e-9
+                or abs(d_lon - self.enu.lon0) > 1e-9):
+            reasons.append(
+                f"datum ({d_lat},{d_lon}) != node datum "
+                f"({self.enu.lat0},{self.enu.lon0})")
+        if proj != self.enu.fingerprint():
+            # Pre-UTM files carry {r_east, r_north}; older ones nothing at all.
+            reasons.append(
+                f"projection {proj or 'unrecorded'} != {self.enu.fingerprint()}")
+        stale = bool(reasons)
+        if stale:
             self.get_logger().warn(
-                f"Loaded patrol datum ({d_lat},{d_lon}) != node datum "
-                f"({self.enu.lat0},{self.enu.lon0}); markers use the file's "
-                "stored map_x/map_y, so set the node datum to match for alignment."
+                f"Loaded patrol was written under a different frame "
+                f"({'; '.join(reasons)}); reprojecting from the stored lon/lat. "
+                "Run `patrol_cmd save` to refresh the file itself."
             )
 
-        # Files written before the per-axis curvature fix carry no projection
-        # block and their map_x/map_y are off by ~0.26% of the distance to the
-        # datum (0.5 m at 200 m, 10 m at 4 km).
-        proj = d.get("projection") or {}
-        p_east, p_north = proj.get("r_east"), proj.get("r_north")
-        if p_east is None or p_north is None:
-            self.get_logger().warn(
-                "Loaded patrol has no projection fingerprint (saved before the "
-                "per-axis curvature fix). Its map_x/map_y are stale; run "
-                "`patrol_cmd save` to recompute them under the current radii."
-            )
-        elif (abs(p_east - self.enu.r_east) > 1.0
-                or abs(p_north - self.enu.r_north) > 1.0):
-            self.get_logger().warn(
-                f"Loaded patrol projection (r_east={p_east:.1f}, "
-                f"r_north={p_north:.1f}) != node projection "
-                f"(r_east={self.enu.r_east:.1f}, r_north={self.enu.r_north:.1f}); "
-                "stored map_x/map_y are stale, re-save to recompute."
-            )
+        def _xy(rec):
+            """Map coords for one stored record, reprojected when stale."""
+            if stale and rec.get("lon") is not None and rec.get("lat") is not None:
+                return self.enu.to_xy(rec["lon"], rec["lat"])
+            return float(rec["map_x"]), float(rec["map_y"])
 
         stamp = _latest_tf_stamp()
         # restore clicked waypoints so undo/save keep working after a load
         self.patrol_pts = [(w["lon"], w["lat"]) for w in d.get("waypoints", [])]
 
-        # path (control points) -> /patrol_path, straight from stored map coords
+        # path (control points) -> /patrol_path
         path_recs = d.get("path", [])
         if path_recs:
             path_z = float(self.get_parameter("network_z").value)
@@ -1549,10 +1550,11 @@ class RoutePlanner(Node):
             msg.header.frame_id = self.frame_id
             msg.header.stamp = stamp
             for r in path_recs:
+                x, y = _xy(r)
                 ps = PoseStamped()
                 ps.header = msg.header
-                ps.pose.position.x = float(r["map_x"])
-                ps.pose.position.y = float(r["map_y"])
+                ps.pose.position.x = x
+                ps.pose.position.y = y
                 ps.pose.position.z = path_z
                 ps.pose.orientation.w = 1.0
                 msg.poses.append(ps)
@@ -1562,12 +1564,13 @@ class RoutePlanner(Node):
             wp_enu = []
             for i, w in enumerate(d.get("waypoints", [])):
                 label = "CHG" if i == 0 else str(i)
-                wp_enu.append((w["map_x"], w["map_y"], label))
+                x, y = _xy(w)
+                wp_enu.append((x, y, label))
             if hasattr(self, "patrol_wp_pub"):
                 self.patrol_wp_pub.publish(MarkerArray(
                     markers=_patrol_waypoint_markers(wp_enu, self.frame_id, stamp)
                 ))
-            corner_enu = [(c["map_x"], c["map_y"]) for c in d.get("corners", [])]
+            corner_enu = [_xy(c) for c in d.get("corners", [])]
             if hasattr(self, "patrol_corner_pub"):
                 self.patrol_corner_pub.publish(MarkerArray(
                     markers=_patrol_corner_markers(corner_enu, self.frame_id, stamp)

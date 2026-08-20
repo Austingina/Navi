@@ -198,7 +198,7 @@ def generate_launch_description():
         parameters=[{'use_sim_time': use_sim_time,
                      'gps_topic': '/odometry/gps',
                      'publish_rate': 20.0,
-                     'process_noise': 0.05,       # LIO 漂移速率(m^2/s)
+                     'process_noise': 0.01,       # LIO 漂移速率(m^2/s)
                      'gps_variance_default': 1.0,  # GPS 消息无协方差时的兜底
                      'use_msg_covariance': True,   # 优先用 GPS 自带协方差当 R
                      'gps_gate_sigma': 5.0,        # 突跳门限(sigma)，0=关
@@ -207,11 +207,11 @@ def generate_launch_description():
                      'max_correction_speed': 0.3,
                      # R 信任策略：膨胀倍数 / 下限 / 上限
                      'gps_variance_scale': 4.0,    # sigma x2，抵消上报的乐观
-                     'gps_variance_floor': 0.09,   # sigma 0.3m，不信 cm 级
+                     'gps_variance_floor': 0.25,   # sigma 0.5m，不信 cm 级
                      'max_gps_variance': 400.0,    # sigma 20m 以上视为无信息
                      # 按 NavSatStatus 追加惩罚（解越差、上报的 sigma 越乐观）
                      'var_scale_status_gbas': 1.0,  # status 2: RTK
-                     'var_scale_status_sbas': 4.0,  # status 1
+                     'var_scale_status_sbas': 2.0,  # status 1
                      'var_scale_status_fix': 9.0,   # status 0: SINGLE
                      # 差解判定，与 gps_heading_align 同名同义
                      'min_fix_status': 0,
