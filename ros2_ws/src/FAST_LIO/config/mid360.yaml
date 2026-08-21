@@ -16,8 +16,8 @@
         imu_topic: "/livox/front_imu"
 
         common:
-            # lid_topic:  "/livox/fused_lidar"
-            lid_topic:  "/livox/front_lidar"
+            lid_topic:  "/livox/fused_lidar"
+            # lid_topic:  "/livox/front_lidar"
             imu_topic:  "/livox/front_imu"
             time_sync_en: false         # ONLY turn on when external time synchronization is really not possible
             time_offset_lidar_to_imu: 0.0 # Time offset between lidar and IMU calibrated by other algorithms, e.g. LI-Init (can be found in README).

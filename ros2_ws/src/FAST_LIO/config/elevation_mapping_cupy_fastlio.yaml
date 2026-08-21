@@ -34,9 +34,17 @@ elevation_mapping_node:
     initialize_tf_offset: [0.0]
 
     # 真机上 /livox/points 无发布者（robot-sensors 的驱动只发 CustomMsg
-    # /livox/front_lidar,/livox/back_lidar）。改吃 FAST-LIO 去畸变后的当前帧,
-    # frame=base_link, ~10Hz。注意 ray 原点被当作 base_link 原点而非雷达实际
-    # 安装位置，visibility_cleanup 会有该安装偏置量级的误差。
+    # /livox/front_lidar,/livox/back_lidar）。改吃 FAST-LIO 去畸变后的当前帧, ~10Hz。
+    #
+    # 该话题的 frame 是 body. body 原点约等于前雷达
+    # 光心（差 mid360.yaml 的 extrinsic_T，几厘米），所以对【前】雷达的点，
+    # visibility_cleanup 的射线原点基本是对的。
+    #
+    # 但现在喂进 FAST-LIO 的是前后双雷达的合并点云（lid_topic=/livox/fused_lidar），
+    # 合并结果统一在前雷达系里。后雷达的点实际是从它自己的位置发出的，与 body 原点相距
+    # 约 0.55 m（标定值 t=[-0.286,+0.448,-0.110]），而这里会把它们也当成从 body 原点
+    # 发出 —— 所以 visibility_cleanup 对【后】雷达的点存在该量级的射线原点误差。
+    # 单雷达时不存在这个问题。如果日后发现高程图的遮挡清除有异常，先查这一条。
     subscribers:
       mid360:
         topic_name: /cloud_registered_body

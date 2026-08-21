@@ -523,19 +523,28 @@ private:
       return;
     }
 
-    // 脚底高度: base_link 原点在 grid(odom) 下的 z. 拿不到就禁用脚底回退.
-    bool have_foot = false;
-    double z_foot = 0.0;
+    // 点云系(body) -> base_link。这是雷达安装姿态,是 static TF,所以用 TimePointZero
+    // 取最新即可 —— 【刻意不按 cloud_msg 的时刻去查】:带时刻的查询会引入第二个
+    // extrapolation 失败点,而本函数里 TF 失败就得整帧放弃,那会把 scan 频率打对折。
+    // 下面需要的 grid->base_link 由它与已经取到的 t_body_to_grid 复合得出,
+    // 因此全函数只有一个 TF 失败点(t_body_to_grid),与改动前保持一致。
+    geometry_msgs::msg::TransformStamped t_body_to_base;
     try {
-      auto t_foot = tf_buffer_->lookupTransform(
-        grid_frame, base_frame_, cloud_msg->header.stamp, tf2::durationFromSec(0.5));
-      z_foot = t_foot.transform.translation.z;
-      have_foot = true;
+      t_body_to_base = tf_buffer_->lookupTransform(
+        base_frame_, cloud_msg->header.frame_id, tf2::TimePointZero);
     } catch (const std::exception & e) {
       RCLCPP_WARN_THROTTLE(
-        get_logger(), *get_clock(), 2000, "foot TF %s<-%s failed: %s",
-        grid_frame.c_str(), base_frame_.c_str(), e.what());
+        get_logger(), *get_clock(), 2000, "static TF %s<-%s failed: %s",
+        base_frame_.c_str(), cloud_msg->header.frame_id.c_str(), e.what());
+      return;
     }
+
+    // 脚底高度 z_foot = base_link 原点在 grid(odom) 下的 z,由上面两个变换复合反解,
+    // 不再单独查一次 TF(理由同上)。
+    const Eigen::Matrix4f m_base_to_grid =
+      (toMatrix(t_body_to_base) * toMatrix(t_body_to_grid).inverse()).inverse();
+    const bool have_foot = true;
+    const double z_foot = static_cast<double>(m_base_to_grid(2, 3));
 
     sensor_msgs::msg::PointCloud2 cloud_in_grid;
     tf2::doTransform(*cloud_msg, cloud_in_grid, t_body_to_grid);
@@ -586,16 +595,28 @@ private:
     pcl::PointCloud<pcl::PointXYZ> merged_grid;
     for (const auto & f : frame_buffer_) merged_grid += *f.points;
 
-    // 重新投回当前 body 系, 使距离/角度与实时传感器位姿一致.
-    const Eigen::Matrix4f t_grid_to_body = toMatrix(t_body_to_grid).inverse();
-    pcl::PointCloud<pcl::PointXYZ> merged_body;
-    pcl::transformPointCloud(merged_grid, merged_body, t_grid_to_body);
+    // 重新投回车体系 base_link, 使距离/角度与实时车体位姿一致.
+    //
+    // 【必须是 base_link 而不是 body】。body 是 FAST-LIO 的 IMU/雷达系,相对 base_link 带
+    // 着雷达的安装姿态 —— 本车是 Ry(+15deg)*Rz(+90deg)。绕 z 的 90deg 不影响平面的水平性,
+    // 但那 15deg 俯仰会让 body 的 xy 平面相对地面倾斜 15deg。若在 body 系里扁平化:
+    //   * 发出的 LaserScan 平面是倾斜的(在 RViz 里肉眼可见地斜插进地面);
+    //   * range 是沿倾斜平面的投影而非真实水平距离(cos15deg -> 约 3.4% 偏差);
+    //   * Nav2 的 obstacle_layer 会按这个倾斜平面做 raytrace,清障/标障都偏。
+    // base_link 的 z 轴是竖直的(车体系),在它里面扁平化才等于"俯视投影",
+    // 而且 scan 的角度也回到 base_link 的直觉方向(0 = 车头)。
+    const Eigen::Matrix4f m_grid_to_base =
+      toMatrix(t_body_to_base) * toMatrix(t_body_to_grid).inverse();
+    pcl::PointCloud<pcl::PointXYZ> merged_base;
+    pcl::transformPointCloud(merged_grid, merged_base, m_grid_to_base);
 
     // ---- Pass 2: 扁平化为 2D LaserScan -------------------------------------
     const size_t ranges_n =
       static_cast<size_t>(std::floor((angle_max_ - angle_min_) / angle_increment_)) + 1;
     sensor_msgs::msg::LaserScan scan;
-    scan.header = cloud_msg->header;
+    // stamp 沿用输入点云(与 TF 查询时刻一致),frame 换成 base_link —— 见上面的说明。
+    scan.header.stamp = cloud_msg->header.stamp;
+    scan.header.frame_id = base_frame_;
     scan.angle_min = angle_min_;
     scan.angle_max = angle_max_;
     scan.angle_increment = angle_increment_;
@@ -605,24 +626,25 @@ private:
     scan.range_max = range_max_;
     scan.ranges.assign(ranges_n, std::numeric_limits<float>::infinity());
 
-    pcl::PointCloud<pcl::PointXYZ> kept_body;
-    if (publish_filtered_pcd_) kept_body.points.reserve(merged_body.points.size());
-    for (const auto & p : merged_body.points) {
+    pcl::PointCloud<pcl::PointXYZ> kept_base;
+    if (publish_filtered_pcd_) kept_base.points.reserve(merged_base.points.size());
+    for (const auto & p : merged_base.points) {
       insertPointToScan(p, scan, ranges_n);
       if (publish_filtered_pcd_ && std::isfinite(p.x) && std::isfinite(p.y)) {
-        kept_body.points.push_back(p);
+        kept_base.points.push_back(p);
       }
     }
 
     scan_pub_->publish(scan);
 
-    if (publish_filtered_pcd_ && !kept_body.points.empty() && pcd_pub_) {
-      kept_body.width = static_cast<uint32_t>(kept_body.points.size());
-      kept_body.height = 1;
-      kept_body.is_dense = false;
+    if (publish_filtered_pcd_ && !kept_base.points.empty() && pcd_pub_) {
+      kept_base.width = static_cast<uint32_t>(kept_base.points.size());
+      kept_base.height = 1;
+      kept_base.is_dense = false;
       sensor_msgs::msg::PointCloud2 out;
-      pcl::toROSMsg(kept_body, out);
-      out.header = cloud_msg->header;
+      pcl::toROSMsg(kept_base, out);
+      out.header.stamp = cloud_msg->header.stamp;
+      out.header.frame_id = base_frame_;
       pcd_pub_->publish(out);
     }
   }

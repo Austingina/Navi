@@ -3,20 +3,21 @@ session_name: navi
 # 这样在部署账号 nvidia 与其它开发账号下都能用。tmuxp 会对 start_directory 做 expandvars。
 start_directory: $NAVI_SCRIPT_DIR
 
-# 共享常驻栈（session=navi）：雷达驱动 + NaviSkill。
+# 共享常驻栈（session=navi）：双雷达点云合并 + NaviSkill。
+# （真机雷达驱动由 robot-sensors.service 提供，Navi 不再自己起 start_lidar。）
 # 这两者与「定位/Nav2 模式」无关，SLAM(session=slam) 与 室外(session=outdoor) 切换时
 # 保持常驻、不重启——NavNode 的 /gps/fix、navigate_to_pose client 会自动连到当前在跑
 # 的那套栈。用 start_navi.sh 加载本文件。
 #
-# 仿真环境（start_navi.sh -s）会置 $NAVI_SIM_ARG 非空：此时雷达 pane 跳过 start_lidar，
-# 直接用仿真环境中已有的雷达信号；真实环境（$NAVI_SIM_ARG 为空）才启动实体激光雷达。
+# 仿真环境（start_navi.sh -s）会置 $NAVI_SIM_ARG 非空：此时跳过 start_merger，
+# 直接用仿真环境中已有的雷达信号；真实环境（$NAVI_SIM_ARG 为空）才启动双雷达合并。
 windows:
   - window_name: navi_base
     layout: tiled
     panes:
-      # - shell_command:
-      #     - sleep 0
-      #     - '[ -n "$NAVI_SIM_ARG" ] && echo "[sim] 使用仿真环境已有的雷达信号，跳过 start_lidar" || bash $NAVI_SCRIPT_DIR/start_lidar.bash'
+      - shell_command:
+          - sleep 0
+          - '[ -n "$NAVI_SIM_ARG" ] && echo "[sim] 使用仿真环境已有的雷达信号，跳过 start_merger" || bash $NAVI_SCRIPT_DIR/start_merger.bash'
       # start_mcp.sh 拉起 server.py，由它依据 --ss 决定并"首次拉起"导航栈：
       #   * 不带 --ss              → 室外 GPS 模式（自动调起 start_outdoor.sh）；scene_xili 为室外场景，故默认如此。
       #   * --ss slam_map_id/submap_id → SLAM 室内模式（server.py 解析 pcd 后自动调起 start_slam.sh -m <pcd>）。
