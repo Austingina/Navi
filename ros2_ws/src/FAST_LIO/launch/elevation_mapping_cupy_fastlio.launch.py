@@ -122,7 +122,7 @@ def generate_launch_description():
             # 半径取 4.5 m：略小于高程图半边长(map_length=10 -> 5 m)，避免把
             # 边缘从未扫到的区域也判成空。
             'free_on_empty': True,
-            'free_on_empty_radius': 1.5,
+            'free_on_empty_radius': 2.0,
             # 多帧累积：把最近若干帧的存活障碍点在 odom 系累起来再投 2D，
             # 单帧稀疏被时间窗补满，障碍不再闪烁/缺角。
             'accumulate_enable': True,
@@ -133,6 +133,25 @@ def generate_launch_description():
             'angle_increment': 0.0087,
             'range_min': 0.1,
             'range_max': 30.0,
+
+            # ---- 负障碍(悬崖/下沉)检测 -------------------------------------
+            'cliff_enable': True,
+            'cliff_depth_thresh': 0.25,   # 种子阈值(高阈)
+            'cliff_grow_thresh': 0.10,    # 连通域蔓延阈值(低阈)
+            # 参考地面 = z_foot - cliff_base_height。实测 base_link 相对 ground 层
+            # 高 0.462m。此值偏大只会让参考更低、drop 更小 => 更保守;偏小会误报
+            # (实测 0.30 在阈值 0.25 下产生 7.4 格/帧)。宁可取大。
+            'cliff_base_height': 0.46,
+            # 连通域门限:整个分量至少这么多种子、这么大面积才判 lethal。
+            'cliff_min_seed_cells': 6,
+            'cliff_min_area_cells': 10,
+            # 时间确认(5Hz -> 2 帧 = 0.4s)。upper_bound 本身已是持久层,故为二阶项。
+            'cliff_confirm_frames': 2,
+            # 判定环带。内径由几何决定:雷达高约 0.5m、最大俯角约 22°,近于 1.3m
+            # 不可能有掠过射线。注意它 > footprint 半长 0.4m,所以 footprint clearing
+            # 碰不到悬崖格。外径避开高程图边缘(map_length/2 = 5.0)。
+            'cliff_min_range': 1.2,
+            'cliff_max_range': 4.5,
         }],
     )
 

@@ -50,10 +50,11 @@ elevation_mapping_node:
         topic_name: /cloud_registered_body
         data_type: pointcloud
 
+    use_only_above_for_upper_bound: false
     publishers:
       elevation_map_raw:
         # layers: [elevation, variance, traversability]
-        layers: [elevation]
+        layers: [elevation, upper_bound, is_upper_bound]
         basic_layers: [elevation]
         fps: 5.0
 
