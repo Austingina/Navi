@@ -70,12 +70,6 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'use_sim_time': use_sim_time,
-            # 真机上没有 /livox/points：雷达由 robot-sensors 的 livox_lidar_publisher
-            # 提供，只发 CustomMsg(/livox/front_lidar,/livox/back_lidar)，不发
-            # PointCloud2。改吃 FAST-LIO 去畸变后的当前帧(~10Hz)。注意它是 body 系
-            # 而不是 base_link，输出 scan 沿用这个帧，所以下面的 angle_min/max
-            # 也是 body 系的角度 —— 别按 base_link 的直觉去裁。
-            # 代价：只含前雷达，且依赖 laser_mapping 存活。
             'cloud_topic': '/cloud_registered_body',
             'elevation_topic': '/grid_map_from_raw_pointcloud',
             'elevation_layer': 'elevation',

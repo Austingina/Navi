@@ -140,12 +140,11 @@ collision_monitor:
     #   polygon_pub_topic: collision_monitor_stop_zone
     #   enabled: True
     # 与两张 costmap 的 obstacle_layer 同源，保证“看得见的障碍”和“会刹车的障碍”一致。
-    # 该 scan 的 frame 是 livox_frame，需要 base_link->livox_frame 的 TF 才能用。
     observation_sources: ["scan"]
     scan:
       type: "scan"
       topic: /livox_scan2
-      enabled: True
+      enabled: False
 
 # -----------------------------------------------------------------------------
 # 局部代价地图：滚动窗口，global_frame = odom（对 GPS 修正的 map->odom 跳变免疫）

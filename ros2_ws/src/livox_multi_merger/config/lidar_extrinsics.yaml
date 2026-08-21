@@ -1,0 +1,100 @@
+# 多雷达外参 —— 本文件是外参的【单一真源】。
+# merger 节点和调试用的 static TF 都从这里取值,不要在别处再抄一份。
+#
+# 坐标系约定
+#   所有非 primary 雷达的 xyz_rpy 描述的是「该雷达坐标系 -> primary 雷达坐标系」的变换,
+#   即把该雷达的点变换到 primary 系:  p_primary = R(roll,pitch,yaw) * p_self + [x,y,z]
+#   旋转顺序 R = Rz(yaw) * Ry(pitch) * Rx(roll),与 tf2 的 static_transform_publisher
+#   和 scipy 的 Rotation.from_euler('xyz', ...) 一致 —— 标定脚本的输出可直接粘进来。
+#   单位:平移 m,角度 rad。
+#
+# primary 选 front 的原因:FAST-LIO 的 mapping.extrinsic_T/extrinsic_R 是 lidar->IMU
+# 外参,而它用的 IMU 是 /livox/front_imu。输出到 front 系则那组外参无需任何改动。
+
+/**:
+  ros__parameters:
+    primary: "front"
+
+    # 参与合并的雷达。驱动已支持四路(front/back/left/right),将来追加只需
+    # 在这里加名字并补一段同名的子配置。
+    lidars: ["front", "back"]
+
+    output_topic: "/livox/fused_lidar"
+
+    # 沿用 livox_frame:下游 TF(indoor 的 imu_link->livox_frame 等)因此零改动。
+    output_frame: "livox_frame"
+
+    # 判定两帧"同期"的 stamp 容差。实测前后 stamp 偏差 |max| = 1.1 ms(PTP 正常),
+    # 一帧是 100 ms,20 ms 留足余量。注意这【不是】等待时长,见 max_wait_ms。
+    sync_tolerance_ms: 20.0
+
+    # 等待第二路到达的上限。两路 stamp 对得很准,但【到达顺序】不保证 ——
+    # 实测约 65% 的情况下 back 帧比同期 front 帧后到。所以收到 primary 帧后不能立即合并,
+    # 必须等一会儿;等满这个时长仍未凑齐才降级为单路输出。
+    # 代价是输出比 primary 帧晚 0~max_wait_ms,这是多雷达合并的固有延迟。
+    # 实测等待时间随系统负载波动很大,取值必须按【导航栈满载时】的峰值定:
+    #   系统空闲(只有雷达驱动)     : 均值 1.2ms  峰值 4.1ms
+    #   仅 merger + 驱动             : 均值 35~40ms 峰值 70~100ms
+    #   outdoor 栈满载(LIO 吃双雷达 + elevation_mapping + Nav2)
+    #                                : 均值 32~48ms 峰值 93~102ms
+    # 曾设 90,结果在满载下峰值持续顶到上限,2~32 帧/百帧降级成单路 ——
+    # 表现是 /cloud_registered_body 的点数增益只有 1.4x 而非应有的约 1.95x。
+    # 130 覆盖满载峰值并留余量;均值仍只有 ~35ms,不会显著抬高常态延迟。
+    #
+    # 判断依据是统计日志里的「不完整 N 帧」是否接近 0,而不是等待时间的绝对值。
+    # 另注:若等待明显恶化且伴随大量不完整帧,也要查是不是有 python 之类的慢订阅者
+    # 在用 RELIABLE 订阅相关话题、把链路反压了(见 README 坑 6)。
+    max_wait_ms: 130.0
+
+    # 某路静默超过此时长,降级日志按「掉线」措辞(而非「失步」),便于现场分辨成因。
+    # 注意这【只影响日志措辞】,不影响合并行为。
+    # 实测到达间隔会因 DDS 成簇送达抖到 max 730ms(同期 stamp 间隔仍是稳定的 100ms,
+    # 即并未丢帧、雷达也没掉线),300ms 会把这种正常抖动误报成「掉线,检查供电与网络」。
+    # 取 800ms:调度抖动不触发,真掉线(断电/断网)会持续远超此值。
+    degrade_timeout_ms: 800.0
+
+    # 每路缓存的帧数,用于给 primary 挑最近邻帧。5 帧 = 0.5 s,足够。
+    buffer_size: 5
+
+    # pending 队列上限。正常情况下 max_wait_ms 会先把队首发出去,触到这个上限属于逻辑异常,
+    # 节点会报 ERROR。
+    max_pending: 8
+
+    # 周期性统计日志(秒)。0 或负数关闭。
+    stats_period_s: 10.0
+
+    # 车身框剔除。实测车体落在 MID360 下方 FOV 盲区锥内 —— 近场 r∈[0.3,1.2) 完全是空的,
+    # 前后雷达都看不到车身,所以默认关闭。若换了安装高度导致看到车身,再打开并调框。
+    body_filter_enable: false
+    body_filter_min: [-1.0, -0.5, -1.0]
+    body_filter_max: [1.0, 0.5, 0.3]
+
+    front:
+      topic: "/livox/front_lidar"
+      # primary 的外参恒为单位变换,无需配置(配了也会被忽略并告警)。
+      # min_range 即该雷达自身的 blind:必须在自身坐标系里滤,因为驱动对无回波点填的是
+      # 精确 (0,0,0)(实测占 2.82%),先变换再滤会让它们平移到安装位置后存活下来。
+      min_range: 0.5
+      max_range: 100.0
+
+    back:
+      topic: "/livox/back_lidar"
+      # 已标定(点到面 GICP,车辆静止,结构丰富室内)。质量指标:
+      #   共视区点到面残差 median = 0.0114 m   (阈值 0.03)
+      #   有符号残差均值           = -0.0009 m  (阈值 0.01,无残余平移)
+      #   共视比例(<0.2m)          = 90.0%      (阈值 70%)
+      #   3/3 个不同初值收敛到同一解(平移差<3cm、角度差<0.5°)
+      #
+      # rpy = [-30.05, +1.14, -1.02] 度。roll 几乎正好 -30°,与"前雷达 +15°、后雷达 -15°"
+      # 的机械设计吻合(前雷达的 15° 倾角在 outdoor_localization.launch.py 里也有体现)。
+      #
+      # yaw ≈ -1°,即两台雷达朝向基本一致 —— 这是对的:MID360 水平 FOV 就是 360° 全向,
+      # "前/后"指的是【安装位置】而非朝向。驱动配置 MID360s_config.json 里那个
+      # yaw: 180.0 既是死代码(pub_handler.cpp:132 硬编码 extrinsic_enable=false),
+      # 也只是"装在后面"的语义标记,不要拿它当物理朝向。
+      #
+      # 本标定只在单个位置采集。若要更高置信度,换 1-2 个位置复标,平移差应 < 3cm、
+      # 角度差 < 0.5°。
+      xyz_rpy: [-0.28563, 0.44809, -0.10994, -0.524487, 0.019861, -0.017750]
+      min_range: 0.5
+      max_range: 100.0
