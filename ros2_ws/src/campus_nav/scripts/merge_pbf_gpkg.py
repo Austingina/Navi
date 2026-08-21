@@ -12,9 +12,9 @@ the output so the node layer survives the merge.
 Usage:
     /usr/bin/python3 scripts/merge_pbf_gpkg.py
     /usr/bin/python3 scripts/merge_pbf_gpkg.py \
-        --pbf ../../xili_5km_with_extra.osm.pbf \
-        --gpkg ../finetuned_road.gpkg \
-        --output ../../xili_5km_merged.osm.pbf
+        --pbf ./xili_5km_with_extra.osm.pbf \
+        --gpkg ./finetuned_road.gpkg \
+        --output ./xili_5km_finetuned.osm.pbf
 
 After merge, run the planner on the merged pbf with dev overlay OFF:
     /usr/bin/python3 route_planner_node.py --ros-args \
