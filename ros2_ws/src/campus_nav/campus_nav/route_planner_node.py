@@ -15,7 +15,7 @@ from rclpy.duration import Duration
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.time import Time
-from std_msgs.msg import String
+from std_msgs.msg import Empty, String
 from tf2_ros import Buffer, TransformException, TransformListener
 from rclpy.qos import (
     QoSDurabilityPolicy,
@@ -532,6 +532,11 @@ class RoutePlanner(Node):
         # One-click campus routing: goal from RViz, start from current robot TF.
         self.declare_parameter("goal_navigation_enable", True)
         self.declare_parameter("goal_topic", "campus_goal_pose")
+        # 外部取消当前道路级路线：收到一个 Empty 即中止路线、撤销已下发的 Nav2
+        # 目标并停止批量重发。NaviSkill 的 pause/cancel_navigation 室外分支用它，
+        # 因为规划器是定时器持续喂 navigate_through_poses，只在 Nav2 侧取消会被
+        # 下一拍重新喂上（robot 继续走）。
+        self.declare_parameter("cancel_topic", "campus_goal_cancel")
         self.declare_parameter("robot_frame", "base_link")
         self.declare_parameter("nav_waypoints_topic", "campus_nav_waypoints")
         self.declare_parameter(
@@ -856,6 +861,15 @@ class RoutePlanner(Node):
                 f"start comes from TF {self.frame_id}->"
                 f"{self.get_parameter('robot_frame').value}."
             )
+            cancel_topic = self.get_parameter("cancel_topic").value
+            if cancel_topic:
+                self.create_subscription(
+                    Empty, cancel_topic, self._on_campus_cancel, 10
+                )
+                self.get_logger().info(
+                    f"Campus route cancel enabled: publish std_msgs/Empty to "
+                    f"/{cancel_topic} to abort the active route."
+                )
 
         # -- patrol route picking --
         self.patrol_pts = []  # ordered list of (lon, lat)
@@ -1079,6 +1093,19 @@ class RoutePlanner(Node):
         if goal_lonlat is None:
             return
         self._plan_and_send_to_nav(start_lonlat, goal_lonlat)
+
+    def _on_campus_cancel(self, _msg: Empty):
+        """外部请求中止当前道路级路线（NaviSkill 室外 pause/cancel 走这里）。
+
+        规划器靠 ``_nav_batch_timer`` 持续把 navigate_through_poses 目标喂给 Nav2，
+        只在 Nav2 侧取消目标会被下一拍重新喂上。这里把 ``_nav_running`` 落下并撤销
+        已下发的 Nav2 目标，才能真正让底盘停住。``_finish_route`` 已完成撤销 +
+        清运行标志；无活跃路线时收到取消是良性 no-op。
+        """
+        if not (self._nav_running or self._final_phase):
+            self.get_logger().info("Campus cancel received but no route is active.")
+            return
+        self._finish_route("cancelled by external request", warn=True)
 
     # -- helpers -------------------------------------------------------------
     def _pose_xy_in_frame(self, msg: PoseStamped, target_frame: str):

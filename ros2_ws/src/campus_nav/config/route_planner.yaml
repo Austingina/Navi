@@ -25,6 +25,8 @@
     network_alpha: 0.92
     goal_navigation_enable: true
     goal_topic: campus_goal_pose
+    # 外部中止当前道路级路线：向此话题发 std_msgs/Empty（NaviSkill 室外 pause/cancel）。
+    cancel_topic: campus_goal_cancel
     robot_frame: base_link
     nav_waypoints_topic: campus_nav_waypoints
     nav_waypoint_markers_topic: campus_nav_waypoint_markers

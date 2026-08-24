@@ -1210,31 +1210,46 @@ class NavigationToolManager:
 
         def pause_navigation() -> Dict[str, Any]:
             """
-            暂停导航（取消当前目标）
+            暂停导航（取消当前目标，保留目标以便 resume）。室内/室外均支持：
+            室外经 campus 规划器停喂路线，室内取消本节点持有的 Nav2 目标。
             """
             try:
-                self.ros_node.pause_navigation()
-                return {"success": True, "msg": "导航已暂停（已取消当前目标）"}
+                mode = self.ros_node.get_nav_mode()
+                ok = bool(self.ros_node.pause_navigation())
+                return {
+                    "success": ok, "nav_mode": mode,
+                    "msg": ("导航已暂停（已停止当前目标，可 resume 续跑）"
+                            if ok else "暂停失败：当前无活跃导航目标"),
+                }
             except Exception as e:
                 return {"success": False, "msg": f"暂停导航失败: {str(e)}"}
 
         def cancel_navigation() -> Dict[str, Any]:
             """
-            取消导航
+            取消导航（丢弃目标）。室内/室外均支持：室外经 campus 规划器中止路线并
+            兜底取消 Nav2 最终目标，室内取消本节点持有的 Nav2 目标。
             """
             try:
-                self.ros_node.cancel_navigation()
-                return {"success": True, "msg": "导航已取消"}
+                mode = self.ros_node.get_nav_mode()
+                ok = bool(self.ros_node.cancel_navigation())
+                return {
+                    "success": ok, "nav_mode": mode,
+                    "msg": ("导航已取消" if ok else "取消失败：当前无活跃导航目标"),
+                }
             except Exception as e:
                 return {"success": False, "msg": f"取消导航失败: {str(e)}"}
 
         def resume_navigation() -> Dict[str, Any]:
             """
-            继续导航（重新发送上一个目标）
+            继续导航（重新发送上一个目标）。室外重发 campus 路网目标，室内重发 Nav2 目标。
             """
             try:
-                self.ros_node.resume_navigation()
-                return {"success": True, "msg": "导航已继续"}
+                mode = self.ros_node.get_nav_mode()
+                ok = bool(self.ros_node.resume_navigation())
+                return {
+                    "success": ok, "nav_mode": mode,
+                    "msg": ("导航已继续" if ok else "继续失败：没有可继续的目标"),
+                }
             except Exception as e:
                 return {"success": False, "msg": f"继续导航失败: {str(e)}"}
 

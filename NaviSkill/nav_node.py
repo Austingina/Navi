@@ -11,7 +11,7 @@ from geometry_msgs.msg import PoseStamped, Twist, TwistStamped  # 位姿消息�
 from nav_msgs.msg import OccupancyGrid, Odometry, Path  # 占据网格、里程计、全局路径
 from sensor_msgs.msg import CompressedImage  # 压缩图像（用于 VPR 引导）
 from sensor_msgs.msg import NavSatFix, NavSatStatus  # GNSS 定位（室外 GPS 导航）
-from std_msgs.msg import String, Bool  # 字符串消息类型 / 布尔消息类型
+from std_msgs.msg import String, Bool, Empty  # 字符串 / 布尔 / 空消息类型
 from std_srvs.srv import SetBool  # 用于 elevator_mode 服务
 from action_msgs.msg import GoalStatus, GoalStatusArray  # Action状态消息
 import logging  # 日志记录库
@@ -78,6 +78,7 @@ class NavNode(Node):
         gps_fix_topic: str = "/gps/fix",
         odometry_gps_topic: str = "/odometry/gps",
         campus_goal_topic: str = "campus_goal_pose",
+        campus_cancel_topic: str = "campus_goal_cancel",
         campus_frame: str = "campus_map",
         gps_datum_lat: float = DEFAULT_GPS_DATUM_LAT,
         gps_datum_lon: float = DEFAULT_GPS_DATUM_LON,
@@ -339,6 +340,11 @@ class NavNode(Node):
             self.campus_frame = campus_frame
             self.campus_goal_pub = self.create_publisher(
                 PoseStamped, campus_goal_topic, 10)
+            # 室外取消通道：向 campus_route_planner 发 Empty 中止当前道路级路线。
+            # 规划器是定时器持续喂 navigate_through_poses，只在 Nav2 侧 cancel 会被
+            # 下一拍重喂，故室外 pause/cancel 必须让规划器本身停止喂点。
+            self.campus_cancel_pub = self.create_publisher(
+                Empty, campus_cancel_topic, 10)
             # 经纬度 ↔ campus_map 平面（UTM + datum 处一次性去格网收敛旋转，
             # 与 route_graph.ENU 完全一致）。分带钉在 datum 所属带上，使跨 114°E
             # 分带线的场地仍是连续度量。
@@ -1357,6 +1363,24 @@ class NavNode(Node):
         except Exception:
             pass
 
+    def cancel_campus_route(self) -> bool:
+        """请求 campus_route_planner 中止当前道路级路线。
+
+        室外目标是发到 ``campus_goal_pose`` 由规划器接管的，本节点没有 Nav2 goal
+        handle；而规划器用定时器持续把 ``navigate_through_poses`` 喂给 Nav2，只在
+        Nav2 侧 ``cancel_all_nav_goals`` 会被下一拍重新喂上。故这里发 Empty 让规划器
+        自己停止喂点并撤销其持有的 Nav2 目标（见 route_planner_node._on_campus_cancel）。
+
+        :return: 是否成功发布取消（发布本身不代表规划器一定收到；话题为 VOLATILE）。
+        """
+        try:
+            self.campus_cancel_pub.publish(Empty())
+            self.get_logger().info("已向 campus 路网规划器发送取消当前路线请求")
+            return True
+        except Exception as e:
+            self.get_logger().error(f"发送室外路线取消失败: {e}")
+            return False
+
     def _transform_xy(
         self, x: float, y: float, from_frame: str, to_frame: str
     ) -> Optional[Tuple[float, float]]:
@@ -1707,8 +1731,23 @@ class NavNode(Node):
             self._nav_terminal_message = f"发布导航目标失败: {e}"
             return False
 
-    def pause_navigation(self):
-        """暂停导航（通过cancel当前goal实现）"""
+    def pause_navigation(self) -> bool:
+        """暂停导航（取消当前目标，但保留目标以便 ``resume_navigation`` 续跑）。
+
+        室内（SLAM）目标由本节点持 action handle，直接 cancel 即可。室外（GPS）目标
+        由 campus_route_planner 接管，本节点无 handle 且规划器定时重喂，故走
+        ``cancel_campus_route`` 让规划器停喂；``_outdoor_goal`` **不清除**，resume 时重发。
+        """
+        if self.nav_mode == self.NAV_MODE_GPS:
+            if self._outdoor_goal is None and not self._outdoor_nav_active:
+                self.get_logger().warn("没有活跃的室外导航目标可暂停")
+                return False
+            self.get_logger().info("暂停室外导航（保留目标以便继续）...")
+            ok = self.cancel_campus_route()
+            self._outdoor_nav_active = False
+            self.wait_until_stopped()
+            return ok
+
         if self.current_goal_handle:
             self.get_logger().info("暂停导航...")
             def do_cancel():
@@ -1716,15 +1755,31 @@ class NavNode(Node):
                 fut.add_done_callback(lambda f: self.get_logger().info("导航已暂停（已取消当前目标）"))
                 return True
             try:
-                return self.schedule_sync_call(do_cancel, timeout=5.0)
+                return bool(self.schedule_sync_call(do_cancel, timeout=5.0))
             except Exception as e:
                 self.get_logger().error(f"暂停导航失败: {e}")
                 return False
         else:
             self.get_logger().warn("没有活跃的导航目标可暂停")
+            return False
 
-    def resume_navigation(self):
-        """继续导航（重新发送上一个目标）"""
+    def resume_navigation(self) -> bool:
+        """继续导航（重新发送上一个目标）。
+
+        室外（GPS）走 campus 规划器重发 ``_outdoor_goal``；室内（SLAM）重发 action
+        目标 ``last_goal``。
+        """
+        if self.nav_mode == self.NAV_MODE_GPS:
+            if self._outdoor_goal is None:
+                self.get_logger().warn("没有可继续的室外目标")
+                return False
+            self.get_logger().info("继续室外导航（重发路网目标）...")
+            try:
+                return bool(self.send_campus_goal(self._outdoor_goal))
+            except Exception as e:
+                self.get_logger().error(f"继续室外导航失败: {e}")
+                return False
+
         if self.last_goal:
             self.get_logger().info("继续导航...")
             try:
@@ -1732,15 +1787,30 @@ class NavNode(Node):
                 # executor 线程；不能再套一层 schedule_sync_call，否则外层占住
                 # _cb_group_queue 的 executor 线程，内层永远无法被 _process_call_queue
                 # 调度 → 嵌套死锁，表现为 10s 超时。
-                return self.publish_goal(self.last_goal, target="resume")
+                return bool(self.publish_goal(self.last_goal, target="resume"))
             except Exception as e:
                 self.get_logger().error(f"继续导航失败: {e}")
                 return False
         else:
             self.get_logger().warn("没有可继续的目标")
+            return False
 
-    def cancel_navigation(self):
-        """取消导航"""
+    def cancel_navigation(self) -> bool:
+        """取消导航（丢弃目标）。
+
+        室内（SLAM）取消本节点持有的 action 目标。室外（GPS）让 campus 规划器停喂
+        （``cancel_campus_route``）并清掉本地室外目标（``cancel_outdoor_goal``）；再兜底
+        ``cancel_all_nav_goals`` 取消规划器可能仍持有的最终 ``navigate_to_pose`` 目标。
+        """
+        if self.nav_mode == self.NAV_MODE_GPS:
+            self.get_logger().info("取消室外导航...")
+            ok = self.cancel_campus_route()
+            # 规划器最终精确逼近走 navigate_to_pose；兜底直接取消该 action 全部目标。
+            self.cancel_all_nav_goals()
+            self.cancel_outdoor_goal()
+            self.wait_until_stopped()
+            return ok
+
         if self.current_goal_handle:
             self.get_logger().info("取消导航...")
             def do_cancel():
@@ -1748,12 +1818,13 @@ class NavNode(Node):
                 fut.add_done_callback(lambda f: self.get_logger().info("导航已取消"))
                 return True
             try:
-                return self.schedule_sync_call(do_cancel, timeout=5.0)
+                return bool(self.schedule_sync_call(do_cancel, timeout=5.0))
             except Exception as e:
                 self.get_logger().error(f"取消导航失败: {e}")
                 return False
         else:
             self.get_logger().warn("没有活跃的导航目标可取消")
+            return False
 
     def cancel_all_nav_goals(self, timeout_sec: float = 3.0) -> bool:
         """取消 ``navigate_to_pose`` action server 上的**全部**目标。
