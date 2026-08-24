@@ -2197,8 +2197,11 @@ class RoutePlanner(Node):
         self._final_cancel_pending = False
         if not warn:
             self._recolor_nav_waypoints(len(self._nav_route_poses))
-        log = self.get_logger().warn if warn else self.get_logger().info
-        log(f"Campus route complete: {reason}")
+        message = f"Campus route complete: {reason}"
+        if warn:
+            self.get_logger().warn(message)
+        else:
+            self.get_logger().info(message)
 
     def _poses_for_nav2(self, poses):
         """Copy poses for Nav2 with z flattened. Keep the original frame
