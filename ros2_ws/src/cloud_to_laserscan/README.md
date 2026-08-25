@@ -29,7 +29,7 @@
 节点内部逐层加工(全部落在同一张 `grid_map` 上,随 `/terrain_grid_map` 发出可见):
 
 ```
-elevation ──► ground          邻域低分位(15%), 对植被/戳出来的障碍免疫, 又跟随坡面
+elevation ──► ground          邻域低分位(7x7 窗取第 20 百分位), 对植被/戳出来的障碍免疫, 又跟随坡面
           ──► terrain_ok      |elevation - ground| < slope_object_height, 区分"地形"与"物体"
               ground ──► slope        中心差分梯度(slope_window=3 格)
                      ──► slope_cost   坡度 -> 0..100 分级代价
