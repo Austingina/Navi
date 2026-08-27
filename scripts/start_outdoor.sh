@@ -22,6 +22,7 @@ echo "SIM_ARG: $SIM_ARG"
 # "Waiting for service <node>/get_state..."。详见 common.sh 里的说明。
 navi_kill_session_wait slam
 navi_kill_session_wait outdoor
+navi_reap_orphans
 
 # 注意：set-environment -g 需要 tmux server 已在运行，否则静默失败。此处 server 常
 # 还不存在，真正让变量进入 pane 的是：tmuxp load 拉起 server 时会继承本进程已 export

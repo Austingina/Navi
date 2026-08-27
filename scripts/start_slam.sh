@@ -28,6 +28,7 @@ done
 # "Waiting for service <node>/get_state..."。详见 common.sh 里的说明。
 navi_kill_session_wait outdoor
 navi_kill_session_wait slam
+navi_reap_orphans
 # 同 start_navi.sh：export 保证 tmuxp 拉起 server 时能继承；set-environment 覆盖 server 已存在的时序。
 export NAVI_SIM_ARG="$SIM_ARG"
 export NAVI_MAP_PCD="$MAP_PCD"

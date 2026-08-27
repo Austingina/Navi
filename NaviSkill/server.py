@@ -1137,7 +1137,7 @@ class NavigationToolManager:
                 return {"success": False, "msg": f"设置目标失败: {str(e)}"}
 
         def set_goal_by_outdoor(target: str, lon: float = None, lat: float = None,
-                                tolerance: float = 0.8) -> Dict[str, Any]:
+                                tolerance: float = 1.5) -> Dict[str, Any]:
             """
             按语义点下发室外 GPS 导航目标（统一经 campus_nav 路网规划器 ``campus_goal_pose``）。
 

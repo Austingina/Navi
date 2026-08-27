@@ -6,26 +6,11 @@ echo $NAVI_ROOT_DIR
 echo $NAVI_SCRIPT_DIR
 source $NAVI_ROOT_DIR/ros2_ws/install/setup.bash
 
-# DDS 发现范围：必须显式置 ROS_LOCALHOST_ONLY=0，否则整栈的节点互相发现不了。
-#
-# ~/.bashrc 会 source robot-sensors/scripts/dds_env.sh，那里有一行
-#   export ROS_LOCALHOST_ONLY="${ROS_LOCALHOST_ONLY:-1}"
-# 于是每个交互 shell（包括 tmux pane）都带着 ROS_LOCALHOST_ONLY=1。而这个变量在
-# Jazzy 里已废弃，且会【静默覆盖】同时设置的 ROS_AUTOMATIC_DISCOVERY_RANGE——
-# 启动日志里那两行一直被当噪声的告警说的就是这件事：
-#   [rcl] ROS_LOCALHOST_ONLY is deprecated but still honored if it is enabled.
-#   [rcl] 'localhost_only' is enabled, 'automatic_discovery_range' ... will be ignored.
-#
-# localhost_only=1 时 Fast DDS 不加入 UDP 组播（域 0 里绑 7400 的 socket 只剩没设这个
-# 变量的那几个 systemd 服务），只靠一条容量有限的本机路径做发现。参与者少时看不出
-# 问题，超过阈值后新起的参与者之间就互相发现不了，且各节点自身日志全部正常，很难查。
-# 2026-08-24 同机实测：18 个节点时 talker/listener 17→17 通，起满 Navi 栈到 51 个
-# 节点后同一测试 15→0；仅把这一个变量改成 0（发现走 SUBNET 组播）即恢复 15→15。
-#
-# 注意 robot-sensors 的驱动由 systemd 拉起、不经过本文件，仍是 localhost_only=1，
-# 域内因此是混合模式。根治要改 dds_env.sh，需与传感器组协商。
 export ROS_LOCALHOST_ONLY=0
-export ROS_AUTOMATIC_DISCOVERY_RANGE="${ROS_AUTOMATIC_DISCOVERY_RANGE:-SUBNET}"
+export ROS_AUTOMATIC_DISCOVERY_RANGE="${NAVI_DISCOVERY_RANGE:-LOCALHOST}"
+
+export RMW_IMPLEMENTATION="${NAVI_RMW:-rmw_cyclonedds_cpp}"
+export CYCLONEDDS_URI="${CYCLONEDDS_URI:-<CycloneDDS><Domain id=\"any\"><Discovery><MaxAutoParticipantIndex>120</MaxAutoParticipantIndex></Discovery></Domain></CycloneDDS>}"
 
 # 递归列出 pid 及其全部后代（pane 里是 bash -> ros2 launch -> 各节点进程）。
 _navi_descendants() {
@@ -79,4 +64,42 @@ navi_kill_session_wait() {
     # 进程没了不等于 DDS 已经把 participant 从图里摘干净，留一点静置时间。
     sleep "$settle"
     echo "killed session: $session (进程树已回收)"
+}
+
+navi_reap_orphans() {
+    local sess p args live="" orphans=""
+
+    for sess in navi slam outdoor; do
+        tmux has-session -t "$sess" 2>/dev/null || continue
+        for p in $(tmux list-panes -s -t "$sess" -F '#{pane_pid}' 2>/dev/null); do
+            # _navi_descendants 一行一个 pid，必须压成空格分隔：下面拿
+            # case " $live " in *" $p "* 做整词匹配，留着换行会全部失配，
+            # 于是在跑的节点会被当成孤儿全杀掉。
+            live="$live $(_navi_descendants "$p" | tr '\n' ' ')"
+        done
+    done
+
+    # 必须卡到 install/<pkg>/lib/ 这一层，节点的可执行文件都在那儿。只匹配 install/
+    # 会把 rviz2 也算进来——它跑的是 /opt/ros 下的二进制，只是 -d 参数指向
+    # install/fast_lio/share/.../*.rviz，而 rviz 是手起的调试工具，不该被清掉。
+    for p in $(pgrep -f "$NAVI_ROOT_DIR/ros2_ws/install/[^ ]*/lib/" 2>/dev/null); do
+        # 别把正在执行这个函数的脚本自己算进去。
+        if [ "$p" = "$$" ] || [ "$p" = "$PPID" ]; then continue; fi
+        case " $live " in *" $p "*) continue ;; esac
+        orphans="$orphans $p"
+    done
+
+    [ -z "$orphans" ] && return 0
+
+    echo "reap: 发现不属于任何会话的残留节点，清理中：" >&2
+    for p in $orphans; do
+        args="$(ps -o args= -p "$p" 2>/dev/null | cut -c1-100)"
+        [ -n "$args" ] && echo "  [$p] $args" >&2
+    done
+
+    for p in $orphans; do kill "$p" 2>/dev/null; done
+    sleep 2
+    for p in $orphans; do
+        kill -0 "$p" 2>/dev/null && kill -9 "$p" 2>/dev/null
+    done
 }
