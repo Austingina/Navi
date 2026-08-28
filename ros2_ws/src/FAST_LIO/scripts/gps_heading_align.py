@@ -157,6 +157,24 @@ class GpsHeadingAlign(Node):
         self.declare_parameter('innovation_gate_deg', 25.0)
         self.declare_parameter('refine_after_lock', False)
         self.declare_parameter('refine_alpha', 0.2)
+        # Refine runs on a much tighter budget than the lock, because it is
+        # allowed to move a yaw_offset that everything downstream already
+        # depends on. All three defaults come from replaying the 2026-08-26
+        # Daxuecheng run (395 m); see _try_update_offset's refine branch.
+        #
+        # Chord length where the estimate is best. Below it GPS noise dominates
+        # (sigma/L), above it LIO yaw drift does -- measured sd bottoms out at
+        # 0.46-0.58 deg over 30-50 m and climbs back to 1.11 deg at 280 m.
+        self.declare_parameter('refine_min_distance', 30.0)
+        # Force a re-anchor past this, so no chord ever grows into the range
+        # where LIO drift rules. Each anchor then yields one near-independent
+        # estimate and refine_alpha averages them.
+        self.declare_parameter('refine_max_distance', 50.0)
+        # Solution quality for refine. Deliberately far stricter than
+        # max_h_var: the lock has to be loose enough to happen at all, but a
+        # PSRDIFF chord (sigma 2.5 m) over 30 m carries 6.7 deg of noise, so
+        # feeding those in is worse than not refining. 0 => reuse max_h_var.
+        self.declare_parameter('refine_max_h_var', 0.05)
         self.declare_parameter('call_set_datum', True)
 
         self.declare_parameter('auto_drive', False)
@@ -193,6 +211,12 @@ class GpsHeadingAlign(Node):
             float(self.get_parameter('innovation_gate_deg').value))
         self.refine_after_lock = bool(self.get_parameter('refine_after_lock').value)
         self.refine_alpha = float(self.get_parameter('refine_alpha').value)
+        self.refine_min_dist = float(
+            self.get_parameter('refine_min_distance').value)
+        self.refine_max_dist = float(
+            self.get_parameter('refine_max_distance').value)
+        self.refine_max_h_var = float(
+            self.get_parameter('refine_max_h_var').value) or self.max_h_var
         self.call_set_datum = bool(self.get_parameter('call_set_datum').value)
 
         self.auto_drive = bool(self.get_parameter('auto_drive').value)
@@ -212,6 +236,9 @@ class GpsHeadingAlign(Node):
 
         # anchor: (lat, lon, t, lio_x, lio_y) fixed while the baseline grows.
         self.anchor_fix: Optional[Tuple[float, float, float, float, float]] = None
+        # Horizontal variance of the fix this anchor was set from. A chord is
+        # only as good as its worse end, so refine gates on both.
+        self._anchor_h_var = float('nan')
         self._max_baseline = 0.0            # largest chord reached this anchor [m]
         self._loop_reanchors = 0            # consecutive loop-back re-anchors
         self._last_theta: Optional[float] = None
@@ -272,6 +299,9 @@ class GpsHeadingAlign(Node):
         else:
             lx = ly = float('nan')
         self.anchor_fix = (lat, lon, t, lx, ly)
+        # Every caller gets here right after the fix cleared the quality gate,
+        # so _last_h_var describes this very anchor.
+        self._anchor_h_var = self._last_h_var
         self._max_baseline = 0.0
         self._last_theta = None
 
@@ -446,12 +476,52 @@ class GpsHeadingAlign(Node):
         theta = wrap_pi(math.atan2(north, east) - math.atan2(dly, dlx))
 
         if self.locked:
-            if abs(wrap_pi(theta - self.yaw_offset)) > self.innovation_gate:
+            d = wrap_pi(theta - self.yaw_offset)
+            if abs(d) > self.innovation_gate:
                 return
-            self.yaw_offset = theta  # keeps refining as the baseline grows
+            # A 5 m lock is geometrically limited to a few degrees no matter how
+            # good the fix is: RTK-fixed positions carry ~0.2 m of real error,
+            # and over a 5 m chord that is atan(0.2*sqrt2/5) = 3.2 deg. The
+            # 2026-08-26 run locked at 72.46 deg against a measured truth of
+            # 69.25 +- 0.62 deg -- off by 3.2 deg, exactly as predicted, which
+            # then went straight into every downstream frame for 15 minutes.
+            # Refine buys that back without making the lock wait for a long
+            # straight drive, but only under conditions the lock cannot demand.
+            if dgps < self.refine_min_dist:
+                self._diag = (
+                    f'refine: baseline {dgps:.1f}/{self.refine_min_dist:.0f} m')
+                return
+            # The chord is only as good as its worse end.
+            worst = max(self._anchor_h_var, self._last_h_var)
+            if not math.isfinite(worst) or worst > self.refine_max_h_var:
+                self._diag = (
+                    f'refine: h_var {worst:.3f} > {self.refine_max_h_var} '
+                    f'(need a fixed solution at both chord ends)')
+                return
+            # First-order low-pass, which is what refine_alpha was always meant
+            # to be -- it was declared but never used, and the old line below
+            # assigned theta outright. Two reasons the smoothing matters:
+            # updating yaw_offset rotates the whole map frame about the robot,
+            # so a raw 0.5 deg step throws a point 30 m out by 26 cm and shakes
+            # the costmaps; and LIO yaw drifts one way (~4.2 deg/km here), so a
+            # plain running average would lag behind the truth while a low-pass
+            # tracks it. alpha trades those off: too small and the lag through
+            # the drift dominates, too large and per-chord noise (sd ~0.5 deg)
+            # comes through. ~0.3 puts both near 0.3-0.7 deg.
+            self.yaw_offset = wrap_pi(self.yaw_offset + self.refine_alpha * d)
             self.get_logger().info(
-                f'refine yaw_offset={math.degrees(self.yaw_offset):.1f} deg '
-                f'(baseline {dgps:.1f} m)')
+                f'refine yaw_offset={math.degrees(self.yaw_offset):.2f} deg '
+                f'(chord {dgps:.1f} m, h_var {worst:.4f}, '
+                f'moved {math.degrees(self.refine_alpha * d):+.2f} deg)',
+                throttle_duration_sec=5.0)
+            # Cap the chord so it never reaches the length where LIO yaw drift
+            # beats GPS noise (sd measured 0.46 deg at 50 m, 1.11 deg at 280 m).
+            # Re-anchoring here is what makes "the longer it drives, the better
+            # it gets" true: each anchor contributes one near-independent
+            # estimate, and the low-pass above averages them. Letting a single
+            # chord grow instead would just trade GPS noise for LIO drift.
+            if dgps > self.refine_max_dist:
+                self._set_anchor(msg.latitude, msg.longitude, t1)
             return
 
         # Lock when the baseline is long enough AND the estimate has converged.

@@ -291,7 +291,7 @@ Visualization Manager:
       Enabled: true
       Name: /campus_network
       Namespaces:
-        {}
+        road_network: true
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -328,7 +328,7 @@ Visualization Manager:
         Value: /campus_path
       Value: true
     - Class: rviz_default_plugins/MarkerArray
-      Enabled: false
+      Enabled: true
       Name: /campus_nav_waypoint_markers
       Namespaces:
         {}
@@ -338,7 +338,7 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /campus_nav_waypoint_markers
-      Value: false
+      Value: true
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
@@ -438,7 +438,7 @@ Visualization Manager:
       Min Color: 0; 0; 0
       Min Intensity: 0
       Name: /livox_scan2
-      Position Transformer: ""
+      Position Transformer: XYZ
       Selectable: true
       Size (Pixels): 10
       Size (m): 0.009999999776482582
@@ -535,6 +535,18 @@ Visualization Manager:
       Radius: 0.029999999329447746
       Reference Frame: body
       Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: MarkerArray
+      Namespaces:
+        {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /campus_entry_markers
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
@@ -572,7 +584,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 10.601015090942383
+      Distance: 78.88677978515625
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -587,10 +599,10 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 1.4097962379455566
+      Pitch: 1.3697967529296875
       Target Frame: base_link
       Value: Orbit (rviz_default_plugins)
-      Yaw: 6.053089618682861
+      Yaw: 2.863574266433716
     Saved: ~
 Window Geometry:
   /zed/rgb/image_raw:
