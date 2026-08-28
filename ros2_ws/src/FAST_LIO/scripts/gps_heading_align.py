@@ -219,6 +219,9 @@ class GpsHeadingAlign(Node):
         self.latest_odom: Optional[Odometry] = None
         self.gps_quality_ok = False
         self._diag = 'waiting for GPS + odom'  # why still unlocked (for logs)
+        # Horizontal variance of the last fix that passed the gate, so the lock
+        # message can report the accuracy the offset was actually derived from.
+        self._last_h_var = float('nan')
 
         self.abs_pub = self.create_publisher(Odometry, self.absolute_yaw_topic, 10)
         self.status_pub = self.create_publisher(String, self.status_topic, 10)
@@ -247,12 +250,13 @@ class GpsHeadingAlign(Node):
     # ------------------------------------------------------------------ I/O
     def on_fix(self, msg: NavSatFix):
         self.latest_fix = msg
-        self.gps_quality_ok = self._fix_quality_ok(msg)
+        reason = self._fix_quality_gate(msg)
+        self.gps_quality_ok = reason is None
         if not self.gps_quality_ok:
             # Drop the anchor so no segment straddles the bad-GPS gap; the
             # accumulated rotation stays valid (theta is a constant), so we keep
             # it and simply resume gathering on the next good fix.
-            self._diag = 'GPS quality gate failed (status/h_var); anchor reset'
+            self._diag = f'GPS quality gate failed ({reason}); anchor reset'
             self.anchor_fix = None
             return
         if self.anchor_fix is None:
@@ -330,21 +334,40 @@ class GpsHeadingAlign(Node):
         return wrap_pi(yaw)
 
     # --------------------------------------------------------------- quality
-    def _fix_quality_ok(self, msg: NavSatFix) -> bool:
+    def _fix_quality_gate(self, msg: NavSatFix) -> Optional[str]:
+        """Say why this fix is unusable, or None when it is usable.
+
+        The caller puts the reason straight into the status log. With max_h_var
+        tightened to fixed-solution levels, "gate failed" on its own is not
+        actionable -- the operator needs to see how far off the fix is to decide
+        whether to wait or move the robot. h_var doubles as a solution-type
+        indicator, which NavSatFix itself cannot carry (the driver merges float
+        and fixed RTK into status=2): measured at Daxuecheng on 2026-08-26,
+        NARROW_INT sits at <=0.01, NARROW_FLOAT near 0.33, PSRDIFF near 1.3.
+        """
         if msg.status.status < self.min_fix_status:
-            return False
+            return f'status={msg.status.status} < {self.min_fix_status}'
         if not math.isfinite(msg.latitude) or not math.isfinite(msg.longitude):
-            return False
+            return 'lat/lon not finite'
         # Covariance type UNKNOWN (0) still often carries usable diagonals.
         cov = msg.position_covariance
         h_var = 0.5 * (float(cov[0]) + float(cov[4]))
         if h_var <= 0.0:
-            # Unknown variance: allow but do not treat as high quality; use
-            # a conservative stand-in so max_h_var still applies if set low.
-            h_var = self.max_h_var
+            # No usable variance. This used to substitute max_h_var as a
+            # "conservative stand-in so max_h_var still applies if set low",
+            # but the test below is ">", so the stand-in landed exactly on the
+            # limit and never rejected anything. Harmless while max_h_var was 25;
+            # not harmless now that it sits at fixed-solution level, because such
+            # a fix would pass and then be logged as if it were centimetre-
+            # accurate, which is precisely the judgement the lock message exists
+            # to support. Refuse instead -- unicore_gnss fills the diagonals from
+            # the reported lat/lon std for every solution type seen so far, so
+            # this only fires on genuinely broken output.
+            return 'no usable position_covariance reported'
         if h_var > self.max_h_var:
-            return False
-        return True
+            return f'h_var={h_var:.4f} > {self.max_h_var} (sigma {h_var ** 0.5:.2f} m)'
+        self._last_h_var = h_var
+        return None
 
     def _stamp_sec(self, msg) -> float:
         return float(msg.header.stamp.sec) + 1e-9 * float(msg.header.stamp.nanosec)
@@ -446,10 +469,26 @@ class GpsHeadingAlign(Node):
         self.yaw_offset = theta
         self.locked = True
         self._loop_reanchors = 0
+        # Report the fix accuracy the offset came from, and what it implies for
+        # the offset itself: the chord angle error is roughly atan(sigma /
+        # baseline), so a metre-level fix over a 5 m baseline is worth tens of
+        # degrees. Without this the log cannot distinguish a 2 cm fixed-solution
+        # lock from a float-solution one, and a wrong-but-stable offset is the
+        # quietest failure this node has -- every downstream frame is rotated by
+        # it and nothing else complains.
+        #
+        # Read the angle as a lower bound: sigma is what the receiver claims, and
+        # it claims too much. Against RTK-fixed truth on 2026-08-26 the reported
+        # sigma ran optimistic by ~3x (0.07 m claimed vs 0.22 m median residual),
+        # and ~2x for the degraded modes, so the real error is a small multiple
+        # of what is printed here.
+        sigma = self._last_h_var ** 0.5
         self.get_logger().info(
             f'LOCKED yaw_offset={self.yaw_offset:.3f} rad '
             f'({math.degrees(self.yaw_offset):.1f} deg) '
-            f'from {dgps:.1f} m baseline (any-shape path)')
+            f'from {dgps:.1f} m baseline (any-shape path); '
+            f'fix h_var={self._last_h_var:.4f} (sigma {sigma:.2f} m) '
+            f'=> heading err ~{math.degrees(math.atan2(sigma, dgps)):.1f} deg')
         self._maybe_set_datum(msg)
         if self.auto_drive and self.cmd_pub is not None:
             self.cmd_pub.publish(Twist())  # stop

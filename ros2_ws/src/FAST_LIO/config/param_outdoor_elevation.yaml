@@ -285,7 +285,7 @@ planner_server:
     planner_plugins: ["GridBased"]
     GridBased:
       plugin: "nav2_navfn_planner::NavfnPlanner"
-      tolerance: 0.5
+      tolerance: 3.0
       use_astar: false
       # 室外无地图：允许把路径规划进未知空间，否则目标在感知范围外会规划失败。
       allow_unknown: true

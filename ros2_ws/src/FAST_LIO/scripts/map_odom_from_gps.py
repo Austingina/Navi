@@ -163,6 +163,13 @@ class MapOdomFromGps(Node):
         # sign is a real offset, not a spike: accept it and let the rate limit
         # ease it in. 0 disables (gate rejects forever until variance grows).
         self.declare_parameter('sustained_offset_sec', 3.0)
+        # How long to keep trying to re-seed the estimate once the heading lock
+        # arrives, before giving up and easing the offset in the old way.
+        # Until gps_heading_align locks, yaw_offset is 0 while the truth can be
+        # any angle, so the estimate built during that window was integrated
+        # with the wrong rotation and is not worth keeping. See _maybe_reseed.
+        # 0 disables re-seeding entirely.
+        self.declare_parameter('reseed_on_heading_lock_sec', 30.0)
         # Stop fusing entirely after this long of continuously bad quality and
         # dead-reckon on LIO. 0 disables the hold.
         self.declare_parameter('bad_gps_hold_sec', 3.0)
@@ -198,6 +205,8 @@ class MapOdomFromGps(Node):
         self.max_h_var = float(self.get_parameter('max_h_var').value)
         self.max_var = float(self.get_parameter('max_variance').value)
         self.sustained_sec = float(self.get_parameter('sustained_offset_sec').value)
+        self.reseed_window = float(
+            self.get_parameter('reseed_on_heading_lock_sec').value)
         self.bad_hold_sec = float(self.get_parameter('bad_gps_hold_sec').value)
         self.gps_odom_fresh = float(self.get_parameter('gps_odom_fresh_sec').value)
 
@@ -230,6 +239,8 @@ class MapOdomFromGps(Node):
         self._c = 1.0   # cos(yaw_offset)
         self._s = 0.0   # sin(yaw_offset)
         self.have_offset = False
+        # Timestamp of the first yaw_offset, while a re-seed is still pending.
+        self.reseed_since = None
 
         # KF state (map-frame position) + per-axis variance
         self.px = self.py = 0.0
@@ -300,6 +311,11 @@ class MapOdomFromGps(Node):
         self._s = math.sin(self.yaw_offset)
         if not self.have_offset:
             self.have_offset = True
+            # Only meaningful if the filter already ran with the wrong rotation.
+            # If it has not initialized yet, the initial seed below will use this
+            # offset from the start and there is nothing to discard.
+            if self.reseed_window > 0.0 and self.initialized:
+                self.reseed_since = self._now()
             self.get_logger().info(
                 f'yaw_offset locked: {math.degrees(self.yaw_offset):.1f} deg; '
                 f'map->odom now rotates odom(LIO) into ENU/north')
@@ -499,6 +515,55 @@ class MapOdomFromGps(Node):
                 tf2_ros.ExtrapolationException):
             return None
 
+    def _maybe_reseed(self, now_t: float, lio) -> bool:
+        """Seed the estimate from GPS on the first heading lock.
+
+        Returns True when this cycle was consumed by the re-seed.
+
+        Before the lock, yaw_offset is 0 while the truth can be any angle, so
+        every LIO delta integrated until then entered the estimate rotated by
+        the wrong amount. On 2026-08-26 the truth was 166.9 deg and the 5 m
+        alignment baseline alone put the estimate 9.9 m out; the filter then saw
+        that as a sustained GPS offset, accepted it, and handed the rate limiter
+        a 12.6 m backlog to grind through at 0.3 m/s. map->odom drifts for those
+        42 s, and a drifting map->odom is what pushes the costmaps' sensor origin
+        out of bounds and stalls planning. None of that history is worth keeping,
+        so seed from GPS exactly like the initial fix does.
+
+        Waits for a fix the trust policy accepts, then gives up after
+        reseed_window so a late GPS recovery cannot step the pose after the robot
+        has already driven a long way on LIO alone.
+        """
+        if self.gps is None or self._quality_bad():
+            if now_t - self.reseed_since > self.reseed_window:
+                self.reseed_since = None
+                self.get_logger().warn(
+                    'heading locked but no fix good enough to re-seed on within '
+                    f'{self.reseed_window:.0f}s; keeping the pre-lock estimate '
+                    'and easing any offset in at '
+                    f'{self.max_corr_speed} m/s instead')
+            return False
+
+        self.reseed_since = None
+        dropped = math.hypot(self.gps[0] - self.px, self.gps[1] - self.py)
+        self.px, self.py = self.gps[0], self.gps[1]
+        # Same reason the initial seed bypasses it: the discarded estimate can be
+        # tens of metres out, and easing that in is the problem being fixed.
+        self.pub_x, self.pub_y = self.px, self.py
+        self.var_x = self.var_y = self.p0
+        # Must move with the seed, or the next cycle's delta would re-apply the
+        # whole pre-lock stretch.
+        self.lio_prev = lio
+        self.last_time = now_t
+        self.gps_new = False
+        self.state = 'reseed'
+        self.get_logger().warn(
+            f'heading lock: re-seeded map position from GPS, discarding a '
+            f'{dropped:.2f} m pre-lock error that was integrated with '
+            f'yaw_offset=0')
+        self._broadcast_from_state(lio)
+        return True
+
     def on_timer(self):
         now_t = self._now()
         lio = self._lio_xy()
@@ -524,6 +589,10 @@ class MapOdomFromGps(Node):
             self.gps_new = False
             self.state = 'init'
             self._broadcast_from_state(lio)
+            return
+
+        # Drop the estimate built before the heading was known (see _maybe_reseed)
+        if self.reseed_since is not None and self._maybe_reseed(now_t, lio):
             return
 
         # --- Predict: advance by LIO delta (rotated odom->map), grow covariance ---
@@ -618,10 +687,22 @@ class MapOdomFromGps(Node):
         """Move the published position toward the KF estimate, bounded in speed.
 
         Bounds the per-cycle jump of map->odom at max_correction_speed * dt.
+        The bound only applies once the heading is known -- see below for why
+        applying it earlier is actively harmful.
         """
         ex = self.px - self.pub_x
         ey = self.py - self.pub_y
-        if self.max_corr_speed <= 0.0:
+        if self.max_corr_speed <= 0.0 or not self.have_offset:
+            # Before the heading lock the limit is not just useless, it is the
+            # thing that makes the published pose diverge. yaw_offset is still 0
+            # while the truth can be any angle, so the prediction injects error
+            # at 2*v*sin(dyaw/2) -- 0.79 m/s for the 166.9 deg / 0.4 m/s case on
+            # 2026-08-26 -- and it reaches pub_x unlimited (see on_timer), while
+            # the GPS correction that would cancel it is capped here at 0.3 m/s.
+            # The estimate px stays near truth (innov points at it); only the
+            # published pose runs away, taking global_costmap's map-frame
+            # projection with it. Track the estimate directly until the rotation
+            # is known; _maybe_reseed then hands over with a clean state.
             self.pub_x, self.pub_y = self.px, self.py
             return
         # Limit the 2D correction as a vector so the ramp direction is preserved

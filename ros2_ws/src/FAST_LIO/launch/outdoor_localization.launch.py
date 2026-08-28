@@ -172,7 +172,8 @@ def generate_launch_description():
             'min_distance': 1.5,        # min rolling baseline before chord usable
             'min_total_distance': 5.0,  # baseline before lock; heading_err~=sigma/baseline
             'lock_stable_tol_deg': 3.0,  # lock once estimate stops moving
-            'max_h_var': 25.0,
+            'min_fix_status': 2,
+            'max_h_var': 0.05,
             'call_set_datum': True,
         }],
     )
@@ -213,12 +214,12 @@ def generate_launch_description():
                      'var_scale_status_gbas': 1.0,  # status 2: RTK
                      'var_scale_status_sbas': 2.0,  # status 1
                      'var_scale_status_fix': 9.0,   # status 0: SINGLE
-                     # 差解判定，与 gps_heading_align 同名同义
                      'min_fix_status': 2,
                      'max_h_var': 4.0,
                      'max_variance': 4.0,          # var 封顶，防增益趋 1
                      'sustained_offset_sec': 3.0,  # 持续偏移改为限速爬入
                      'bad_gps_hold_sec': 3.0,      # 差解超时 -> 纯 LIO 推算
+                     'reseed_on_heading_lock_sec': 30.0,
                      'datum_lat': datum_lat,        # 与 gps_heading_align / campus_nav 一致
                      'datum_lon': datum_lon}],
         condition=use_gps_simple,
