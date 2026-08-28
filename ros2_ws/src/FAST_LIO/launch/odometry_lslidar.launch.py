@@ -41,16 +41,20 @@ def generate_launch_description():
         package_path, 'rviz', 'fastlio-localize.rviz')
 
     # 真机 Mid360（连带它的 IMU —— FAST-LIO 的 body/imu_link 系就是 IMU 系）相对
-    # base_link 绕 Z 装反了 90°，仿真 USD 里没有这个安装旋转。室外栈同一处补偿写在
-    # outdoor_localization.launch.py 的 body->base_link 上，两栈取值须一致。
-    # 平移 (-0.16, -0.26, 0) 两个环境都沿用原值 —— 注意它与室外栈声明的 (0,0,0)
-    # 矛盾，同一台车同一个 IMU 不该有两个答案，待实车量一次机械尺寸后统一。
+    # base_link：位于前方 0.28 m、右方 0.24 m，绕 Z 顺时针 90°，并向车头前倾 15°。
+    # 此处发布的是逆向 imu_link->base_link TF，故真机 yaw=+90°、pitch=-15°、roll=0，
+    # 平移为 -R^T·t = (-0.24, -0.270459, -0.072469)。仿真 USD 里没有这些安装旋转，
+    # 故仿真下 yaw/pitch 都回到 0。室外栈同一处补偿写在 outdoor_localization.launch.py
+    # 的 body->base_link 上，两栈取值须一致。
     default_imu_base_yaw = PythonExpression(
-        ["'0.0' if '", sim, "' == 'true' else '-1.5708'"])
+        ["'0.0' if '", sim, "' == 'true' else '1.5708'"])
+    default_imu_base_pitch = PythonExpression(
+        ["'0.0' if '", sim, "' == 'true' else '-0.261799'"])
 
     use_sim_time = LaunchConfiguration('use_sim_time')
     config_path = LaunchConfiguration('config_path')
     imu_base_yaw = LaunchConfiguration('imu_base_yaw')
+    imu_base_pitch = LaunchConfiguration('imu_base_pitch')
     rviz_use = LaunchConfiguration('rviz')
     rviz_cfg = LaunchConfiguration('rviz_cfg')
 
@@ -70,8 +74,14 @@ def generate_launch_description():
     )
     declare_imu_base_yaw_cmd = DeclareLaunchArgument(
         'imu_base_yaw', default_value=default_imu_base_yaw,
-        description='Yaw of the imu_link->base_link static TF. -1.5708 on the '
+        description='Yaw of the imu_link->base_link static TF. 1.5708 on the '
                     'real robot (Mid-360 mounted 90 deg off), 0 in simulation.'
+    )
+    declare_imu_base_pitch_cmd = DeclareLaunchArgument(
+        'imu_base_pitch', default_value=default_imu_base_pitch,
+        description='Pitch of the imu_link->base_link static TF. -0.261799 on '
+                    'the real robot (Mid-360 tilted 15 deg forward), 0 in '
+                    'simulation.'
     )
     declare_rviz_cmd = DeclareLaunchArgument(
         'rviz', default_value='true',
@@ -86,7 +96,8 @@ def generate_launch_description():
         package='tf2_ros',
         executable='static_transform_publisher',
         name='statictf_imu_to_base_link',
-        arguments=['-0.16', '-0.26', '0', imu_base_yaw, '0', '0', 'imu_link', 'base_link'],
+        arguments=['-0.24', '-0.270459', '-0.072469',
+                   imu_base_yaw, imu_base_pitch, '0', 'imu_link', 'base_link'],
         output='screen'
     )
     
@@ -206,6 +217,7 @@ def generate_launch_description():
     ld.add_action(declare_use_sim_time_cmd)
     ld.add_action(declare_config_path_cmd)
     ld.add_action(declare_imu_base_yaw_cmd)
+    ld.add_action(declare_imu_base_pitch_cmd)
     ld.add_action(declare_rviz_cmd)
     ld.add_action(declare_rviz_config_path_cmd)
     ld.add_action(tf_imu2base_link)
