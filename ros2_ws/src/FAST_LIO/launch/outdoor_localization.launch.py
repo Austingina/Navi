@@ -168,12 +168,16 @@ def generate_launch_description():
             'datum_lon': datum_lon,
             'auto_drive': False,
             'exit_after_lock': False,
-            'refine_after_lock': False,
+            'refine_after_lock': True,
+            'refine_min_distance': 30.0,
+            'refine_max_distance': 50.0,
+            'refine_max_h_var': 0.05,
+            'refine_alpha': 0.3,
             'min_distance': 1.5,        # min rolling baseline before chord usable
-            'min_total_distance': 5.0,  # baseline before lock; heading_err~=sigma/baseline
-            'lock_stable_tol_deg': 3.0,  # lock once estimate stops moving
+            'min_total_distance': 8.0,  # baseline before lock; heading_err~=sigma/baseline
+            'lock_stable_tol_deg': 3.0,
             'min_fix_status': 2,
-            'max_h_var': 0.05,
+            'max_h_var': 1.0,
             'call_set_datum': True,
         }],
     )

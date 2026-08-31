@@ -32,7 +32,7 @@ controller_server:
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker"
       required_movement_radius: 0.1
-      movement_time_allowance: 10.0
+      movement_time_allowance: 20.0
     general_goal_checker:
       stateful: True
       plugin: "nav2_controller::SimpleGoalChecker"
@@ -76,7 +76,7 @@ controller_server:
       critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "HeadingAlign", "PathDist", "GoalDist"]
       BaseObstacle.scale: 5.0
       HeadingAlign.class: heading_align_critic::HeadingAlignCritic
-      HeadingAlign.scale: 32.0
+      HeadingAlign.scale: 8.0
       HeadingAlign.forward_point_distance: 0.5
       GoalAlign.scale: 24.0
       GoalAlign.forward_point_distance: 0.5
@@ -199,7 +199,7 @@ local_costmap:
           clearing: True
           marking: True
           inf_is_valid: True
-          observation_persistence: 0.3
+          observation_persistence: 1.5
           raytrace_max_range: 10.0
           raytrace_min_range: 0.0
           obstacle_max_range: 6.0
@@ -210,7 +210,7 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.5
-        inflation_radius: 0.5
+        inflation_radius: 0.6
 
       always_send_full_costmap: True
 # -----------------------------------------------------------------------------
@@ -265,7 +265,7 @@ global_costmap:
           clearing: True
           marking: True
           inf_is_valid: True
-          observation_persistence: 0.0
+          observation_persistence: 1.0
           raytrace_max_range: 12.0
           raytrace_min_range: 0.0
           obstacle_max_range: 8.0
@@ -276,7 +276,7 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.5
-        inflation_radius: 0.5
+        inflation_radius: 0.6
 
       always_send_full_costmap: True
 planner_server:
