@@ -41,16 +41,17 @@ def generate_launch_description():
         package_path, 'rviz', 'fastlio-localize.rviz')
 
     # 真机 imu_link->base_link 静态 TF（已实测校准）。
-    # 关键：话题名 front_lidar 其实是「后雷达」，装在 base_link 左后方；其数据帧
-    # （imu_link；extrinsic_R 单位阵，故 imu_link=livox_frame）+X 指向车体左方、并向后倾 15°。
-    # 物理 base_link->imu = Ry(-15°)·Rz(+90°)，取逆得发布用的 imu_link->base_link：
-    #   yaw=-90°（+X 朝左）、pitch=+15°（后倾补偿，扶平 base_link 使其水平）、roll=0。
+    # 前雷达装在 base_link 右前方；其数据帧（imu_link；extrinsic_R 单位阵，故
+    # imu_link=livox_frame）+X 指向车体右方、并向车头前倾 15°。
+    # 物理 base_link->imu = Ry(+15°)·Rz(-90°)，取逆得发布用的 imu_link->base_link：
+    #   yaw=+90°（+X 朝右）、pitch=-15°（前倾补偿，扶平 base_link 使其水平）、roll=0。
+    # 与 outdoor_localization.launch.py 的 body->base_link 一致。
     # 仿真 USD 无此安装旋转，故 sim 下 yaw/pitch 都回到 0。
     # 平移用 (-0.24, -0.270459, -0.072469)。
     default_imu_base_yaw = PythonExpression(
-        ["'0.0' if '", sim, "' == 'true' else '-1.5708'"])
+        ["'0.0' if '", sim, "' == 'true' else '1.5708'"])
     default_imu_base_pitch = PythonExpression(
-        ["'0.0' if '", sim, "' == 'true' else '0.261799'"])
+        ["'0.0' if '", sim, "' == 'true' else '-0.261799'"])
 
     use_sim_time = LaunchConfiguration('use_sim_time')
     config_path = LaunchConfiguration('config_path')
@@ -75,14 +76,14 @@ def generate_launch_description():
     )
     declare_imu_base_yaw_cmd = DeclareLaunchArgument(
         'imu_base_yaw', default_value=default_imu_base_yaw,
-        description='Yaw of the imu_link->base_link static TF. -1.5708 on the '
-                    'real robot (rear lidar; imu_link +X points left), 0 in '
+        description='Yaw of the imu_link->base_link static TF. 1.5708 on the '
+                    'real robot (front lidar; imu_link +X points right), 0 in '
                     'simulation.'
     )
     declare_imu_base_pitch_cmd = DeclareLaunchArgument(
         'imu_base_pitch', default_value=default_imu_base_pitch,
-        description='Pitch of the imu_link->base_link static TF. 0.261799 on '
-                    'the real robot (rear lidar tilted 15 deg backward), 0 in '
+        description='Pitch of the imu_link->base_link static TF. -0.261799 on '
+                    'the real robot (front lidar tilted 15 deg forward), 0 in '
                     'simulation.'
     )
     declare_rviz_cmd = DeclareLaunchArgument(
