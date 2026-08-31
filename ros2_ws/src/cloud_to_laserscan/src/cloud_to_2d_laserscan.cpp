@@ -7,6 +7,7 @@
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
+#include <tf2_ros/transform_broadcaster.h>
 #include <tf2_sensor_msgs/tf2_sensor_msgs.hpp>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/point_types.h>
@@ -47,6 +48,16 @@ public:
     declare_parameter<double>("range_min", 0.0);
     declare_parameter<double>("range_max", 30.0);
     declare_parameter<bool>("publish_filtered_pcd", false);
+    // ---- Gravity-aligned (level) scan projection --------------------------
+    // The input cloud frame (imu_link) is physically tilted (~15 deg), so
+    // flattening the scan in that frame produces a tilted 2D scan. When
+    // enabled, we instead flatten the accumulated cloud in a gravity-aligned
+    // frame that shares the sensor origin and the robot heading (yaw) but has
+    // zero roll/pitch, i.e. a true projection onto the world horizontal
+    // (global z=0) plane. That level frame is broadcast on TF as
+    // 'level_frame_id' so downstream consumers place the scan correctly.
+    declare_parameter<bool>("flatten_gravity_aligned", true);
+    declare_parameter<std::string>("level_frame_id", "livox_scan_level");
     // ---- Multi-frame accumulation -----------------------------------------
     // A single Mid-360 sweep is sparse; obstacles are only partially covered
     // per frame. We keep the surviving obstacle points of the last few frames
@@ -103,6 +114,8 @@ public:
     range_min_ = get_parameter("range_min").as_double();
     range_max_ = get_parameter("range_max").as_double();
     publish_filtered_pcd_ = get_parameter("publish_filtered_pcd").as_bool();
+    flatten_gravity_aligned_ = get_parameter("flatten_gravity_aligned").as_bool();
+    level_frame_id_ = get_parameter("level_frame_id").as_string();
     accumulate_enable_ = get_parameter("accumulate_enable").as_bool();
     accumulate_time_ = get_parameter("accumulate_time").as_double();
     accumulate_max_frames_ = get_parameter("accumulate_max_frames").as_int();
@@ -120,6 +133,7 @@ public:
 
     tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
+    tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(*this);
 
     grid_sub_ = create_subscription<grid_map_msgs::msg::GridMap>(
       elevation_topic_, 10, std::bind(&CloudTo2DLaserScanNode::gridCallback, this, _1));
@@ -375,9 +389,45 @@ private:
       merged_grid += *f.points;
     }
 
-    // Re-project the window into the CURRENT body frame so ranges/angles are
-    // consistent with the live sensor pose. T_grid_to_body = inverse(body->grid).
-    const Eigen::Matrix4f t_grid_to_body = toMatrix(t_body_to_grid).inverse();
+    // Re-project the window into the frame we flatten the 2D scan in.
+    //  - Default (flatten_gravity_aligned_): a gravity-aligned "level" frame
+    //    co-located with the sensor origin, sharing the robot heading (yaw) but
+    //    with roll/pitch stripped. Flattening there gives a true projection onto
+    //    the world horizontal (global z=0) plane instead of the tilted imu_link
+    //    plane. The frame is broadcast on TF so the scan resolves downstream.
+    //  - Otherwise: the original CURRENT body frame behaviour.
+    const Eigen::Matrix4f m_body_to_grid = toMatrix(t_body_to_grid);
+    Eigen::Matrix4f m_flat_to_grid = m_body_to_grid;
+    std::string scan_frame_id = cloud_msg->header.frame_id;
+    if (flatten_gravity_aligned_) {
+      // Sensor origin in odom and the body heading projected onto the horizontal
+      // plane (drops roll/pitch, keeps only the gravity-aligned yaw).
+      const Eigen::Vector3f t = m_body_to_grid.block<3, 1>(0, 3);
+      const Eigen::Vector3f x_body = m_body_to_grid.block<3, 1>(0, 0);
+      const double yaw = std::atan2(x_body.y(), x_body.x());
+      const Eigen::Matrix3f R_level =
+        Eigen::AngleAxisf(static_cast<float>(yaw), Eigen::Vector3f::UnitZ()).toRotationMatrix();
+      m_flat_to_grid.setIdentity();
+      m_flat_to_grid.block<3, 3>(0, 0) = R_level;
+      m_flat_to_grid.block<3, 1>(0, 3) = t;
+      scan_frame_id = level_frame_id_;
+
+      // Broadcast grid(odom) -> level frame so the scan's frame_id resolves.
+      geometry_msgs::msg::TransformStamped tf_level;
+      tf_level.header.stamp = cloud_msg->header.stamp;
+      tf_level.header.frame_id = grid_frame;
+      tf_level.child_frame_id = level_frame_id_;
+      tf_level.transform.translation.x = t.x();
+      tf_level.transform.translation.y = t.y();
+      tf_level.transform.translation.z = t.z();
+      const Eigen::Quaternionf q_level(R_level);
+      tf_level.transform.rotation.x = q_level.x();
+      tf_level.transform.rotation.y = q_level.y();
+      tf_level.transform.rotation.z = q_level.z();
+      tf_level.transform.rotation.w = q_level.w();
+      tf_broadcaster_->sendTransform(tf_level);
+    }
+    const Eigen::Matrix4f t_grid_to_body = m_flat_to_grid.inverse();
     pcl::PointCloud<pcl::PointXYZ> merged_body;
     pcl::transformPointCloud(merged_grid, merged_body, t_grid_to_body);
 
@@ -386,7 +436,7 @@ private:
       static_cast<size_t>(std::floor((angle_max_ - angle_min_) / angle_increment_)) + 1;
     sensor_msgs::msg::LaserScan scan_msg;
     scan_msg.header = cloud_msg->header;
-    scan_msg.header.frame_id = cloud_msg->header.frame_id;
+    scan_msg.header.frame_id = scan_frame_id;
     scan_msg.angle_min = angle_min_;
     scan_msg.angle_max = angle_max_;
     scan_msg.angle_increment = angle_increment_;
@@ -436,6 +486,7 @@ private:
       sensor_msgs::msg::PointCloud2 filtered_msg;
       pcl_conversions::fromPCL(pcl_pc2, filtered_msg);
       filtered_msg.header = cloud_msg->header;
+      filtered_msg.header.frame_id = scan_frame_id;
       pcd_pub_->publish(filtered_msg);
       RCLCPP_DEBUG(
         get_logger(), "Published filtered pointcloud with %zu points",
@@ -455,6 +506,8 @@ private:
   double fallback_max_height_ = 1.6;
   double angle_min_, angle_max_, angle_increment_, range_min_, range_max_;
   bool publish_filtered_pcd_ = false;
+  bool flatten_gravity_aligned_ = true;
+  std::string level_frame_id_;
   bool accumulate_enable_ = true;
   double accumulate_time_ = 0.4;
   int accumulate_max_frames_ = 10;
@@ -475,6 +528,7 @@ private:
 
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+  std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 
   std::mutex grid_mutex_;
   grid_map::GridMap grid_;

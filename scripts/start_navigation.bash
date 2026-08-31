@@ -34,5 +34,5 @@ python3 "$NAVI_SCRIPT_DIR/wait_for_tf.py" map base_link --timeout 120 $SIM_FLAG 
     2>&1 | stdbuf -oL -eL tee -a "$LOG_FILE"
 # 超时也继续起 Nav2：让它自己报错比静默没有导航更好排查（上面已留下告警）。
 
-ros2 launch fast_lio r1pro_nav2.launch.py use_sim_time:=$USE_SIM_TIME 2>&1 \
+ros2 launch fast_lio yhs_nav2.launch.py use_sim_time:=$USE_SIM_TIME 2>&1 \
     | stdbuf -oL -eL tee -a "$LOG_FILE"

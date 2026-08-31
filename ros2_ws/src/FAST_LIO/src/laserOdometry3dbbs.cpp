@@ -101,6 +101,19 @@ double bbs3d_score_threshold = 0.8;
 double bbs3d_voxel_size = 0.15;
 double bbs3d_min_level_res = 0.6;
 int bbs3d_max_level = 6;
+// BBS 角度搜索范围（弧度）。默认 ≈±1.15° / yaw 全周，与原写死值一致，可由 yaml 覆盖。
+double bbs3d_roll_range  = 0.02;
+double bbs3d_pitch_range = 0.02;
+double bbs3d_yaw_min     = 0.0;
+double bbs3d_yaw_max     = 6.28;
+// BBS 源点云“扶正”补偿（弧度）：雷达安装倾角会使原始雷达帧相对重力对齐的地图差一个
+// 固定 roll/pitch，超出上面的窄搜索范围 → Score 恒为 0。送入 BBS 前先乘该旋转把点云
+// 扶平，并把同一旋转带进 GICP 初值，使输出位姿仍在正的重力对齐全局帧。默认 0 与原行为一致。
+double bbs3d_src_roll_corr  = 0.0;
+double bbs3d_src_pitch_corr = 0.0;
+// 调试：把送入 BBS 的（扶正后）源点云以 PointCloud2 发布出来，便于在 RViz 里检查扶正
+// 效果/是否与地图对得上。默认关闭，由 yaml 的 bbs3d.debug_src_pub_en 控制。
+bool bbs3d_debug_src_pub_en = false;
 double res_mean_last = 0.05, total_residual = 0.0;
 double last_timestamp_lidar = 0, last_timestamp_imu = -1.0;
 double gyr_cov = 0.1, acc_cov = 0.1, b_gyr_cov = 0.0001, b_acc_cov = 0.0001;
@@ -980,7 +993,9 @@ bool load_map(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLas
 
     bbs3d_ptr->set_tar_points(tar_points, bbs3d_min_level_res, bbs3d_max_level);
     bbs3d_ptr->set_trans_search_range(tar_points);
-    bbs3d_ptr->set_angular_search_range({-0.02,-0.02,0.0}, {0.02,0.02,6.28});
+    bbs3d_ptr->set_angular_search_range(
+        {-static_cast<float>(bbs3d_roll_range), -static_cast<float>(bbs3d_pitch_range), static_cast<float>(bbs3d_yaw_min)},
+        { static_cast<float>(bbs3d_roll_range),  static_cast<float>(bbs3d_pitch_range), static_cast<float>(bbs3d_yaw_max)});
     bbs3d_ptr->set_score_threshold_percentage(bbs3d_score_threshold);
     
     // Store map z range for relocalize with hint
@@ -1003,7 +1018,9 @@ bool load_map(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLas
 }
 
 M3D imu_init_rot = Eye3d;
-bool global_localize(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr &pubLaserCloudFull, const double thresh)
+bool global_localize(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr &pubLaserCloudFull,
+                     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr &pubBbsSrcDebug,
+                     const double thresh)
 {
     const PointCloudXYZI::Ptr lidar_frame = Measures.lidar;
     if (lidar_frame->points.size() < 10) return false;
@@ -1015,13 +1032,35 @@ bool global_localize(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr
     voxel_grid_filter.setInputCloud(lidar_frame);
     voxel_grid_filter.filter(*ds_lidar_frame);
 
+    // 扶正旋转 R_corr：把原始雷达帧的安装倾角补平后再送入 BBS，使其只需在窄范围内
+    // 搜 yaw+残差。R_corr 随后带进 GICP 初值，保证输出位姿仍在正的重力对齐全局帧。
+    Eigen::Matrix4f src_correction = Eigen::Matrix4f::Identity();
+    src_correction.block<3, 3>(0, 0) =
+        (Eigen::AngleAxisf(static_cast<float>(bbs3d_src_roll_corr),  Eigen::Vector3f::UnitX()) *
+         Eigen::AngleAxisf(static_cast<float>(bbs3d_src_pitch_corr), Eigen::Vector3f::UnitY())).toRotationMatrix();
+    const Eigen::Matrix3f Rc = src_correction.block<3, 3>(0, 0);
+
     // teaser::PointCloud src_cloud;
     // Convert to teaser point cloud
     std::vector<Eigen::Vector3f> src_points;
     for (auto p : ds_lidar_frame->points)
         if (std::sqrt(p.x * p.x + p.y * p.y + p.z * p.z) > p_pre->blind)
-            src_points.push_back({p.x, p.y, p.z});
+            src_points.push_back(Rc * Eigen::Vector3f(p.x, p.y, p.z));
     if (src_points.size() < 10) return false;
+
+    // 调试：把扶正后的源点云发布出来（frame=global_frame，位于原点，便于在 RViz 里
+    // 观察地面是否水平/墙面是否竖直，或与 /Laser_map 对比）。仅当开关打开时发布。
+    if (bbs3d_debug_src_pub_en && pubBbsSrcDebug) {
+        pcl::PointCloud<pcl::PointXYZ> dbg_cloud;
+        dbg_cloud.reserve(src_points.size());
+        for (const auto &sp : src_points)
+            dbg_cloud.emplace_back(sp.x(), sp.y(), sp.z());
+        sensor_msgs::msg::PointCloud2 dbg_msg;
+        pcl::toROSMsg(dbg_cloud, dbg_msg);
+        dbg_msg.header.stamp = get_ros_time(Measures.lidar_beg_time);
+        dbg_msg.header.frame_id = global_frame;
+        pubBbsSrcDebug->publish(dbg_msg);
+    }
 
     double t0 = rclcpp::Clock().now().seconds();
 
@@ -1148,7 +1187,8 @@ bool global_localize(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr
     gicp.setInputSource(ds_lidar_frame);
     PointCloudXYZI::Ptr ndt_aligned(new PointCloudXYZI);
     // ndt.align(*ndt_aligned, bbs3d_ptr->get_global_pose().cast<float>());
-    gicp.align(*ndt_aligned, bbs3d_ptr->get_global_pose().cast<float>());
+    // GICP 用原始（未扶正）雷达点，初值需把扶正旋转乘回来：raw->global = T' * R_corr。
+    gicp.align(*ndt_aligned, (bbs3d_ptr->get_global_pose().cast<float>() * src_correction));
     sensor_msgs::msg::PointCloud2 laserCloudmsg;
     pcl::toROSMsg(*ndt_aligned, laserCloudmsg);
     laserCloudmsg.header.stamp = get_ros_time(Measures.lidar_beg_time);
@@ -1237,6 +1277,16 @@ public:
         this->declare_parameter<int>("bbs3d.max_level", 6);
         this->declare_parameter<float>("bbs3d.xy_range", 5.0);
         this->declare_parameter<float>("bbs3d.z_range", 1.0);
+        // 角度搜索范围（度），roll/pitch 为 ± 半范围；默认 1.146°≈0.02rad，保持原窄范围。
+        this->declare_parameter<double>("bbs3d.roll_range_deg", 1.146);
+        this->declare_parameter<double>("bbs3d.pitch_range_deg", 1.146);
+        this->declare_parameter<double>("bbs3d.yaw_min_deg", 0.0);
+        this->declare_parameter<double>("bbs3d.yaw_max_deg", 360.0);
+        // 源点云扶正补偿（度），用于补偿雷达安装倾角；默认 0 不改变原行为。
+        this->declare_parameter<double>("bbs3d.src_roll_correction_deg", 0.0);
+        this->declare_parameter<double>("bbs3d.src_pitch_correction_deg", 0.0);
+        // 调试点云发布开关。
+        this->declare_parameter<bool>("bbs3d.debug_src_pub_en", false);
         this->declare_parameter<bool>("elevator_z_moving.enable", false);
         this->declare_parameter<double>("elevator_z_moving.AZ_EMA_ALPHA", 0.05);
         this->declare_parameter<double>("elevator_z_moving.AZ_TRIGGER_THRESH", 0.04);
@@ -1293,6 +1343,27 @@ public:
         this->get_parameter_or<int>("bbs3d.max_level", bbs3d_max_level, 6);
         this->get_parameter_or<float>("bbs3d.xy_range", relocalize_xy_range, 5.0f);
         this->get_parameter_or<float>("bbs3d.z_range", relocalize_z_range, 1.0f);
+        {
+            double roll_range_deg, pitch_range_deg, yaw_min_deg, yaw_max_deg;
+            double src_roll_corr_deg, src_pitch_corr_deg;
+            this->get_parameter_or<double>("bbs3d.roll_range_deg", roll_range_deg, 1.146);
+            this->get_parameter_or<double>("bbs3d.pitch_range_deg", pitch_range_deg, 1.146);
+            this->get_parameter_or<double>("bbs3d.yaw_min_deg", yaw_min_deg, 0.0);
+            this->get_parameter_or<double>("bbs3d.yaw_max_deg", yaw_max_deg, 360.0);
+            this->get_parameter_or<double>("bbs3d.src_roll_correction_deg", src_roll_corr_deg, 0.0);
+            this->get_parameter_or<double>("bbs3d.src_pitch_correction_deg", src_pitch_corr_deg, 0.0);
+            constexpr double kDeg2Rad = M_PI / 180.0;
+            bbs3d_roll_range     = roll_range_deg     * kDeg2Rad;
+            bbs3d_pitch_range    = pitch_range_deg    * kDeg2Rad;
+            bbs3d_yaw_min        = yaw_min_deg        * kDeg2Rad;
+            bbs3d_yaw_max        = yaw_max_deg        * kDeg2Rad;
+            bbs3d_src_roll_corr  = src_roll_corr_deg  * kDeg2Rad;
+            bbs3d_src_pitch_corr = src_pitch_corr_deg * kDeg2Rad;
+            this->get_parameter_or<bool>("bbs3d.debug_src_pub_en", bbs3d_debug_src_pub_en, false);
+            RCLCPP_INFO(this->get_logger(),
+                "bbs3d angular search: roll=+/-%.2f pitch=+/-%.2f yaw=[%.1f,%.1f] deg; src correction roll=%.2f pitch=%.2f deg",
+                roll_range_deg, pitch_range_deg, yaw_min_deg, yaw_max_deg, src_roll_corr_deg, src_pitch_corr_deg);
+        }
         this->get_parameter_or<bool>("elevator_z_moving.enable", elevator_z_moving_enable, false);
         this->get_parameter_or<double>("elevator_z_moving.AZ_EMA_ALPHA", AZ_EMA_ALPHA, 0.05);
         this->get_parameter_or<double>("elevator_z_moving.AZ_TRIGGER_THRESH", AZ_TRIGGER_THRESH, 0.04);
@@ -1381,6 +1452,7 @@ public:
         pubLaserCloudFull_body_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/cloud_registered_body", 20);
         pubLaserCloudEffect_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/cloud_effected", 20);
         pubLaserCloudMap_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/Laser_map", custom_qos);
+        pubBbsSrcDebug_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/bbs_src_corrected", 5);
         pubOdomAftMapped_ = this->create_publisher<nav_msgs::msg::Odometry>("/Odometry", 20);
         pubPath_ = this->create_publisher<nav_msgs::msg::Path>("/path", 20);
         g_pub_elevator_moving = this->create_publisher<std_msgs::msg::Bool>("/elevator_moving", 10);
@@ -1447,7 +1519,7 @@ private:
                 stationary_locked = false;
                 stat_lock_since = -1.0;
                 std::cout<<"flg_first_scan"<<std::endl;
-                if(global_localize(pubLaserCloudFull_, ndt_thresh))
+                if(global_localize(pubLaserCloudFull_, pubBbsSrcDebug_, ndt_thresh))
                 {first_lidar_time = Measures.lidar_beg_time;
                 feats_undistort.reset(new PointCloudXYZI());
                 p_imu->Reset();
@@ -1796,6 +1868,7 @@ private:
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudFull_body_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudEffect_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudMap_;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubBbsSrcDebug_;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pubOdomAftMapped_;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pubPath_;
     rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu_;

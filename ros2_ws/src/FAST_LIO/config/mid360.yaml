@@ -16,7 +16,7 @@
         imu_topic: "/livox/front_imu"
 
         common:
-            lid_topic:  "/livox/fused_lidar"
+            lid_topic:  "/livox/front_lidar"
             # lid_topic:  "/livox/front_lidar"
             imu_topic:  "/livox/front_imu"
             time_sync_en: false         # ONLY turn on when external time synchronization is really not possible
@@ -62,6 +62,19 @@
             max_level: 6  # 减少层数可缩小实际搜索范围
             xy_range: 25.0
             z_range: 5.0
+            # BBS 角度搜索范围（度），roll/pitch 为 ± 半范围。保持窄范围以保证搜索速度。
+            roll_range_deg: 1.146
+            pitch_range_deg: 1.146
+            yaw_min_deg: 0.0
+            yaw_max_deg: 360.0
+            # 源点云扶正补偿（度）：本机雷达前倾 15°(pitch)。送入 BBS 前先把点云扶平，
+            # 这样仍能用上面的窄搜索范围、速度不变；该旋转会带进 GICP 初值，输出位姿
+            # 仍在正的重力对齐全局帧。若符号反了（Score 仍为 0）把 15 改成 -15 再试。
+            src_roll_correction_deg: -15.0
+            src_pitch_correction_deg: 0.0
+            # 调试：把扶正后的源点云以 PointCloud2 发布到 /bbs_src_corrected（frame=odom），
+            # 便于在 RViz 里检查扶正效果/与地图是否对得上。关闭发布改成 false 即可。
+            debug_src_pub_en: true
         elevator_z_moving:
             enable: false
             AZ_TRIGGER_THRESH: 0.04

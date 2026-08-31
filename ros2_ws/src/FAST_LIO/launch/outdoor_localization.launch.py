@@ -37,13 +37,13 @@ def generate_launch_description():
     ]))
 
     # 真机 Mid360（连带它的 IMU —— FAST-LIO 的 body 系就是 IMU 系）相对 base_link：
-    # 位于前方 0.19 m、左方 0.105 m，绕 Z 逆时针 90°，并向车头前倾 15°。
-    # 此处发布的是逆向 body->base_link TF，故真机 yaw=-90°、pitch=-15°；
+    # 位于前方 0.28 m、右方 0.24 m，绕 Z 顺时针 90°，并向车头前倾 15°。
+    # 此处发布的是逆向 body->base_link TF，故真机 yaw=+90°、pitch=-15°；
     # 仿真 USD 里没有这些安装旋转，故仿真下必须回到 0（这也是
     # 0fa863a4 之前的原值，仿真当年就是靠它跑通的）。室内栈同一处补偿写在
     # odometry_lslidar.launch.py 的 imu_link->base_link 上，两栈取值须一致。
     body_base_yaw = LaunchConfiguration('body_base_yaw', default=PythonExpression(
-        ["'0.0' if '", sim, "' == 'true' else '-1.5708'"]))
+        ["'0.0' if '", sim, "' == 'true' else '1.5708'"]))
     body_base_pitch = LaunchConfiguration('body_base_pitch', default=PythonExpression(
         ["'0.0' if '", sim, "' == 'true' else '-0.261799'"]))
 
@@ -66,7 +66,7 @@ def generate_launch_description():
         description='FAST-LIO sensor yaml config path (defaults by `sim`)')
     declare_body_base_yaw = DeclareLaunchArgument(
         'body_base_yaw', default_value=body_base_yaw,
-        description='Yaw of the body->base_link static TF. -1.5708 on the real '
+        description='Yaw of the body->base_link static TF. 1.5708 on the real '
                     'robot (Mid-360 mounted 90 deg off), 0 in simulation.')
     declare_body_base_pitch = DeclareLaunchArgument(
         'body_base_pitch', default_value=body_base_pitch,
@@ -119,15 +119,15 @@ def generate_launch_description():
         package='tf2_ros', executable='static_transform_publisher',
         name='statictf_body_to_base_link',
         # Inverse of base_link->body:
-        # position=(+0.19,+0.105,0), rotation=Ry(+15deg)*Rz(+90deg).
-        arguments=['-0.105', '0.183526', '-0.049176',
+        # position=(+0.28,-0.24,0), rotation=Ry(+15deg)*Rz(-90deg).
+        arguments=['-0.24', '-0.270459', '-0.072469',
                    body_base_yaw, body_base_pitch, '0', 'body', 'base_link'],
         output='screen',
     )
     tf_base_link_to_gps = Node(
         package='tf2_ros', executable='static_transform_publisher',
         name='statictf_base_link_to_gps',
-        arguments=['-0.10','-0.15','0','0','0','0','base_link','gps'],
+        arguments=['0.10','-0.15','0','0','0','0','base_link','gps'],
         output='screen',
     )
 
