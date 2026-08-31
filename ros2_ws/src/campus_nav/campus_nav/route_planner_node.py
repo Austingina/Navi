@@ -1840,15 +1840,20 @@ class RoutePlanner(Node):
         if dist <= reach_tol:
             return True
         passed_margin = max(0.5, reach_tol * 0.3)
+        # A waypoint can be overshot along either leg, so accept whichever matches:
+        # the robot drove past it on the way in, or it cut the corner and is already
+        # down the way out. Testing only the outgoing leg made an entry's road
+        # projection unpassable, since that leg leaves the road at a right angle and
+        # keeps the dot product near zero no matter how far along the road we drive.
+        tangents = []
+        if i > 0:
+            tangents.append(self._segment_tangent(poses[i - 1], poses[i]))
         if i < len(poses) - 1:
-            tangent = self._segment_tangent(poses[i], poses[i + 1])
-        elif i > 0:
-            tangent = self._segment_tangent(poses[i - 1], poses[i])
-        else:
-            return False
-        if tangent is None:
-            return False
-        return (dx * tangent[0] + dy * tangent[1]) > passed_margin
+            tangents.append(self._segment_tangent(poses[i], poses[i + 1]))
+        return any(
+            t is not None and (dx * t[0] + dy * t[1]) > passed_margin
+            for t in tangents
+        )
 
     def _advance_nav_cursor(self, rx, ry, poses, cursor, reach_tol, stop_index=None):
         """Drop reached/overshot waypoints so Nav2 is not sent goals behind the robot.
