@@ -43,15 +43,14 @@ def generate_launch_description():
         package_path, 'rviz', 'fastlio-localize.rviz')
 
     # 真机 imu_link->base_link 静态 TF（已实测校准）。
-    # 前雷达装在 base_link 右前方；其数据帧（imu_link；extrinsic_R 单位阵，故
-    # imu_link=livox_frame）+X 指向车体右方、并向车头前倾 15°。
-    # 物理 base_link->imu = Ry(+15°)·Rz(-90°)，取逆得发布用的 imu_link->base_link：
-    #   yaw=+90°（+X 朝右）、pitch=-15°（前倾补偿，扶平 base_link 使其水平）、roll=0。
-    # 与 outdoor_localization.launch.py 的 body->base_link 一致。
+    # 前雷达装在 base_link 左前方；其数据帧（imu_link；extrinsic_R 单位阵，故
+    # imu_link=livox_frame）+X 指向车体左方、并向车头前倾 15°。
+    # 物理 base_link->imu = Ry(+15°)·Rz(+90°)，取逆得发布用的 imu_link->base_link：
+    #   yaw=-90°（+X 朝左）、pitch=-15°（前倾补偿，扶平 base_link 使其水平）、roll=0。
     # 仿真 USD 无此安装旋转，故 sim 下 yaw/pitch 都回到 0。
     # 平移用 (-0.24, -0.270459, -0.072469)。
     default_imu_base_yaw = PythonExpression(
-        ["'0.0' if '", sim, "' == 'true' else '1.5708'"])
+        ["'0.0' if '", sim, "' == 'true' else '-1.5708'"])
     default_imu_base_pitch = PythonExpression(
         ["'0.0' if '", sim, "' == 'true' else '-0.261799'"])
 
@@ -78,8 +77,8 @@ def generate_launch_description():
     )
     declare_imu_base_yaw_cmd = DeclareLaunchArgument(
         'imu_base_yaw', default_value=default_imu_base_yaw,
-        description='Yaw of the imu_link->base_link static TF. 1.5708 on the '
-                    'real robot (front lidar; imu_link +X points right), 0 in '
+        description='Yaw of the imu_link->base_link static TF. -1.5708 on the '
+                    'real robot (front lidar; imu_link +X points left), 0 in '
                     'simulation.'
     )
     declare_imu_base_pitch_cmd = DeclareLaunchArgument(
@@ -101,7 +100,7 @@ def generate_launch_description():
         package='tf2_ros',
         executable='static_transform_publisher',
         name='statictf_imu_to_base_link',
-        arguments=['-0.24', '-0.270459', '-0.072469',
+        arguments=['-0.225', '0.26563', '-0.071175',
                    imu_base_yaw, imu_base_pitch, '0', 'imu_link', 'base_link'],
         output='screen'
     )
