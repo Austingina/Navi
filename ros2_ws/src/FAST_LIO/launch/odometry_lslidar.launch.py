@@ -28,14 +28,16 @@ def generate_launch_description():
     sim = LaunchConfiguration('sim')
 
     # 仿真(Isaac)与真机的雷达/IMU 话题名不同，分别写在两个 yaml 里：
-    #   mid360.yaml      -> /livox/front_lidar, /livox/front_imu  (robot-sensors 的驱动)
-    #   mid360_sim.yaml  -> /livox/lidar,       /livox/imu        (Isaac 转出来的 Livox 消息)
+    #   mid360_lslidar.yaml -> /livox/front_lidar, /livox/front_imu  (robot-sensors 的驱动)
+    #   mid360_sim.yaml     -> /livox/lidar,       /livox/imu        (Isaac 转出来的 Livox 消息)
+    # 真机分支用本 launch 专属的 mid360_lslidar.yaml（从 mid360.yaml 复制而来），
+    # 与 mapping/outdoor 等共用的 mid360.yaml 解耦，便于单独调参而不影响其它栈。
     # 只改默认值：显式传 config_path:= 仍然优先（LaunchConfiguration 的固有语义），
     # 保留手工指定任意配置的能力。
     default_config_path = PythonExpression([
         "'", os.path.join(package_path, 'config', 'mid360_sim.yaml'), "'",
         " if '", sim, "' == 'true' else ",
-        "'", os.path.join(package_path, 'config', 'mid360.yaml'), "'",
+        "'", os.path.join(package_path, 'config', 'mid360_lslidar.yaml'), "'",
     ])
     default_rviz_config_path = os.path.join(
         package_path, 'rviz', 'fastlio-localize.rviz')

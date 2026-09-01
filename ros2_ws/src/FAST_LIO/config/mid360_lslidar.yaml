@@ -1,0 +1,98 @@
+# mid360_lslidar.yaml — odometry_lslidar.launch.py（真机/室内定位栈）专用。
+# 从 mid360.yaml 复制而来，与 mapping/outdoor 等共用的 mid360.yaml 解耦，
+# 便于本栈单独调参（BBS 搜索范围/扶正、体素、话题名等）而不影响其它 launch。
+/**:
+    ros__parameters:
+        feature_extract_enable: false
+        point_filter_num: 3
+        max_iteration: 3
+        filter_size_surf: 0.5 #used for feats_undistort,
+        filter_size_map: 0.5 #used for ikd-tree, incremental map
+        cube_side_length: 1000.0
+        runtime_pos_log_enable: false
+        map_file_path: "/home/nvidia/Navi/maps/lab525.pcd"
+
+        # 给 chassis_ekf 用（chassis_ekf_node.cpp 声明的是平铺的 imu_topic，而
+        # FAST-LIO 读的是下面嵌套的 common.imu_topic，两者互不干扰）。顶层是 /**:
+        # 通配，同一份文件喂两个节点，话题名只在这个文件里定义一次。
+        # 改真机 IMU 话题时这两处要一起改。
+        imu_topic: "/livox/front_imu"
+
+        common:
+            lid_topic:  "/livox/front_lidar"
+            # lid_topic:  "/livox/fused_lidar"
+            imu_topic:  "/livox/front_imu"
+            time_sync_en: false         # ONLY turn on when external time synchronization is really not possible
+            time_offset_lidar_to_imu: 0.0 # Time offset between lidar and IMU calibrated by other algorithms, e.g. LI-Init (can be found in README).
+                                        # This param will take effect no matter what time_sync_en is. So if the time offset is not known exactly, please set as 0.0
+
+        preprocess:
+            lidar_type: 1                # 1 for Livox serials LiDAR, 2 for Velodyne LiDAR, 3 for ouster LiDAR, 4 for any other pointcloud input
+            scan_line:  4
+            # 用合并点云时必须降到 0.1(单雷达时是 0.5)。
+            # avia_handler 的 blind 过滤是在【合并后的统一坐标系原点】处算 x²+y²+z²>blind²,
+            # 而 merger 已按各雷达【自身坐标系】做过 per-lidar blind(min_range=0.5),
+            # 那才是物理上正确的位置。此处若仍留 0.5,会把后雷达打到 front 系原点附近的
+            # 有效点二次误滤掉。留 0.1 而非 0 是给原点附近的异常点兜底。
+            blind: 0.1
+            timestamp_unit: 3
+            scan_rate: 10
+
+        mapping:
+            acc_cov: 0.1
+            gyr_cov: 0.1
+            b_acc_cov: 0.0001
+            b_gyr_cov: 0.0001
+            fov_degree:    360.0
+            det_range:     100.0
+            extrinsic_est_en:  false      # true: enable the online estimation of IMU-LiDAR extrinsic
+            extrinsic_T: [ -0.011, -0.02329, 0.04412 ]
+            extrinsic_R: [ 1., 0., 0.,
+                            0., 1., 0.,
+                            0., 0., 1.]
+
+        publish:
+            path_en: true                # true: publish Path
+            effect_map_en: false         # true: publish Effects
+            map_en: true                 # true: publish Map cloud
+            scan_publish_en:  true       # false: close all the point cloud output
+            dense_publish_en: true      # false: low down the points number in a global-frame point clouds scan.
+            scan_bodyframe_pub_en: true  # true: output the point cloud scans in IMU-body-frame
+        bbs3d:
+            voxel_size: 0.15 # used for gicp 
+            score_threshold: 0.9
+            min_level_res: 0.3 #userd for bbs3d min level resolution
+            max_level: 6  # 减少层数可缩小实际搜索范围
+            xy_range: 25.0
+            z_range: 5.0
+            # BBS 角度搜索范围（度），roll/pitch 为 ± 半范围。保持窄范围以保证搜索速度。
+            roll_range_deg: 1.146
+            pitch_range_deg: 1.146
+            yaw_min_deg: 0.0
+            yaw_max_deg: 360.0
+            # 源点云扶正补偿（度）：本机雷达前倾 15°(pitch)。送入 BBS 前先把点云扶平，
+            # 这样仍能用上面的窄搜索范围、速度不变；该旋转会带进 GICP 初值，输出位姿
+            # 仍在正的重力对齐全局帧。若符号反了（Score 仍为 0）把 15 改成 -15 再试。
+            src_roll_correction_deg: 15.0
+            src_pitch_correction_deg: 0.0
+            # 调试：把扶正后的源点云以 PointCloud2 发布到 /bbs_src_corrected（frame=odom），
+            # 便于在 RViz 里检查扶正效果/与地图是否对得上。关闭发布改成 false 即可。
+            debug_src_pub_en: true
+        elevator_z_moving:
+            enable: false
+            AZ_TRIGGER_THRESH: 0.04
+            AZ_RELEASE_THRESH: 0.015
+            AZ_DEBOUNCE_COUNT: 50
+            AZ_MOVING_TIMEOUT: 12000
+            AZ_EMA_ALPHA: 0.05
+        stationary_lock:
+            enable: true
+            chassis_speed_topic: "/motion_control/chassis_speed"
+            v_thresh: 0.005
+            w_thresh: 0.005
+            min_dur: 0.3
+            chassis_timeout: 0.5
+        pcd_save:
+            pcd_save_en: true
+            interval: -1                 # how many LiDAR frames saved in each pcd file; 
+                                        # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.
