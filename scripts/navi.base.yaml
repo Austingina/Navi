@@ -25,4 +25,4 @@ windows:
       #   （--ss 区别于 -s：-s 常用于 use_sim_time 仿真时钟）
       - shell_command:
           - sleep 0
-          - bash $NAVI_SCRIPT_DIR/start_mcp.sh -m http://10.229.18.83:8080/mapserver/scene_xili
+          - bash $NAVI_SCRIPT_DIR/start_mcp.sh -m http://116.204.41.44:80/mapserver/scene_xili
