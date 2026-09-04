@@ -25,16 +25,7 @@ make
 sudo make install
 ```
 
-## 4 安装 g2o
-
-`teb_local_planner` 需要 g2o。Jazzy 的发行版里有现成的包，用它即可，不必再编
-`3rdparty/g2o`（那份源码留作 apt 不可用时的退路）：
-
-```bash
-sudo apt install ros-jazzy-libg2o
-```
-
-## 5. 编译 ROS2 包
+## 4. 编译 ROS2 包
 
 包括 fastlio、cloud_to_laserscan、slope_behavior、livox_ros_driver2、grid_map_pcl(重写了grid_map_pcl) 等。
 
@@ -56,7 +47,7 @@ rosdep update
 cd ~/Navi/ros2_ws
 # cupy-cuda13x 与 simple-parsing 是 elevation_mapping_cupy 自定义的 rosdep key
 # （定义在它的 docker/extra_rosdeps.yaml 里，未注册到系统），由 pip / venv 提供，
-# 必须另外手工装 —— 见下面 5.1。
+# 必须另外手工装 —— 见下面 4.1。
 rosdep install --from-paths src --ignore-src -y \
   --skip-keys "cupy-cuda13x simple-parsing"
 ```
@@ -64,7 +55,7 @@ rosdep install --from-paths src --ignore-src -y \
 > 若这台机器上装过 conda，`rosdep` 可能把系统识别成 `conda` 而报
 > `Unsupported OS [conda]`。此时加 `ROS_OS_OVERRIDE=ubuntu:noble:noble`。
 
-### 5.1 rosdep 装不到的运行时依赖（必须手工装）
+### 4.1 rosdep 装不到的运行时依赖（必须手工装）
 
 **这一节漏掉任何一项，节点都是能编过、一起跑就崩**，而且报错只是一句
 `ModuleNotFoundError`，不看这里很难联想到是环境没装齐。全部由 `/usr/bin/python3`
@@ -95,7 +86,7 @@ rosdep install --from-paths src --ignore-src -y \
 > cp312 aarch64 轮子，且该 index 会代理上游 PyPI（纯 python 包也能从它解析到）。
 > 若机器的网络是白名单式的（实测 `pypi.org` 与清华/阿里镜像均超时），这可能是唯一可达的源。
 
-### 5.2 `campus_nav` 需要 pyosmium（3.x，别装 4.x）
+### 4.2 `campus_nav` 需要 pyosmium（3.x，别装 4.x）
 
 `campus_nav/route_graph.py` 读 `.osm.pbf` 时 local import `osmium`（`build_graph_from_pbf`
 / `build_graph_merged`）。节点默认 `source=pbf`，所以这是**运行时硬依赖** —— 缺了
@@ -103,7 +94,7 @@ rosdep install --from-paths src --ignore-src -y \
 退出，室外栈就没有全局路网规划。
 
 已作为 `<exec_depend>python3-pyosmium</exec_depend>` 写进 `campus_nav/package.xml`，
-所以**上面第 5 节那条 `rosdep install` 会自动装它**，一般无需手工干预。单独装：
+所以**上面第 4 节那条 `rosdep install` 会自动装它**，一般无需手工干预。单独装：
 
 ```bash
 sudo apt install python3-pyosmium
@@ -198,13 +189,13 @@ nav2 与 grid_map 都**不要再按版本号 pin**。原先 pin 到 `1.1.20` / `
   ```bash
   sudo apt install libcgal-dev libgmp-dev libmpfr-dev
   ```
-- **pyosmium**：`campus_nav` 读 `.osm.pbf` 需要，必须 3.x（见 5.2）。已声明在
+- **pyosmium**：`campus_nav` 读 `.osm.pbf` 需要，必须 3.x（见 4.2）。已声明在
   package.xml 里，rosdep 会自动装。
-- **其余 ROS 依赖**统一交给 rosdep（见第 5 节）。
+- **其余 ROS 依赖**统一交给 rosdep（见第 4 节）。
   但注意 **rosdep 盖不住 `simple-parsing` / `cupy-cuda13x` / `torch`** ——
   前两者虽然写在 `elevation_mapping_cupy` 的 package.xml 里，却没有对应的 rosdep 规则
   （`rosdep resolve simple-parsing` 直接报 `no rosdep rule`），所以被 `--skip-keys` 跳过，
-  **必须手工装**，否则 `elevation_mapping_node` 一起跑就崩。装法见 **5.1**。
+  **必须手工装**，否则 `elevation_mapping_node` 一起跑就崩。装法见 **4.1**。
 
 ### 4. 星海图系统环境（编译不需要，运行需要）
 在 ~/galaxea/install目录是星海图的系统环境，
