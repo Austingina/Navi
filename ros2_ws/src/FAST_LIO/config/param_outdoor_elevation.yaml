@@ -164,7 +164,7 @@ local_costmap:
       width: 10
       height: 10
       resolution: 0.05
-      footprint: "[ [-0.40, -0.40], [-0.40, 0.40],[0.40, 0.40],[0.40, -0.40] ]"
+      footprint: "[ [-0.250, -0.30], [-0.25, 0.30],[0.25, 0.30],[0.250, -0.30] ]"
       # terrain_layer 在前写入分级地形代价(渐变+陡坡lethal),obstacle_layer 用 Max 叠加点云障碍。
       plugins: ["terrain_layer", "obstacle_layer", "inflation_layer"]
 
