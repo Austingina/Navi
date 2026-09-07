@@ -119,6 +119,36 @@ public:
     // 掠过射线,该范围内的候选属几何矛盾噪声。外径避开高程图边缘(map_length/2=5.0)。
     cliff_min_range_ = declare_parameter<double>("cliff_min_range", 1.2);
     cliff_max_range_ = declare_parameter<double>("cliff_max_range", 4.5);
+    // 参考面取"坡面外推"而不是"水平面"。
+    // 【为什么必须这样】drop 原本是拿 upper_bound 去比 z_foot - cliff_base_height 这条
+    // 【水平线】。连续下坡时前方地面本来就低于它 d*tan(theta),于是整片掠射阴影都被判成
+    // 悬崖 —— 2026-08-26 bag 的 600.2~601.6s 实测:环带内有效高程拟合坡度 7.7~7.9deg,
+    // 每帧 749~795 格被判 cliff(占 10x10m 图的 8%),且 drop/距离 恒等于 tan(3.8~3.9deg),
+    // 即落差是随距离线性增长的"坡"签名,不是崖。
+    // 改法:沿"本格 -> 车"方向收集洞【前】的有效 ground(距离,高度),线性拟合 h=a+b*d 后
+    // 外推到本格距离当参考。公共的 d*tan(theta) 项被消掉,只剩真实台阶。
+    // 离线验证(analysis/terrain_2026_09_03/cliff_fix2.py,同一批帧):
+    //   水平面(原)      -> 764~813 格/帧误报
+    //   洞口取单点参考   -> 564~614 格(不够:阴影有几米宽,坡在洞内继续下降)
+    //   阈值随距离放宽   -> 0 格,但 4.5m 处 seed 门限变 1.21m,真台阶抓不到
+    //   本改法(坡面外推) -> 0 格,残余落差中位仅 0.065~0.070m(门限 0.10);
+    //                      同一片坡上人为叠 0.35m 真台阶仍报 406~481 格,灵敏度未丢
+    cliff_ref_grade_enable_ =
+      declare_parameter<bool>("cliff_ref_grade_enable", true);
+    // 拟合用的有效 ground 样本数上限。15 个(约 1.5m 回溯)足够定出局部坡度又不会把
+    // 远处别的地形结构拟合进来。
+    cliff_ref_fit_cells_ = declare_parameter<int>("cliff_ref_fit_cells", 15);
+    // 沿射线最大回溯距离(m)。走完仍凑不够样本就走兜底。
+    cliff_ref_max_search_m_ =
+      declare_parameter<double>("cliff_ref_max_search_m", 4.5);
+    // 兜底/限幅角(度)。两个用途:
+    //   1. 拟合不出来(洞前 ground 不足)时,参考面退回水平面 + d*tan(此角),
+    //      保留一层防护而不是完全不设防;
+    //   2. 给拟合出的坡度限幅 —— 最多把这么陡的地形算作"地形自身坡度",
+    //      更陡的部分照旧当落差。取值与 slope_lethal_deg 对齐(12deg 以上的地形
+    //      坡度链已经判 lethal 了,不需要悬崖判据再替它兜)。
+    cliff_ref_fallback_deg_ =
+      declare_parameter<double>("cliff_ref_fallback_deg", 12.0);
 
     // ---- 地面层（邻域低分位）------------------------------------------------
     ground_percentile_ = declare_parameter<double>("ground_percentile", 0.15);
@@ -423,6 +453,51 @@ private:
   // 越多、约束越强 —— 方向正好相反。
   // 始终会落下 "cliff"/"cliff_drop" 两层(哪怕全 NaN),这样下游按层名取用不会因为
   // 某一帧缺层而失败。
+  // 悬崖判据的参考地面高度:沿"本格 -> 车"方向,用洞【前】的有效 ground 拟合
+  // 局部坡面 h = a + b*d(d = 离车水平距离),再外推到本格的 d。
+  // 返回 NaN = 拟合不成立(洞前有效 ground 不足),调用方走兜底。
+  // b 会被限幅到 ±tan(cliff_ref_fallback_deg):最多把这么陡的地形算作"地形自身坡度",
+  // 更陡的部分照旧计入落差,避免一个跑偏的拟合把真台阶抹平。
+  double cliffRefHeight(
+    const grid_map::GridMap & grid, const grid_map::Matrix & ground,
+    const grid_map::Index & cell, const grid_map::Index & foot,
+    double x_foot, double y_foot, double d_cell) const
+  {
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const double di = static_cast<double>(foot(0) - cell(0));
+    const double dj = static_cast<double>(foot(1) - cell(1));
+    const double len = std::hypot(di, dj);
+    if (len < 1e-6) { return nan; }
+    const double ui = di / len, uj = dj / len;
+    const double res = std::max(grid.getResolution(), 1e-3);
+    const int max_steps = std::max(1, static_cast<int>(cliff_ref_max_search_m_ / res));
+    const int want = std::max(4, cliff_ref_fit_cells_);
+    const grid_map::Size size = grid.getSize();
+
+    int n = 0;
+    double sd = 0.0, sdd = 0.0, sh = 0.0, sdh = 0.0;
+    for (int step = 1; step <= max_steps && n < want; ++step) {
+      const int pi = cell(0) + static_cast<int>(std::lround(ui * step));
+      const int pj = cell(1) + static_cast<int>(std::lround(uj * step));
+      if (pi < 0 || pi >= size(0) || pj < 0 || pj >= size(1)) { break; }
+      const float gv = ground(pi, pj);
+      if (!std::isfinite(gv)) { continue; }
+      grid_map::Position gp;
+      if (!grid.getPosition(grid_map::Index(pi, pj), gp)) { continue; }
+      const double d = std::hypot(gp.x() - x_foot, gp.y() - y_foot);
+      const double h = static_cast<double>(gv);
+      ++n; sd += d; sdd += d * d; sh += h; sdh += d * h;
+    }
+    if (n < 4) { return nan; }
+    const double den = n * sdd - sd * sd;
+    if (std::abs(den) < 1e-9) { return nan; }   // 样本全挤在同一距离上,定不出坡度
+    double b = (n * sdh - sd * sh) / den;
+    const double b_lim = std::tan(cliff_ref_fallback_deg_ * M_PI / 180.0);
+    b = std::clamp(b, -b_lim, b_lim);
+    const double a = (sh - b * sd) / n;
+    return a + b * d_cell;
+  }
+
   void addCliffLayer(grid_map::GridMap & grid, const rclcpp::Time & stamp)
   {
     const auto t_begin = std::chrono::steady_clock::now();
@@ -481,9 +556,17 @@ private:
     const int rows = size(0), cols = size(1);
     const double res = grid.getResolution();
 
-    const double ref = z_foot - cliff_base_height_;   // 参考地面高度,见构造函数里的实测依据
+    const double ref_flat = z_foot - cliff_base_height_;  // 水平参考面(兜底用),见构造函数
     const double r_min2 = cliff_min_range_ * cliff_min_range_;
     const double r_max2 = cliff_max_range_ * cliff_max_range_;
+    // 坡面外推需要 ground 层(addGroundLayer 在本函数之前调用)。缺层就整体走兜底。
+    const bool use_grade = cliff_ref_grade_enable_ && grid.exists("ground");
+    const grid_map::Matrix & ground_ref = use_grade ? grid["ground"] : ub;
+    grid_map::Index foot_idx(0, 0);
+    const bool have_foot_idx =
+      grid.getIndex(grid_map::Position(x_foot, y_foot), foot_idx);
+    const double fallback_tan = std::tan(cliff_ref_fallback_deg_ * M_PI / 180.0);
+    size_t n_ref_fallback = 0;
 
     // ---- Pass 1: 候选 + drop + 深种子 -------------------------------------
     std::vector<uint8_t> cand(static_cast<size_t>(rows) * cols, 0);
@@ -514,6 +597,18 @@ private:
         const double d2 = dx * dx + dy * dy;
         if (d2 < r_min2 || d2 > r_max2) { continue; }
 
+        // 参考面:优先"坡面外推"(消掉地形自身的 d*tan(theta)),失败退回
+        // "水平面 + 随距离放宽的容差"。
+        const double d_cell = std::sqrt(d2);
+        double ref = std::numeric_limits<double>::quiet_NaN();
+        if (use_grade && have_foot_idx) {
+          ref = cliffRefHeight(
+            grid, ground_ref, grid_map::Index(i, j), foot_idx, x_foot, y_foot, d_cell);
+        }
+        if (!std::isfinite(ref)) {
+          ref = ref_flat - d_cell * fallback_tan;
+          ++n_ref_fallback;
+        }
         const double drop = ref - static_cast<double>(uv);
         dropm(i, j) = static_cast<float>(drop);   // 无论是否入选都记录,便于离线扫参
         // 双阈值:只有"确实低于参考地面 grow_thresh 以上"的格子才可参与连通域,
@@ -610,6 +705,7 @@ private:
       }
     }
     n_cand_last_ = n_cand_total; n_lethal_last_ = n_lethal;
+    n_ref_fallback_last_ = n_ref_fallback;
     // 清理远离车的旧 key,避免 map 无界增长
     for (auto it = cliff_hits_.begin(); it != cliff_hits_.end(); ) {
       const int64_t kx = it->first >> 32;
@@ -634,8 +730,10 @@ private:
     if (cliff_ms_n_ >= 50) {
       RCLCPP_INFO(
         get_logger(),
-        "悬崖层耗时: 近 %zu 帧 均值 %.2f ms 峰值 %.2f ms | 候选 %zu 格, lethal %zu 格",
-        cliff_ms_n_, cliff_ms_sum_ / cliff_ms_n_, cliff_ms_max_, n_cand_last_, n_lethal_last_);
+        "悬崖层耗时: 近 %zu 帧 均值 %.2f ms 峰值 %.2f ms | 候选 %zu 格, lethal %zu 格"
+        ", 参考面走兜底 %zu 格(坡面拟合失败)",
+        cliff_ms_n_, cliff_ms_sum_ / cliff_ms_n_, cliff_ms_max_, n_cand_last_, n_lethal_last_,
+        n_ref_fallback_last_);
       cliff_ms_sum_ = 0.0; cliff_ms_max_ = 0.0; cliff_ms_n_ = 0;
     }
   }
@@ -967,11 +1065,14 @@ private:
   double cliff_depth_thresh_, cliff_base_height_, cliff_grow_thresh_;
   int cliff_min_seed_cells_, cliff_min_area_cells_, cliff_confirm_frames_;
   double cliff_min_range_, cliff_max_range_;
+  bool cliff_ref_grade_enable_;
+  int cliff_ref_fit_cells_;
+  double cliff_ref_max_search_m_, cliff_ref_fallback_deg_;
   // odom 系 0.1m 栅格上的命中计数,用于时间确认。key 不随 grid 滚动漂移。
   std::unordered_map<int64_t, uint8_t> cliff_hits_;
   bool cliff_warned_no_layer_{false};
   double cliff_ms_sum_{0.0}, cliff_ms_max_{0.0};
-  size_t cliff_ms_n_{0}, n_cand_last_{0}, n_lethal_last_{0};
+  size_t cliff_ms_n_{0}, n_cand_last_{0}, n_lethal_last_{0}, n_ref_fallback_last_{0};
   size_t cliff_all_zero_streak_{0};
 
   // ---- ros ----
