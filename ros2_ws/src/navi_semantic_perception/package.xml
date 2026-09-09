@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://relaxng.org/ns/structure/1.0"?>
+<package format="3">
+  <name>navi_semantic_perception</name>
+  <version>0.1.0</version>
+  <description>
+    给 semantic_segmentation_layer 供数：把 RealSense 深度图重采样到彩色像素网格，
+    产出 organized 点云（点 N == 掩码像素 N），并提供 LabelInfo 与占位掩码节点。
+  </description>
+  <maintainer email="a26317@autel.com">A26317</maintainer>
+  <license>Apache-2.0</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>vision_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <!-- realsense2_camera_msgs 提供 Extrinsics（depth->color 工厂标定）。它只在
+       robot-sensors 工作区里、不在 apt 源里，声明成依赖会让 rosdep install 失败，
+       所以【刻意不声明】：节点里是软导入，取不到就把 extrinsics_source 设成 'tf'
+       走 driver 发的 static TF（两者实测差约 10 um）。 -->
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

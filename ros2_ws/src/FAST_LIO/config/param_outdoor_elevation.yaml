@@ -164,7 +164,7 @@ local_costmap:
       resolution: 0.05
       footprint: "[ [-0.5, -0.5], [-0.5, 0.5],[0.5, 0.5],[0.5, -0.5] ]"
       # terrain_layer 在前写入分级地形代价(渐变+陡坡lethal),obstacle_layer 用 Max 叠加点云障碍。
-      plugins: ["terrain_layer", "obstacle_layer", "inflation_layer"]
+      plugins: ["terrain_layer", "lawn_layer", "obstacle_layer", "inflation_layer"]
 
       # 自定义地形代价层：读 terrain_scan 的 /terrain_cost_cloud（cost=0..100, odom 系）。
       # cost<lethal_cost_threshold -> 渐变代价(z缓坡软避让)；>= -> LETHAL(陡坡/路沿)。
@@ -206,6 +206,84 @@ local_costmap:
           obstacle_min_range: 0.0
           max_obstacle_height: 5.0
           min_obstacle_height: -5.0
+
+      # -------------------------------------------------------------------------
+      # 草坪语义层（semantic_segmentation_layer）—— 【已启用】
+      #
+      # 已列入上面 local_costmap 的 plugins（terrain 之后、obstacle 之前）。
+      # 配 combination_method: 1 (Max)：
+      # 位置刻意在 terrain 之后、obstacle 之前，配 combination_method: 1 (Max)：
+      # 草坪只抬高代价，抹不掉 terrain 写下的 lethal 路沿，真障碍仍然赢。
+      #
+      # 启用前必须先确认三件事，否则 controller_server 起不来 = 整个导航栈瘫：
+      #   1. semantic_segmentation_layer 已编译安装（jazzy-compat 移植）
+      #   2. TF base_link->camera1_link 存在（robot_static_tf.launch.py）——
+      #      缺它这一层是【静默死亡】：MessageFilter 在同步器触发前丢掉每一帧，
+      #      连诊断 WARN 都不会打
+      #   3. 三个话题都在发：segmentation / points / label_info
+      #      （navi_semantic_perception：depth_to_color_cloud + segmentation_trt）
+      # 且 class_map 为空时源码是 exit(-1)，会直接杀掉整个 nav2 容器。
+      # -------------------------------------------------------------------------
+      lawn_layer:
+        plugin: "semantic_segmentation_layer::SemanticSegmentationLayer"
+        # ⚠ 现在是 True（已开）。开着请知道这个残留风险：
+        #   这个模型在本园区的暗湿铺装上会误标。实测
+        #   analysis/lawn_layer/brightness_corr.py（240 帧）：近场亮度与"路面被误判
+        #   成 grass 的比例"相关系数 r = -0.850，最严重帧近场 89.4% 被刷成草坪。
+        #   而 base_cost=100 / max_cost=253 / samples_to_max_cost=3 意味着三帧内
+        #   车必须走的路面就会变成 253。
+        #   置信度阈值分不开这两者（坏帧要 240 才压住，真草坪 conf 的 p75 才 231）。
+        # segmentation_trt 的 min_mean_brightness=100 fail-safe 把近场 >20% 的帧
+        # 从 22% 降到 2%、最大 89.4% 降到 35.7%，但【没清零】。
+        # 彻底解决需要：用本园区数据微调模型，或先修相机在阴影下的曝光（根因，
+        # D457 在高架桥下明显欠曝）。要先关掉就把下面改成 False。
+        enabled: True
+        combination_method: 1            # Max：只抬高，不覆盖 terrain 的 lethal
+        use_approximate_time_sync: True  # slop 是源码里硬编码的 100 ms，不可配
+        sensor_data_depth: 10
+        publish_debug_topics: True       # 调试期打开；出 camera1/tile_map
+        # 【string 不是 string_array】：源码 :77-78 声明为 std::string，:107 用
+        # stringstream 按空白切分。写成 YAML 列表会导致 configure 失败：
+        #   "parameter has invalid type ... is of type {string}, setting it to
+        #    {string_array} is not allowed" -> controller_server 起不来。
+        # 多源写 "camera1 camera2"。注意 class_types 反而【是】 string_array。
+        observation_sources: "camera1"
+        camera1:
+          segmentation_topic: /semantic/camera1/segmentation
+          pointcloud_topic: /semantic/camera1/points
+          labels_topic: /semantic/camera1/label_info
+          confidence_topic: /semantic/camera1/confidence
+          # 相机光心起算的【3D 距离】，不是高度。max 与 local 窗口半径 5 m 匹配。
+          min_obstacle_distance: 0.4
+          max_obstacle_distance: 5.0
+          # 由实测彩色内参算出 = 79.04x63.55 度（不是 spec 的 90x65）。
+          # 关了 FOV 衰减时它们是惰性的，但也要设对。
+          camera_horizontal_fov: 1.379
+          camera_vertical_fov: 1.109
+          fov_decay_time: -1.0           # 关闭：<0 即禁用
+          outside_fov_decay_time: -1.0
+          tile_map_decay_time: 5.0
+          observation_persistence: 0.0
+          # 刻意为 0：任何正值都会在掉帧时让 isCurrent() 为假，
+          # 把整层标成 not-current，从而拖住整张代价图。
+          expected_update_rate: 0.0
+          use_cost_selection: True       # COST-BASED 选择（日志里会打印这行）
+          visualize_tile_map: True
+          visualize_frustum_fov: False
+          class_types: ["lawn"]
+          lawn:
+            # "grass" 必须与 LabelInfo 里的 class_name 逐字节相同。
+            # 这是 ontology.yaml 里的原名（0=background 1=sidewalk 2=grass）。
+            # 不匹配时 class_map 非空（不触发 exit(-1)）但 class_to_id_map 为空，
+            # 结果是【整层静默零效果】——最难查的一种失败。
+            classes: ["grass"]
+            base_cost: 100
+            # 253 而非 254：草坪是"强烈不希望"而非"不可通过"。
+            # 253 在 INSCRIBED_INFLATED_OBSTACLE 之下一档，车真上了草地还能恢复。
+            max_cost: 253
+            samples_to_max_cost: 3
+            mark_confidence: 128         # 要求 softmax 置信度 >=50% 才标记
+            dominant_priority: False
 
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"

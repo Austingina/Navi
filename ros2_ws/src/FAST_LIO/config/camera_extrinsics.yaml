@@ -1,0 +1,22 @@
+# base_link -> camera1_link 的安装外参。单一真源：室内栈
+# (odometry_lslidar.launch.py) 与室外栈 (outdoor_localization.launch.py) 都读这个文件，
+# 各自内联一个 static_transform_publisher。
+#
+# 这【不是】ROS 参数文件 —— 没有节点叫这个名字，launch 直接 yaml.safe_load 读它。
+#
+# 约定：ROS 右手系，x 前 / y 左 / z 上。camera1_link 是 ROS 约定帧，
+# 到光学帧的旋转由 realsense 驱动自己加（realsense-ros/src/tfs.cpp:122）。
+# 原点是 D457 的【左 IR 成像器】，不是壳中心也不是前玻璃。
+camera_extrinsics:
+  camera1_x: 0.27          # 实测：base_link 前 27 cm
+  camera1_y: 0.0           # 居中
+  # ⚠ 待定。base_link 的 z 基准是隐式的（只由 imu_link->base_link 定义，并不在地面上）。
+  # 对 2D 代价图影响很小：相机高度的平移不改变点的 x/y，真正影响 x/y 的是 pitch。
+  # 要标准确值：车停平地、驱动起着，RViz 固定帧 odom，把 /semantic/camera1/points
+  # 与雷达 /cloud_registered 叠起来调到地面重合。
+  camera1_z: 0.0
+  camera1_yaw: 0.0
+  # +13.857°，地面 RANSAC+SVD 自标定得到（±0.15°）。1° 误差在 5 m 处是 87 mm
+  # 地面距离误差，会系统性偏移每一条草坪边界，所以这是最关键的一个数。
+  camera1_pitch: 0.241855
+  camera1_roll: 0.0        # 实测 -0.031°，取 0

@@ -1,0 +1,9 @@
+# 误在包目录内跑 colcon 会生成这些；它们不属于 src
+build/
+install/
+log/
+__pycache__/
+*.pyc
+# TensorRT 引擎是本机产物（设备+TRT 版本绑定），缓存在
+# ~/.cache/navi_semantic_perception/，不应出现在这里
+*.plan

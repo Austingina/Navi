@@ -1,5 +1,7 @@
 
 import os
+
+import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
@@ -128,6 +130,31 @@ def generate_launch_description():
         package='tf2_ros', executable='static_transform_publisher',
         name='statictf_base_link_to_gps',
         arguments=['0.10','-0.15','0','0','0','0','base_link','gps'],
+        output='screen',
+    )
+
+    # base_link -> camera1_link。数值在 config/camera_extrinsics.yaml（单一真源，
+    # 室内/室外两栈读同一个文件）。没有这条边 semantic_segmentation_layer 会【静默
+    # 死亡】—— 它的 tf2_ros::MessageFilter 会在同步器触发前丢掉每一帧点云，
+    # 连 .cpp:495-516 那些诊断 WARN 都不会打。
+    #
+    # 用带名参数而不是位置参数：位置写法的顺序是 x y z yaw pitch roll，极易写错，
+    # 且在 Jazzy 上已弃用（本文件其余静态 TF 仍是位置写法，保持原状不动）。
+    #
+    # ⚠ camera2 现在【不要】加：rs_multi_camera_launch.py:70-78 发了一条全零的
+    #   dummy camera1_link -> camera2_link。补上本条边后，camera2 会从"明显断开"
+    #   变成"静默地等于 camera1"。要用 camera2 得先去掉 robot-sensors 里那条 dummy。
+    with open(os.path.join(get_package_share_directory('fast_lio'),
+                           'config', 'camera_extrinsics.yaml')) as _f:
+        _cam = yaml.safe_load(_f)['camera_extrinsics']
+    tf_base_link_to_camera1 = Node(
+        package='tf2_ros', executable='static_transform_publisher',
+        name='statictf_base_link_to_camera1_link',
+        arguments=['--x', str(_cam['camera1_x']), '--y', str(_cam['camera1_y']),
+                   '--z', str(_cam['camera1_z']), '--yaw', str(_cam['camera1_yaw']),
+                   '--pitch', str(_cam['camera1_pitch']),
+                   '--roll', str(_cam['camera1_roll']),
+                   '--frame-id', 'base_link', '--child-frame-id', 'camera1_link'],
         output='screen',
     )
 
@@ -271,4 +298,5 @@ def generate_launch_description():
         tf_odom_to_camera_init,
         tf_body_to_base_link,
         tf_base_link_to_gps,
+        tf_base_link_to_camera1,
     ])
