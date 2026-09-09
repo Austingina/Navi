@@ -81,7 +81,7 @@ def generate_launch_description():
             # 戳出来的障碍顶,静态障碍才不会被自己建的高程图吃掉,斜坡也不会整段误报。
             'ground_percentile': 0.2,
             'ground_radius': 3,             # (2r+1)^2 窗
-            'ground_min_cells': 4,
+            'ground_min_cells': 25,
             # 障碍高度带(相对局部地面)：
             'obstacle_min_height': 0.15,
             'obstacle_max_height': 1.0,

@@ -1,8 +1,9 @@
 
 <!--
-  This Behavior Tree replans the global path periodically at 1 Hz and it also has
-  recovery actions specific to planning / control as well as general system issues.
-  This will be continuous if a kinematically valid planner is selected.
+  This Behavior Tree keeps the global path until it expires, the goal changes, or the
+  path gets blocked, rather than replanning unconditionally. An unconditional replan
+  flip-flops between the two sides of a symmetric obstacle (pillar) and the robot
+  oscillates left/right following it.
 
   goal_checker_id must be spelled out: controller_server only falls back to an
   unnamed checker while exactly one is configured, and the outdoor stack also
@@ -12,15 +13,43 @@
   <BehaviorTree ID="MainTree">
     <RecoveryNode number_of_retries="6" name="NavigateRecovery">
       <PipelineSequence name="NavigateWithReplanning">
-        <RateController hz="1.0">
+        <RateController hz="2.0">
           <RecoveryNode number_of_retries="1" name="ComputePathToPose">
-            <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
-            <ClearEntireCostmap name="ClearGlobalCostmap-Context" service_name="global_costmap/clear_entirely_global_costmap"/>
+            <Fallback>
+              <ReactiveSequence>
+                <Inverter>
+                  <PathExpiringTimer seconds="3" path="{path}"/>
+                </Inverter>
+                <Inverter>
+                  <GlobalUpdatedGoal/>
+                </Inverter>
+                <IsPathValid path="{path}"/>
+              </ReactiveSequence>
+              <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+            </Fallback>
+            <!-- Clearing the costmap is followed by a settle Wait on purpose: without it
+                 the very next tick plans through a map that has just been emptied, i.e.
+                 straight through the obstacle that caused the failure. The Sequence stays
+                 RUNNING for the whole Wait, so RecoveryNode cannot retry planning yet.
+                 With terrain_layer.clear_elevation_on_reset=False the elevation map
+                 survives, so /terrain_cost_cloud refills the costmap in ~0.2 s and 2 s is
+                 already generous. -->
+            <Sequence name="ClearGlobalThenSettle">
+              <ClearEntireCostmap name="ClearGlobalCostmap-Context" service_name="global_costmap/clear_entirely_global_costmap"/>
+              <Wait wait_duration="2"/>
+            </Sequence>
           </RecoveryNode>
         </RateController>
         <RecoveryNode number_of_retries="1" name="FollowPath">
           <FollowPath path="{path}" controller_id="FollowPath" goal_checker_id="general_goal_checker"/>
-          <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>
+          <!-- Same reason as ClearGlobalThenSettle above. This branch fires on every DWB
+               hiccup (controller_server.failure_tolerance = 0.3 s), so keep the Wait short
+               or the robot stutters; 2 s is enough for both the terrain chain (5 Hz) and
+               the scan chain (~10 Hz, accumulate_time 0.8 s) to repopulate. -->
+          <Sequence name="ClearLocalThenSettle">
+            <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>
+            <Wait wait_duration="2"/>
+          </Sequence>
         </RecoveryNode>
       </PipelineSequence>
       <ReactiveFallback name="RecoveryFallback">
@@ -29,6 +58,10 @@
           <Sequence name="ClearingActions">
             <ClearEntireCostmap name="ClearLocalCostmap-Subtree" service_name="local_costmap/clear_entirely_local_costmap"/>
             <ClearEntireCostmap name="ClearGlobalCostmap-Subtree" service_name="global_costmap/clear_entirely_global_costmap"/>
+            <!-- Longer settle than the two Context branches: this is the last-resort clear,
+                 reached only when BackUp / Spin / Wait all failed, so the map is likely
+                 genuinely confused and worth a full rebuild before moving again. -->
+            <Wait wait_duration="3"/>
           </Sequence>
           <Spin spin_dist="1.57"/>
           <Wait wait_duration="3"/>
@@ -38,3 +71,4 @@
     </RecoveryNode>
   </BehaviorTree>
 </root>
+
