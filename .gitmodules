@@ -3,4 +3,4 @@
 	url = https://github.com/Livox-SDK/Livox-SDK2.git
 [submodule "ros2_ws/src/semantic_segmentation_layer"]
 	path = ros2_ws/src/semantic_segmentation_layer
-	url = https://github.com/kiwicampus/semantic_segmentation_layer.git
+	url = https://github.com/HUANG-Haolun/semantic_segmentation_layer.git
