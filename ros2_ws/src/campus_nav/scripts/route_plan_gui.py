@@ -1,5 +1,76 @@
 #!/usr/bin/env python3
-"""Small browser GUI for exercising campus_nav RouteGraph.plan_auto()."""
+"""Small browser GUI for exercising campus_nav RouteGraph.plan_auto().
+
+Serves one page (inline Leaflet map) plus two JSON endpoints from the stdlib
+http.server: GET /api/data returns the road network + entry points, POST
+/api/plan runs plan_auto() on a start/goal pair. It only plans -- no rclpy, no
+Nav2 goal is ever sent, so it is safe to run next to a live stack.
+
+Needs `campus_nav.route_graph` and `ament_index_python` importable. numpy,
+PyYAML and pyosmium come from the system python, but ament_index_python ships
+with ROS, so /opt/ros/jazzy/setup.bash must be sourced no matter which of the
+two recipes below you use.
+
+Run (LAN -- open it from any machine on the same network):
+
+    cd ~/Navi/ros2_ws
+    source /opt/ros/jazzy/setup.bash
+    source install/setup.bash
+    python3 src/campus_nav/scripts/route_plan_gui.py --host 0.0.0.0 --no-browser
+
+    # then browse to http://<this-machine-ip>:8765/   e.g. http://192.168.1.100:8765/
+    # `hostname -I` lists the addresses; on the robot eth1 is the wired LAN,
+    # wlan0 the campus wifi, ap0 the robot's own hotspot.
+
+Run (no colcon build required -- ROS core only, package root on PYTHONPATH):
+
+    cd ~/Navi/ros2_ws/src/campus_nav
+    source /opt/ros/jazzy/setup.bash
+    PYTHONPATH=.:$PYTHONPATH /usr/bin/python3 scripts/route_plan_gui.py \
+        --host 0.0.0.0 --no-browser
+
+    # Keep the `:$PYTHONPATH` suffix. A bare `PYTHONPATH=.` wipes the entry that
+    # sourcing ROS just added, and the script dies on ament_index_python.
+
+Run (local only; binds 127.0.0.1 and opens a browser for you):
+
+    python3 src/campus_nav/scripts/route_plan_gui.py
+
+Smoke-test it without a browser:
+
+    curl -s http://127.0.0.1:8765/api/data | head -c 200
+    curl -s -X POST http://127.0.0.1:8765/api/plan -H 'Content-Type: application/json' \
+      -d '{"start":{"lon":113.9350708,"lat":22.5743576},
+           "goal":{"lon":113.9395,"lat":22.5770}}'
+
+Useful flags:
+
+    --host / --port      listen address; default 127.0.0.1:8765 (loopback only,
+                         so LAN access needs --host 0.0.0.0 explicitly)
+    --no-browser         do not try to open a browser (required on a headless robot)
+    --verbose            log every HTTP request
+    --config <yaml>      route_planner ROS params; defaults to the package's
+                         config/route_planner.yaml and supplies every tuning
+                         default below
+    --pbf / --entries    road network (.osm.pbf) and entry-point layer (.gpkg)
+    --entry-search-radius-m, --entry-offroad-weight, --direct-max-m,
+    --always-direct-m, --detour-ratio-threshold, --same-entry-road-m,
+    --off-network-m, --[no-]respect-oneway, --[no-]respect-turns,
+    --[no-]reject-entry-network-crossing
+                         override any route_planner.yaml value for a what-if
+                         run without editing the YAML
+
+Two gotchas:
+
+* `ros2 run campus_nav route_plan_gui` does NOT work. setup.py declares the
+  console_script as `campus_nav.route_plan_gui`, but this file lives under
+  scripts/ and is never installed, so the wrapper dies with ModuleNotFoundError.
+  Launch it by path, as above.
+* The page pulls Leaflet and the OSM raster tiles from the public internet
+  (unpkg.com, tile.openstreetmap.org). With no internet the basemap stays blank,
+  while the campus network and the planned route still draw normally -- all of
+  that data is served locally.
+"""
 
 from __future__ import annotations
 
@@ -261,7 +332,10 @@ def parse_args():
     known, _ = pre.parse_known_args()
     params = _route_planner_params(known.config)
 
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("--config", type=Path, default=known.config,
                         help="route_planner ROS parameter YAML")
     parser.add_argument("--host", default="127.0.0.1")
