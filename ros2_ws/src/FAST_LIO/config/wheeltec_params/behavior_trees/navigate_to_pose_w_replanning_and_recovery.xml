@@ -8,10 +8,21 @@
   goal_checker_id must be spelled out: controller_server only falls back to an
   unnamed checker while exactly one is configured, and the outdoor stack also
   loads precise_goal_checker for the campus_nav route end.
+
+  SHARED BY BOTH STACKS, and this is the tree that serves every *unqualified*
+  NavigateToPose goal: RViz "2D Goal Pose" and NaviSkill's NavNode
+  (nav_node.py:1711 leaves goal.behavior_tree empty, so bt_navigator falls back to
+  default_nav_to_pose_bt_xml). Both launch files rewrite that to point here, against
+  param files that tune the same knobs very differently:
+    indoor   yhs_nav2.launch.py:42-43      + config/param_yhs.yaml
+    outdoor  outdoor_nav2.launch.py:32-33  + config/param_outdoor_elevation.yaml
+  So recovery tuning in this file lands on the indoor slam stack too. campus_nav's
+  route end is the exception: it passes its own tree by absolute path
+  (campus_nav/config/behavior_trees/navigate_to_pose_precise_goal.xml, outdoor only).
 -->
 <root BTCPP_format="4" main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
-    <RecoveryNode number_of_retries="6" name="NavigateRecovery">
+    <RecoveryNode number_of_retries="5" name="NavigateRecovery">
       <PipelineSequence name="NavigateWithReplanning">
         <RateController hz="2.0">
           <RecoveryNode number_of_retries="1" name="ComputePathToPose">
@@ -27,13 +38,6 @@
               </ReactiveSequence>
               <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
             </Fallback>
-            <!-- Clearing the costmap is followed by a settle Wait on purpose: without it
-                 the very next tick plans through a map that has just been emptied, i.e.
-                 straight through the obstacle that caused the failure. The Sequence stays
-                 RUNNING for the whole Wait, so RecoveryNode cannot retry planning yet.
-                 With terrain_layer.clear_elevation_on_reset=False the elevation map
-                 survives, so /terrain_cost_cloud refills the costmap in ~0.2 s and 2 s is
-                 already generous. -->
             <Sequence name="ClearGlobalThenSettle">
               <ClearEntireCostmap name="ClearGlobalCostmap-Context" service_name="global_costmap/clear_entirely_global_costmap"/>
               <Wait wait_duration="2"/>
@@ -42,10 +46,6 @@
         </RateController>
         <RecoveryNode number_of_retries="1" name="FollowPath">
           <FollowPath path="{path}" controller_id="FollowPath" goal_checker_id="general_goal_checker"/>
-          <!-- Same reason as ClearGlobalThenSettle above. This branch fires on every DWB
-               hiccup (controller_server.failure_tolerance = 0.3 s), so keep the Wait short
-               or the robot stutters; 2 s is enough for both the terrain chain (5 Hz) and
-               the scan chain (~10 Hz, accumulate_time 0.8 s) to repopulate. -->
           <Sequence name="ClearLocalThenSettle">
             <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>
             <Wait wait_duration="2"/>
@@ -58,14 +58,12 @@
           <Sequence name="ClearingActions">
             <ClearEntireCostmap name="ClearLocalCostmap-Subtree" service_name="local_costmap/clear_entirely_local_costmap"/>
             <ClearEntireCostmap name="ClearGlobalCostmap-Subtree" service_name="global_costmap/clear_entirely_global_costmap"/>
-            <!-- Longer settle than the two Context branches: this is the last-resort clear,
-                 reached only when BackUp / Spin / Wait all failed, so the map is likely
-                 genuinely confused and worth a full rebuild before moving again. -->
             <Wait wait_duration="3"/>
           </Sequence>
-          <Spin spin_dist="1.57"/>
-          <Wait wait_duration="3"/>
-          <BackUp backup_dist="0.30" backup_speed="0.1"/>
+          <Wait wait_duration="5"/>
+          <BackUp backup_dist="0.30" backup_speed="0.1" time_allowance="15"/>
+          <Spin spin_dist="0.785" time_allowance="18"/>
+          <Spin spin_dist="-0.785" time_allowance="18"/>
         </RoundRobin>
       </ReactiveFallback>
     </RecoveryNode>

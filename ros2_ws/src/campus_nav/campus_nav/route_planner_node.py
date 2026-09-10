@@ -770,6 +770,12 @@ class RoutePlanner(Node):
         self._nav_goal_seq = 0          # bump on each send; ignore stale result CBs
         self._nav_batch_last_xy = None  # xy of last waypoint in the sent batch
         self._nav_sent_key = None       # (cursor, batch_end) of last sent batch
+        # "re-send the batch on the next tick, whatever the advance gate says".
+        # Deliberately NOT expressed as _nav_sent_key = None: that reads as "we
+        # have not sent anything", which makes stale_active False and hands the
+        # decision straight back to the nav2_batch_advance_m gate -- i.e. it
+        # silently *suppresses* the re-send it was meant to force.
+        self._nav_force_resend = False
         self._nav_batch_timer = None
         # Index of the entry pose when the route ends with an off-network access
         # leg (entry -> goal); None for an ordinary on-road route.
@@ -1892,6 +1898,7 @@ class RoutePlanner(Node):
         self._nav_send_pending = False
         self._nav_batch_last_xy = None
         self._nav_sent_key = None
+        self._nav_force_resend = False
         self._nav_running = bool(poses)
         if self._nav_running:
             self.get_logger().info(
@@ -1959,8 +1966,10 @@ class RoutePlanner(Node):
 
         # Active Nav2 goal still starts at a waypoint we already dropped -> must
         # preempt immediately. Waiting for nav2_batch_advance_m here is what made
-        # the robot turn around onto a stale /plan.
-        stale_active = (
+        # the robot turn around onto a stale /plan: the goal Nav2 holds still lists
+        # waypoints this node has already retired (and painted green in RViz), and
+        # ComputePathThroughPoses happily plans *backwards* to reach them.
+        stale_active = self._nav_force_resend or (
             self._nav_goal_active
             and self._nav_sent_key is not None
             and self._nav_cursor > self._nav_sent_key[0]
@@ -1995,17 +2004,29 @@ class RoutePlanner(Node):
             end = self._nav_cursor + 1
 
         key = (self._nav_cursor, end)
-        if key == self._nav_sent_key and self._nav_goal_active:
+        # `not stale_active` matters for the forced case: the heading snap asks for
+        # the *same* batch to be re-sent on the corrected frame, so the cursor has
+        # not moved and the key is identical. Without this the force flag would be
+        # swallowed here and never consumed.
+        if key == self._nav_sent_key and self._nav_goal_active and not stale_active:
             return  # identical batch still executing
 
         batch = poses[self._nav_cursor:end]
-        self._nav_sent_key = key
-        self._nav_batch_last_xy = self._pose_xy(poses[end - 1])
         self.get_logger().info(
             f"Feeding Nav2 waypoints [{self._nav_cursor}:{end}] of {n} "
             f"(batch {len(batch)}{', preempt stale' if stale_active else ''})."
         )
-        self._send_nav2_waypoints(batch, preempt=True)
+        # Only record the batch as sent once it really went out. Booking it before
+        # the send meant an early return inside _send_nav2_waypoints (action server
+        # not up within 0.2 s, goals still gated on the heading lock) left
+        # _nav_sent_key describing a goal Nav2 never received: stale_active then
+        # read False on every later tick and the genuinely stale goal kept running
+        # until the robot happened to near the *old* batch end.
+        if not self._send_nav2_waypoints(batch, preempt=True):
+            return
+        self._nav_sent_key = key
+        self._nav_batch_last_xy = self._pose_xy(poses[end - 1])
+        self._nav_force_resend = False
 
     def _cancel_nav2_goal(self):
         handle = self._nav_goal_handle
@@ -2278,7 +2299,15 @@ class RoutePlanner(Node):
             "heading snap: re-issuing the current waypoint batch on the "
             "north-aligned frame."
         )
-        self._nav_sent_key = None
+        # Must be the force flag, not _nav_sent_key = None. This is the one place
+        # that asks for a re-send while a Nav2 goal is still active, and
+        # stale_active requires _nav_sent_key is not None -- clearing it therefore
+        # disabled the very re-send it was asking for, and the
+        # nav2_batch_advance_m gate then held the pre-snap goal until the robot
+        # neared the old batch end. Measured: 26 s of stale goal and three
+        # waypoints retired (green in RViz) while Nav2 still had them as goals
+        # (logs/outdoor_20260904_152821.log, 1788506941.87 -> 1788506966.73).
+        self._nav_force_resend = True
 
     def _clear_costmaps(self, pass_label="immediate"):
         """Best-effort clear of the Nav2 global/local costmaps.
@@ -2345,11 +2374,16 @@ class RoutePlanner(Node):
         self._clear_costmaps(pass_label="post-snap")
 
     def _send_nav2_waypoints(self, poses, preempt=False):
+        """Send a NavigateThroughPoses goal.
+
+        Returns True only when the goal was actually handed to the action client,
+        so the caller knows whether it may record the batch as sent.
+        """
         if not poses:
             self.get_logger().warn("No nav waypoints to send.")
-            return
+            return False
         if self.nav_action_client is None:
-            return
+            return False
         if not self._goals_allowed():
             # Route is still computed/published for RViz; we just hold it back
             # from Nav2 until the map frame is north-aligned. The batch timer
@@ -2359,14 +2393,14 @@ class RoutePlanner(Node):
                 "(/heading_align/status). Robot would drive the wrong way.",
                 throttle_duration_sec=5.0,
             )
-            return
+            return False
         self._warn_if_driving_unlocked("Sending campus waypoints")
         if not self.nav_action_client.wait_for_server(timeout_sec=0.2):
             self.get_logger().warn(
                 f"Nav2 action server '{self.get_parameter('nav2_action_name').value}' "
                 "is not available; published /campus_nav_waypoints only."
             )
-            return
+            return False
         if preempt:
             self._cancel_nav2_goal()
         goal = NavigateThroughPoses.Goal()
@@ -2383,6 +2417,7 @@ class RoutePlanner(Node):
             f"Sent {len(goal.poses)} campus waypoints to Nav2 "
             f"({self.get_parameter('nav2_action_name').value})."
         )
+        return True
 
     def _on_nav2_goal_response(self, future, seq):
         if seq != self._nav_goal_seq:
@@ -2393,6 +2428,7 @@ class RoutePlanner(Node):
             self.get_logger().warn("Nav2 rejected campus waypoint goal.")
             self._nav_goal_active = False
             self._nav_sent_key = None  # allow the timer to retry this batch
+            self._nav_force_resend = True
             return
         self.get_logger().info("Nav2 accepted campus waypoint goal.")
         self._nav_goal_handle = goal_handle
@@ -2428,6 +2464,7 @@ class RoutePlanner(Node):
             )
             # Let the timer re-issue the (possibly updated) batch from the cursor.
             self._nav_sent_key = None
+            self._nav_force_resend = True
         else:
             self.get_logger().info("Nav2 campus waypoint batch finished.")
         # bt_navigator runs one navigator at a time, so the final NavigateToPose
