@@ -61,9 +61,9 @@
             <Wait wait_duration="3"/>
           </Sequence>
           <Wait wait_duration="5"/>
-          <BackUp backup_dist="0.30" backup_speed="0.1" time_allowance="15"/>
-          <Spin spin_dist="0.785" time_allowance="18"/>
-          <Spin spin_dist="-0.785" time_allowance="18"/>
+          <!-- <BackUp backup_dist="0.30" backup_speed="0.1" time_allowance="15"/> -->
+          <!-- <Spin spin_dist="0.785" time_allowance="18"/> -->
+          <!-- <Spin spin_dist="-0.785" time_allowance="18"/> -->
         </RoundRobin>
       </ReactiveFallback>
     </RecoveryNode>
