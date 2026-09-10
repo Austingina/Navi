@@ -3,22 +3,23 @@
 三个话题一起喂给 nav2 的 semantic_segmentation_layer：
     /semantic/camera1/points        组织化点云（彩色网格，NaN 占位）
     /semantic/camera1/segmentation  mono8 类别掩码（像素与点云严格 1:1）
-    /semantic/camera1/label_info    类别表（latched）
+    /semantic/camera1/label_info    类别表（latched，由 segmentation_trt 自己发）
+
+另有一个只给人看的话题（下游不消费）：
+    /semantic/camera1/segmentation_color   rgb8 叠加图，RELIABLE
+    上面那个 mono8 掩码的像素值就是类别 id(0/1/2)，在 RViz 里是全黑的；
+    而且它走 SensorDataQoS(BEST_EFFORT)，RViz 的 Image display 默认 Reliable 收不到。
+    要在 RViz 里看就看这个 _color 话题。
 
 启动顺序：LabelInfo 必须在那一层收到第一帧之前到位
 （semantic_segmentation_layer.cpp:511-516），所以本 launch 要在 nav2 之前起。
 
 segmentation 参数：
     trt  (默认) 真模型，TensorRT FP16，640x480 原生 2.3 ms/帧。
-                它自己按 config/ontology.yaml 发 LabelInfo，
-                所以【不】再起 label_info_publisher（否则同一 latched 话题两个发布者）。
-    stub        固定图像区域打标，用来在没有模型时打通全链。
-                stub 不发 LabelInfo，所以这条路径要起 label_info_publisher。
-    none        只发点云（调试点云本身时用）。
+                它自己按 config/ontology.yaml 发 LabelInfo。
+    none        只发点云（调试点云本身、或不想烧 GPU 时用）。
+                此时【没有】掩码和 LabelInfo，那一层无法工作。
 """
-import os
-
-from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
@@ -27,7 +28,6 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    share = get_package_share_directory('navi_semantic_perception')
     seg = LaunchConfiguration('segmentation')
     return LaunchDescription([
         DeclareLaunchArgument('camera_ns', default_value='/camera1/camera1'),
@@ -40,7 +40,7 @@ def generate_launch_description():
                                           "extrinsics 时用这个，两者实测差约 10 um)"),
         DeclareLaunchArgument('color_distortion_model', default_value='none'),
         DeclareLaunchArgument('segmentation', default_value='trt',
-                              choices=['trt', 'stub', 'none']),
+                              choices=['trt', 'none']),
         DeclareLaunchArgument('input_scale', default_value='1.0',
                               description='1.0=原生 640x480（掩码天生落在彩色网格上，'
                                           '不做任何缩放）。GPU 有 43 倍余量，别调小'),
@@ -63,13 +63,4 @@ def generate_launch_description():
              parameters=[{'input_scale': LaunchConfiguration('input_scale'),
                           'min_mean_brightness':
                               LaunchConfiguration('min_mean_brightness')}]),
-
-        # 只有 stub 路径需要外部发 LabelInfo（segmentation_trt 自己发）
-        Node(package='navi_semantic_perception', executable='label_info_publisher',
-             name='label_info_publisher', output='screen',
-             condition=IfCondition(EqualsSubstitution(seg, 'stub')),
-             parameters=[os.path.join(share, 'config', 'lawn_labels.yaml')]),
-        Node(package='navi_semantic_perception', executable='stub_segmentation',
-             name='stub_segmentation', output='screen',
-             condition=IfCondition(EqualsSubstitution(seg, 'stub'))),
     ])

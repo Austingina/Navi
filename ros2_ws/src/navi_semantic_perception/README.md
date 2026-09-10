@@ -30,8 +30,6 @@ with segmentation."。也就是说**点 N 必须等于像素 N**。
 |---|---|
 | `depth_to_color_cloud` | 深度 -> 彩色网格组织化点云 `/semantic/camera1/points` |
 | `segmentation_trt` | TensorRT 语义分割 -> 掩码 + confidence + LabelInfo |
-| `stub_segmentation` | 固定区域打标，没模型时打通全链 |
-| `label_info_publisher` | 发 LabelInfo（**仅 stub 路径需要**，trt 自带） |
 | `build_trt_engine` | 预编译 TRT 引擎（省掉首启的 9 分钟） |
 
 | 模块 | |
@@ -65,7 +63,7 @@ ros2 launch navi_semantic_perception semantic_perception.launch.py
 
 | | 默认 | |
 |---|---|---|
-| `segmentation` | `trt` | `trt` / `stub` / `none` |
+| `segmentation` | `trt` | `trt` / `none`（`none` 只发点云，不烧 GPU）|
 | `target_rate` | `10.0` | 点云与掩码的**共同**速率，必须一致 |
 | `input_scale` | `1.0` | 原生 640×480；GPU 有 43 倍余量，别调小 |
 | `min_mean_brightness` | `100.0` | 暗场 fail-safe，见下 |
@@ -83,6 +81,15 @@ ros2 topic hz /semantic/camera1/points /semantic/camera1/segmentation   # 应 ~1
 ros2 topic echo --once /semantic/camera1/label_info                     # latched，应立刻返回
 ros2 run tf2_tools view_frames    # 应是一棵树：odom -> base_link -> camera1_link -> ..._optical_frame
 ```
+
+### 在 RViz 里看
+
+看 **`/semantic/camera1/segmentation_color`**（rgb8 叠加图，RELIABLE，默认设置即可）。
+
+不要看 `/semantic/camera1/segmentation`：它的像素值就是类别 id（0/1/2），Image display
+把 0–255 映射成黑到白，所以是**全黑**的；而且它走 SensorDataQoS(BEST_EFFORT)，
+RViz 的 Image display 默认 `Reliability = Reliable`，**一帧都收不到**。
+那个话题是给 costmap 层用的，不是给人看的。
 
 这三条日志**一条都不该出现**，出现即静默失效：
 `Pointcloud and segmentation sizes are different` / `Class map is empty` /

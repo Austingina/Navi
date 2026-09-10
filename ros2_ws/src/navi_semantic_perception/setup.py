@@ -25,8 +25,6 @@ setup(
     entry_points={
         'console_scripts': [
             'depth_to_color_cloud = navi_semantic_perception.depth_to_color_cloud:main',
-            'label_info_publisher = navi_semantic_perception.label_info_publisher:main',
-            'stub_segmentation = navi_semantic_perception.stub_segmentation:main',
             'segmentation_trt = navi_semantic_perception.segmentation_trt:main',
             'build_trt_engine = navi_semantic_perception.trt_engine:main',
         ],
