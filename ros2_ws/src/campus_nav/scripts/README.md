@@ -14,6 +14,9 @@ cd /home/navi/nav_test/campus_nav
 | `merge_pbf_gpkg.py` | 把 QGIS 编辑的 `new_road.gpkg` 烘焙进底图 PBF，产出生产用融合路网 |
 | `make_entries_gpkg.py` | 生成空的入口点图层 `campus_entries.gpkg`，供 QGIS 标注广场/院子的开口 |
 | `zhicheng_align.py` | L2Pro / 3DGS 点云 PLY → 俯视 GeoTIFF 底图（EPSG:32649） |
+| `share_align.py` | share（SAE）扫描仪采集的 colorized PLY → 俯视 GeoTIFF 底图（EPSG:32649） |
+
+> **底图脚本选哪个？** 看点云是哪台设备采的：L2Pro / 3DGS 扫描用 `zhicheng_align.py`；**share（SAE）扫描仪采集的数据用 `share_align.py`**。两者输出的都是同一套坐标系（EPSG:32649）的俯视 GeoTIFF，可直接在 QGIS 里当描路底图，区别只在于解析的 PLY 结构不同（见下）。
 
 ---
 
@@ -144,3 +147,44 @@ Goal is 26.6 m off-network -> entering via 'plaza_west'
 ```
 
 QGIS：直接加载 `.tif`（地理参考写在文件内，无需 `.pgw`）。
+
+---
+
+## share_align.py
+
+**share（SAE）扫描仪采集的数据用这个。** 把 SAE 导出的 colorized PLY 渲成带地理参考的俯视 GeoTIFF，供 QGIS 描路。
+
+**和 `zhicheng_align.py` 的区别（为什么单独一个脚本）：** SAE 扫描仪写出的 PLY 结构和 L2Pro / 3DGS 不同——
+
+| | `zhicheng_align.py`（L2Pro / 3DGS） | `share_align.py`（SAE） |
+|------|------|------|
+| 顶点类型 | 全 float32 | 混合类型（`double x/y/z` + `uchar rgb` + float 法线/强度等） |
+| 颜色 | SH 系数，需解码 | 直接 0–255 RGB，不解码 |
+| 坐标 | 带局部 offset（写在 header 注释里） | 已是绝对 UTM 49N 东/北（米），**无 offset** |
+| header | 有 min/max/offset/epsg 注释 | 无这些注释 |
+
+`share_align.py` 会通用地解析 PLY header（任意属性顺序/类型），memmap 后分块先算 XY/Z 包围盒，再把颜色按像素平均成正射图，tiepoint 直接用原始 UTM（不加 offset）。
+
+**依赖：** numpy、Pillow（stdlib + numpy + PIL，用 `/usr/bin/python3`）。无需 GDAL / pyproj。
+
+**默认路径与参数：**
+
+| 参数 | 默认 |
+|------|------|
+| `ply`（位置参数） | `/home/navi/Navi/2026-09-09_14-20-36_PointCloud_colorized.ply` |
+| `--out` | `<campus_nav>/share_ortho.tif` |
+| `--res` | `0.05`（米/像素） |
+| `--epsg` | `32649` |
+| `--z-lo` / `--z-hi` | 可选的绝对 UTM 高度过滤（保留 `z_lo <= z <= z_hi`），默认不过滤 |
+| `--gain` | `1.0`（平均色亮度增益） |
+| `--gamma` | `1.0`（对平均色做 gamma，1.0 = 不变） |
+
+```bash
+/usr/bin/python3 scripts/share_align.py
+/usr/bin/python3 scripts/share_align.py --res 0.1 --out /tmp/share.tif
+/usr/bin/python3 scripts/share_align.py /path/to/PointCloud_colorized.ply
+```
+
+> **只支持 `binary_little_endian` 的 PLY**；ascii / big-endian / list 属性会直接报错。若地面被树冠/顶棚盖住看不清路，用 `--z-hi` 卡掉高处的点只留地面。栅格单元上限约 4 亿，`--res` 调太小会被拒绝并提示调大。
+
+QGIS：直接加载 `.tif`（地理参考写在文件内，无需 `.pgw`），描路流程与 `zhicheng_ortho.tif` 完全一致。
