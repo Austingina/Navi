@@ -110,7 +110,7 @@ def generate_launch_description():
             'slope_free_deg': 5.0,
             # 统一阈值：>=15° 判不能通行(TerrainLayer 记 LETHAL 并 60m 持久)，
             # 8~12° 路口斜坡落在软代价区间仍可走。
-            'slope_lethal_deg': 12.0,
+            'slope_lethal_deg': 13.0,
             # <1 使中等坡度代价更高(更强软避让),不改 lethal 阈值。0.5=明显加重。
             'slope_gamma': 0.99,
             # 地形代价点云(给自定义 TerrainLayer 用)。
@@ -131,7 +131,12 @@ def generate_launch_description():
             'angle_min': -3.14159265,
             'angle_max': 3.14159265,
             'angle_increment': 0.0087,
-            'range_min': 0.1,
+            # 自车点过滤：雷达会打到自己车身，这些点过高度带后被投进 scan、落在
+            # footprint 内。0.45 > footprint 外接半径(0.60x0.50 -> √(0.30²+0.25²)
+            # = 0.39 m)可清零。BaseObstacle 只看中心格所以之前无感；ObstacleFootprint
+            # 检查整圈，自车点会让所有轨迹判死、车停着不动(实测 48.9% 帧
+            # footprint 内有 >=4 个点)。
+            'range_min': 0.45,
             'range_max': 30.0,
 
             # ---- 负障碍(悬崖/下沉)检测 -------------------------------------

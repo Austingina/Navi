@@ -193,8 +193,14 @@ Vision-Language Navigation：以自然语言指令 + 实时图像驱动 VLN 大�
 模态栈复用成熟的开源基础库，降低自研成本、聚焦差异化能力：
 
 - **Nav2**：SLAM / OUTDOOR 共用的导航框架（行为树、规划器、控制器、代价地图）。
+- **osmium**：OpenStreetMap 数据处理库，OUTDOOR 栈用它读取 / 合并 `.osm.pbf` 路网，
+  为 `campus_nav` 的公里级路网算路提供底图数据。
 - **grid map**：高程 / 坡度 / 地形代价层的底层数据结构（室内外各用一套配置）。
 - **FastLio**：LiDAR-惯性里程计，SLAM 与 OUTDOOR 定位的公共前端。
+- **3DBBS**：基于 Branch-and-Bound 的 3D 点云全局重定位，为 SLAM 栈在先验点云地图上
+  提供无先验位姿的全局初始定位 / 重定位。
+- **CGAL**：计算几何库，为地形平面分解（凸平面分解 / 高程图平面分割）提供稳健的
+  多边形与几何运算支撑。
 
 ### 3.4 系统中间件
 

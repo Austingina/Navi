@@ -457,9 +457,9 @@ Visualization Manager:
       Autocompute Intensity Bounds: true
       Class: grid_map_rviz_plugin/GridMap
       Color: 200; 200; 200
-      Color Layer: slope
+      Color Layer: elevation
       Color Transformer: IntensityLayer
-      Enabled: false
+      Enabled: true
       Height Layer: elevation
       Height Transformer: ""
       History Length: 1
@@ -478,7 +478,7 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /terrain_grid_map
       Use Rainbow: true
-      Value: false
+      Value: true
     - Alpha: 1
       Class: rviz_default_plugins/RobotModel
       Collision Enabled: false
@@ -584,7 +584,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 41.77691650390625
+      Distance: 18.952301025390625
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -602,7 +602,7 @@ Visualization Manager:
       Pitch: 1.5697963237762451
       Target Frame: base_link
       Value: Orbit (rviz_default_plugins)
-      Yaw: 4.818577766418457
+      Yaw: 4.265401840209961
     Saved: ~
 Window Geometry:
   /zed/rgb/image_raw:

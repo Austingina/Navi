@@ -187,7 +187,9 @@ public:
     angle_min_ = declare_parameter<double>("angle_min", -3.141592653589793);
     angle_max_ = declare_parameter<double>("angle_max", 3.141592653589793);
     angle_increment_ = declare_parameter<double>("angle_increment", 0.008726646259971648);
-    range_min_ = declare_parameter<double>("range_min", 0.1);
+    // 滤掉落进 footprint 的自车点(外接半径 0.39 m，取 0.45)。BaseObstacle 只看
+    // 中心格所以之前无感；ObstacleFootprint 检查整圈，自车点会判死所有轨迹。
+    range_min_ = declare_parameter<double>("range_min", 0.45);
     range_max_ = declare_parameter<double>("range_max", 30.0);
 
     // ---- 多帧累积(把稀疏单帧补满, 障碍不闪烁)------------------------------

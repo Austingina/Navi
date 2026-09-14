@@ -40,7 +40,8 @@ def generate_launch_description():
         'angle_min': -3.141592653589793,
         'angle_max': 3.141592653589793,
         'angle_increment': 0.008726646259971648,  # 0.5 deg
-        'range_min': 0.1,
+        # 滤掉落进 footprint 的自车点(0.60x0.50 外接半径 0.39 m，取 0.45)。
+        'range_min': 0.45,
         'range_max': 30.0,
         'publish_filtered_pcd': False,
     }
