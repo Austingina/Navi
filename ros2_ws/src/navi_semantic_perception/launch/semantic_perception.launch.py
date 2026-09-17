@@ -29,7 +29,11 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     seg = LaunchConfiguration('segmentation')
+    use_sim_time = LaunchConfiguration('use_sim_time')
     return LaunchDescription([
+        DeclareLaunchArgument('use_sim_time', default_value='false',
+                              description='时钟源走 /clock。由上层 bringup 透传，'
+                                          '保证掩码/点云与 costmap 同一时间轴'),
         DeclareLaunchArgument('camera_ns', default_value='/camera1/camera1'),
         DeclareLaunchArgument('target_rate', default_value='10.0',
                               description='点云与掩码的共同速率；必须一致，否则那一层'
@@ -51,7 +55,8 @@ def generate_launch_description():
 
         Node(package='navi_semantic_perception', executable='depth_to_color_cloud',
              name='depth_to_color_cloud', output='screen',
-             parameters=[{'camera_ns': LaunchConfiguration('camera_ns'),
+             parameters=[{'use_sim_time': use_sim_time,
+                          'camera_ns': LaunchConfiguration('camera_ns'),
                           'target_rate': LaunchConfiguration('target_rate'),
                           'extrinsics_source': LaunchConfiguration('extrinsics_source'),
                           'color_distortion_model':
@@ -60,7 +65,8 @@ def generate_launch_description():
         Node(package='navi_semantic_perception', executable='segmentation_trt',
              name='segmentation_trt', output='screen',
              condition=IfCondition(EqualsSubstitution(seg, 'trt')),
-             parameters=[{'input_scale': LaunchConfiguration('input_scale'),
+             parameters=[{'use_sim_time': use_sim_time,
+                          'input_scale': LaunchConfiguration('input_scale'),
                           'min_mean_brightness':
                               LaunchConfiguration('min_mean_brightness')}]),
     ])

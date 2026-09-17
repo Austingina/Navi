@@ -89,6 +89,10 @@ def generate_launch_description():
             'fallback_on_unknown_elevation': False,
             'fallback_min_height': 0.3,
             'fallback_max_height': 1.0,
+            # 近场地面外推：ground 未知时沿"点->车"方向拟合坡度外推地面参照
+            # (cliffRefHeight 同款数学)，让 1.5m 盲区内贴近车的人能被检出。
+            # 外推失败才退回 fallback 脚底带。
+            'near_ground_extrapolate': True,
             # 坡度：地面层梯度 -> 分级代价 OccupancyGrid(/slope_costmap)。
             # <=free_deg 记 0；free~lethal 线性升到 99（缓坡代价递增，同等条件优先平地）；
             # >=lethal_deg 记 100(lethal，基本过不去)。不再往 scan 里塞假障碍点。
@@ -117,10 +121,12 @@ def generate_launch_description():
             'cost_cloud_enable': True,
             'cost_cloud_topic': '/terrain_cost_cloud',
             # 空格清除：TerrainLayer 只会碰 cost cloud 里出现过的格子，没出现的
-            # 旧值永久保留。所以"车附近、连高程都没有"的格子要当成"观测到是空的"
-            # 发 cost=0，否则人走开后高程图清了、costmap 上的 lethal 却清不掉。
-            # 半径取 4.5 m：略小于高程图半边长(map_length=10 -> 5 m)，避免把
-            # 边缘从未扫到的区域也判成空。
+            # 旧值永久保留。所以"车附近观测到是空的"格子要主动发 cost=0，否则人
+            # 走开后高程图清了、costmap 上的 lethal 却清不掉。
+            # 半径内一律发 0（连高程都没有 / 有高程但坡度 NaN 都算观测到空，
+            # 见 terrain_scan_node.cpp publishCostCloud 的说明）。
+            # 半径 2.0 m 是保守值：上限是高程图半边长(map_length=10 -> 5 m)，
+            # 调大能多清远处残留，但也更容易把"从未扫到"的边缘误判成空。
             'free_on_empty': True,
             'free_on_empty_radius': 2.0,
             # 多帧累积：把最近若干帧的存活障碍点在 odom 系累起来再投 2D，
