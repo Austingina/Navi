@@ -1,0 +1,9 @@
+# Validated with ROS Jazzy / Python 3.12; torch/torchvision are platform-specific.
+# torch requires >=77; the system colcon-core exposed to this venv requires <80.
+setuptools>=77,<80
+transformers==5.16.1
+huggingface-hub==1.29.0
+safetensors==0.8.0
+numpy==1.26.4
+Pillow==12.3.0
+PyYAML==6.0.3

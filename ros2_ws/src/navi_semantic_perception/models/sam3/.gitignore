@@ -1,0 +1,4 @@
+*.safetensors
+*.pt
+*.onnx
+*.plan

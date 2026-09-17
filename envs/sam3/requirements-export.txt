@@ -1,0 +1,2 @@
+# Export only; TensorRT is supplied by the matching system installation.
+onnx==1.22.0
