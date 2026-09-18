@@ -55,36 +55,66 @@ rosdep install --from-paths src --ignore-src -y \
 > 若这台机器上装过 conda，`rosdep` 可能把系统识别成 `conda` 而报
 > `Unsupported OS [conda]`。此时加 `ROS_OS_OVERRIDE=ubuntu:noble:noble`。
 
-### 4.1 rosdep 装不到的运行时依赖（必须手工装）
+### 4.1 Python 运行环境（rosdep 装不到，必须手工装）
 
 **这一节漏掉任何一项，节点都是能编过、一起跑就崩**，而且报错只是一句
-`ModuleNotFoundError`，不看这里很难联想到是环境没装齐。全部由 `/usr/bin/python3`
-加载（节点 shebang 是 `#!/usr/bin/env python3`）。
+`ModuleNotFoundError`，不看这里很难联想到是环境没装齐。
 
-| 模块 | 谁需要 | 为什么 rosdep 装不到 |
+| 装什么 | 谁需要 | 怎么被加载 |
 |---|---|---|
-| `simple_parsing` | `elevation_mapping_cupy`（`parameter.py`） | 自定义 rosdep key，被 `--skip-keys` 跳过；**apt 无此包** |
-| `cupy`（cuda13x） | `elevation_mapping_cupy`（`elevation_map.py`） | 同上；且必须匹配 CUDA 13 / aarch64 |
-| `torch` | `elevation_mapping_cupy` 的可通行性滤波（`core_param.yaml` 是 `use_chainer: false`，走 torch 后端） | 由 `envs/elevation_mapping/install.sh` 建的 venv 提供，launch 把它前置到 PYTHONPATH |
+| `NaviSkill/vpr/.venv` | NaviSkill `server.py`、VPR 重定位子进程 | 直接以 `vpr/.venv/bin/python3` 启动 |
+| `envs/sam3/.venv` | `segmentation_sam3` 语义分割节点 | launch 用 `prefix=` 指定，可用 `sam3_python` 覆盖 |
+| `envs/elevation_mapping/.venv` | `elevation_mapping_node.py` 的 torch 后端（`core_param.yaml` 里 `use_chainer: false`） | 节点跑在系统 `python3` 上，launch 只把它的 `site-packages` 前置到 `PYTHONPATH` |
+| `simple_parsing` | `elevation_mapping_cupy/parameter.py` | 用户 site；自定义 rosdep key 被 `--skip-keys` 跳过，**apt 无此包** |
+| `cupy`（cuda13x） | `elevation_mapping_cupy/elevation_map.py` | 用户 site；同上，且必须匹配 CUDA 13 / aarch64 |
 
-缺失时的典型报错（三者都在节点 `__init__` 之前的 import 阶段就挂，进程直接退出）：
+前两个 venv 带 `--system-site-packages`，继承系统 ROS 的 `rclpy` / `ament`；
+后两项由 `/usr/bin/python3` 加载（节点 shebang 是 `#!/usr/bin/env python3`）。
+缺失时在节点 `__init__` 之前的 import 阶段就挂，进程直接退出：
 
 ```
 [elevation_mapping_node.py-3] ModuleNotFoundError: No module named 'simple_parsing'
 [ERROR] [elevation_mapping_node.py-3]: process has died [pid ..., exit code 1, ...]
 ```
 
-装法：`simple_parsing` 与 `cupy` 装到**用户 site**（`~/.local/lib/python3.12/site-packages`，
-系统 python3 默认就在 `sys.path` 里，不需要 sudo、也不污染系统包）；`torch` 走
-`envs/elevation_mapping/install.sh`（aarch64 上必须显式给 `TORCH_WHEEL`，脚本会拒绝
-猜轮子）。`install.sh` 里的注释有这三者的分工与 ABI 约束，改之前先读。
+装法：
 
-> **轮子索引现状**（2026-09-01 实测）：`install.sh` 里印的
-> `https://pypi.jetson-ai-lab.io/jp7/cu130` **已失效（404）**。该 devpi 服务器现在只有
-> `jp6/cu126`、`jp6/cu128`、`jp6/cu129`、`sbsa/cu130`、`root`。CUDA 13 + aarch64 + cp312
-> 对应的是 **`sbsa/cu130`**，里面有 `torch-2.11.0` 与 `cupy_cuda13x-13.6.0` 的
-> cp312 aarch64 轮子，且该 index 会代理上游 PyPI（纯 python 包也能从它解析到）。
-> 若机器的网络是白名单式的（实测 `pypi.org` 与清华/阿里镜像均超时），这可能是唯一可达的源。
+```bash
+cd ~/Navi
+
+# 1. 用户 site 的两个模块。Ubuntu 24.04 有 PEP 668 标记，不加
+#    --break-system-packages 会被直接拒绝；--user 只写 ~/.local，不需要 sudo。
+python3 -m pip install --user --break-system-packages \
+  simple-parsing "cupy-cuda13x==13.6.0"
+
+# 2. elevation_mapping 的 torch。脚本依赖 uv，且在 aarch64 上拒绝猜轮子。
+command -v uv || curl -LsSf https://astral.sh/uv/install.sh | sh
+TORCH_WHEEL="torch==2.13.0" bash envs/elevation_mapping/install.sh
+
+# 3. NaviSkill / VPR
+bash NaviSkill/vpr/install_thor.sh
+
+# 4. SAM3。checkpoint 获取与离线导入见 envs/sam3/README.md
+bash envs/sam3/install.sh
+envs/sam3/.venv/bin/python -m pip install -r envs/sam3/requirements-export.txt
+bash envs/sam3/build_trt.sh   # 约 10 分钟；引擎必须本机构建，不能跨机器拷贝
+```
+
+三个脚本结尾都会自检并打印 `torch.cuda.is_available()`，没看到就别往下走。
+
+> **轮子来源**（2026-09-18 实测）：`envs/sam3/install.sh` 用 PyTorch 官方
+> `download.pytorch.org/whl/cu130`；elevation_mapping 走 PyPI —— aarch64 的
+> `torch==2.13.0` 轮子本身就是 CUDA 13 构建（`torch.version.cuda == 13.0`，
+> `get_arch_list()` 含 Thor 的 `sm_110`），**不需要**特殊索引。但
+> `NaviSkill/vpr/requirements-thor.txt` 顶部的
+> `--extra-index-url https://pypi.jetson-ai-lab.io/jp7/cu130` **已 404**，
+> 重装 vpr 时若因该行解析失败，删掉它走 PyPI。
+
+> **三个环境不要合并**，三种 numpy 状态是 ABI 逼出来的：`elevation_mapping` 注入的
+> `site-packages` 一旦带上 `opencv 5.x`，系统 `cv_bridge`（针对 `cv2 4.6.0` 编译）会
+> `cv2_to_imgmsg` 报 `KeyError: 16`；带上 numpy 2 则踩到 apt `scipy 1.11.4` 里已被
+> numpy 2.0 删除的 `numpy.Inf`。三份 torch 重复约 8 GB，嫌占地方就用
+> `hardlink --content --minimum-size 1M` 对三个 `site-packages` 去重，不影响 import。
 
 ### 4.2 `campus_nav` 需要 pyosmium（3.x，别装 4.x）
 
@@ -195,7 +225,9 @@ nav2 与 grid_map 都**不要再按版本号 pin**。原先 pin 到 `1.1.20` / `
   但注意 **rosdep 盖不住 `simple-parsing` / `cupy-cuda13x` / `torch`** ——
   前两者虽然写在 `elevation_mapping_cupy` 的 package.xml 里，却没有对应的 rosdep 规则
   （`rosdep resolve simple-parsing` 直接报 `no rosdep rule`），所以被 `--skip-keys` 跳过，
-  **必须手工装**，否则 `elevation_mapping_node` 一起跑就崩。装法见 **4.1**。
+  **必须手工装**，否则 `elevation_mapping_node` 一起跑就崩。
+- **三个 Python 虚拟环境**（VPR/NaviSkill、SAM3、elevation_mapping 的 torch）
+  同样在 rosdep 之外，缺了对应节点直接起不来。两者装法都见 **4.1**。
 
 ### 4. 星海图系统环境（编译不需要，运行需要）
 在 ~/galaxea/install目录是星海图的系统环境，
