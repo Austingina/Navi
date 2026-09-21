@@ -1,0 +1,16 @@
+segmentation_sam3:
+  ros__parameters:
+    # Environment: <Navi>/envs/sam3/.venv; checkpoint and TensorRT engines are external.
+    model_path: ""       # SAM3_CHECKPOINT_DIR or ~/.cache/navi/sam3
+    config_path: ""      # installed package: models/sam3
+    processor_path: ""   # installed package: models/sam3/processor
+    device: cuda
+    precision: bfloat16  # PyTorch only; TensorRT precision is fixed at build time
+    score_threshold: 0.5
+    mask_threshold: 0.5
+    color_width: 640
+    color_height: 480
+    max_pair_dt: 0.05
+    max_result_age: 2.0
+    publish_color_viz: true
+    color_viz_alpha: 0.5

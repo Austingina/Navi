@@ -5,7 +5,7 @@
   <version>0.1.0</version>
   <description>
     给 semantic_segmentation_layer 供数：把 RealSense 深度图重采样到彩色像素网格，
-    产出 organized 点云（点 N == 掩码像素 N），并提供 LabelInfo 与占位掩码节点。
+    产出 organized 点云（点 N == 掩码像素 N），并提供 SAM3 掩码、置信度与 LabelInfo。
   </description>
   <maintainer email="a26317@autel.com">A26317</maintainer>
   <license>Apache-2.0</license>
@@ -16,6 +16,14 @@
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>python3-pil</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <!-- SAM3 torch/torchvision/transformers live in envs/sam3/.venv (setup.py [sam3]).
+       TensorRT is supplied by the matching system installation.
+       Keep the platform-specific CUDA wheels out of system rosdep installs. -->
   <!-- realsense2_camera_msgs 提供 Extrinsics（depth->color 工厂标定）。它只在
        robot-sensors 工作区里、不在 apt 源里，声明成依赖会让 rosdep install 失败，
        所以【刻意不声明】：节点里是软导入，取不到就把 extrinsics_source 设成 'tf'
@@ -24,6 +32,7 @@
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
   <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
 
   <export>
     <build_type>ament_python</build_type>

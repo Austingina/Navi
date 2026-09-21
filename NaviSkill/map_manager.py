@@ -9,7 +9,7 @@ from outdoor_map import OutdoorMap
 
 class MapManager:
     """
-    多模态 / 分层地图管理器（聚合器 / Facade）。
+    多模式 / 分层地图管理器（聚合器 / Facade）。
 
     支持两类地图描述文件（详见
     ``MapEditor/docs/multi-modal_navigation_mapdata_file-format.md`` 与

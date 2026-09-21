@@ -363,7 +363,9 @@ void ImuProcess::Process(const MeasureGroup &meas,  esekfom::esekf<state_ikfom, 
   double t1,t2,t3;
   t1 = omp_get_wtime();
 
-  if(meas.imu.empty()) {return;};
+  // laserMapping skips a scan by testing cur_pcl_un_ for empty, so every early
+  // return must clear it or the previous frame is re-used as a fresh observation.
+  if(meas.imu.empty()) {cur_pcl_un_->clear(); return;};
   assert(meas.lidar != nullptr);
 
   if (imu_need_init_)
@@ -389,6 +391,7 @@ void ImuProcess::Process(const MeasureGroup &meas,  esekfom::esekf<state_ikfom, 
       fout_imu.open(DEBUG_FILE_DIR("imu.txt"),ios::out);
     }
 
+    cur_pcl_un_->clear();
     return;
   }
 

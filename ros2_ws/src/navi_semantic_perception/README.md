@@ -1,7 +1,7 @@
 # navi_semantic_perception
 
 给 nav2 的 `semantic_segmentation_layer` 供数：把 RealSense 的深度重投影到**彩色像素
-网格**上产出组织化点云，再用 TensorRT 跑语义分割出掩码，两者**逐像素对齐、stamp 严格
+网格**上产出组织化点云，再用 SAM3 跑语义分割出掩码，两者**逐像素对齐、stamp 严格
 1:1**。当前用途是识别草坪并在局部代价图上抬高代价。
 
 ## 为什么需要这个包
@@ -24,121 +24,151 @@ with segmentation."。也就是说**点 N 必须等于像素 N**。
 点云网格永远取自 `depth_intrin`，且 `base_realsense_node.cpp:260` 把点云滤波压在对齐
 滤波【之前】。所以必须自己投影 —— 这就是 `warp.py`。
 
-## 组成
+## SAM3 迁移
 
-| 可执行 | 作用 |
-|---|---|
-| `depth_to_color_cloud` | 深度 -> 彩色网格组织化点云 `/semantic/camera1/points` |
-| `segmentation_trt` | TensorRT 语义分割 -> 掩码 + confidence + LabelInfo |
-| `build_trt_engine` | 预编译 TRT 引擎（省掉首启的 9 分钟） |
+SAM3 源码和工具保存在 `sam3/`，运行环境安装到仓库内的
+`envs/sam3/.venv`。模型配置、tokenizer 和预处理参数随本 ROS 包提交并安装；
+checkpoint 位于 `~/.cache/navi/sam3/model.safetensors`，生成的 TensorRT 引擎位于
+`~/.cache/navi/sam3/trt_engines/`，均不提交 Git。
 
-| 模块 | |
-|---|---|
-| `warp.py` | 投影数学，**只此一份**。离线验证脚本与运行期节点 import 同一个实现 |
-| `trt_engine.py` | 引擎编译 + 全 GPU 推理（预处理/argmax/softmax 都在显存里） |
+换机器 clone 后按 [SAM3 部署步骤](../../../envs/sam3/README.md)执行
+`bash envs/sam3/install.sh`，装上 `envs/sam3/requirements-export.txt` 的导出依赖，
+再执行 `bash envs/sam3/build_trt.sh` 构建本机引擎（约 10 分钟）。
+权重可从 Meta 官方 `facebook/sam3` 下载（需访问权限），
+也可从旧机器导入；TensorRT 引擎必须在目标机器上重新构建，不能拷贝。
+运行不依赖仓库外的 SAM3 源码或虚拟环境。
 
-## 怎么用
+- 源码：`sam3/`（Meta 原始包、工具、示例和 LICENSE）。
+- 默认导航推理后端：SAM3 TensorRT FP16，视觉编码器和检测器分为两个引擎。
+- 可选 `segmentation:=sam3` 使用 Transformers `Sam3Model` / PyTorch bfloat16。
+- 配置：已安装 ROS share 目录下的 `models/sam3/config.json`。
+- 预处理/分词器：同目录的 `models/sam3/processor/`。
+- Python：`<Navi>/envs/sam3/.venv/bin/python`，与 ROS Jazzy 同为 Python 3.12。
+- 运行期仅本地读取文件，不联网、不编译 TensorRT。
 
-### 一次性：预编译引擎
+`config/ontology.yaml` 仍然定义 **0=background、1=sidewalk、2=grass**。
+默认仅对 `grass` 提示词推理；`sidewalk` 保留 ID，但 `sam3_prompt: ""` 表示不查询。
+需要更多类别时可修改 `sam3_prompt`，图像编码器会在同一帧的多个提示词之间复用。
+重叠实例由最高分决定类别；未检测到的像素输出 background/0 confidence。
+
+置信度是 SAM3 的 **检测分数 × presence 分数**，量化为 0..255，在实例掩码内填充。
+它不再是旧模型的逐像素 softmax；`lawn_layer.camera1.lawn.mark_confidence: 128`
+对应约 0.5 分数。SAM3 的实例筛选阈值和 mask 阈值均默认 0.5。
+旧模型的 `min_mean_brightness=100` 暗场过滤只保留在旧模型 `segmentation:=trt` 后端，不作用于 SAM3。
+
+## 构建与启动
 
 ```bash
-cd ~/Navi/ros2_ws && source install/setup.bash
-ros2 run navi_semantic_perception build_trt_engine     # 约 9 分钟 -> 67 MB
-```
-
-产物在 `~/.cache/navi_semantic_perception/`，文件名含 onnx 的 sha256 + 设备 + 算力 +
-TRT 版本 + 形状，任一变化自动重编。**不做也能跑**，节点会自己编，但会在启动时卡 9 分钟。
-
-### 日常
-
-```bash
+cd ~/Navi/ros2_ws
+source /opt/ros/jazzy/setup.bash
+colcon build --symlink-install --packages-select navi_semantic_perception
+source install/setup.bash
 ros2 launch navi_semantic_perception semantic_perception.launch.py
 ```
 
-`base_link -> camera1_link` 的 TF **不用单独起** —— 室内栈
-(`odometry_lslidar.launch.py`) 与室外栈 (`outdoor_localization.launch.py`) 各自内联了
-一个 `static_transform_publisher`，数值读 `fast_lio/config/camera_extrinsics.yaml`。
-
-常用参数：
-
-| | 默认 | |
-|---|---|---|
-| `segmentation` | `trt` | `trt` / `none`（`none` 只发点云，不烧 GPU）|
-| `target_rate` | `10.0` | 点云与掩码的**共同**速率，必须一致 |
-| `input_scale` | `1.0` | 原生 640×480；GPU 有 43 倍余量，别调小 |
-| `min_mean_brightness` | `100.0` | 暗场 fail-safe，见下 |
-| `extrinsics_source` | `topic` | bag 回放缺 extrinsics 时用 `tf` |
-
-### 两个"省电"行为
-
-`depth_to_color_cloud` 和 `segmentation_trt` 在**没有订阅者时完全不干活**。所以单独起来
-`ros2 topic hz` 看不到东西是正常的，得有 nav2 的层或 RViz 在订阅。
-
-### 检查
+launch 自动为 SAM3 节点选择现有虚拟环境解释器，其他 ROS 节点继续使用系统 Python。
+`extrinsics_source:=topic` 需要先 source 包含 `realsense2_camera_msgs` 的传感器工作区。
+若 bag 只有相机静态 TF、没有工厂 extrinsics 消息：
 
 ```bash
-ros2 topic hz /semantic/camera1/points /semantic/camera1/segmentation   # 应 ~10 Hz 且相等
-ros2 topic echo --once /semantic/camera1/label_info                     # latched，应立刻返回
-ros2 run tf2_tools view_frames    # 应是一棵树：odom -> base_link -> camera1_link -> ..._optical_frame
+ros2 launch navi_semantic_perception semantic_perception.launch.py \
+  use_sim_time:=true extrinsics_source:=tf
 ```
 
-### 在 RViz 里看
+`base_link -> camera1_link` 由已有室内/室外定位 launch 提供，安装外参见
+`fast_lio/config/camera_extrinsics.yaml`。输入分辨率为 640×480。
 
-看 **`/semantic/camera1/segmentation_color`**（rgb8 叠加图，RELIABLE，默认设置即可）。
+**室外 `lawn_layer` 的既有开关仍为 `enabled: False`，室外总启动脚本也没有自动包含本 launch。**
+先单独启动上面的感知链，检查 RViz 叠加图和点云，再启用 costmap 层：
 
-不要看 `/semantic/camera1/segmentation`：它的像素值就是类别 id（0/1/2），Image display
-把 0–255 映射成黑到白，所以是**全黑**的；而且它走 SensorDataQoS(BEST_EFFORT)，
-RViz 的 Image display 默认 `Reliability = Reliable`，**一帧都收不到**。
-那个话题是给 costmap 层用的，不是给人看的。
+```bash
+ros2 param set /local_costmap/local_costmap lawn_layer.enabled true
+```
 
-这三条日志**一条都不该出现**，出现即静默失效：
-`Pointcloud and segmentation sizes are different` / `Class map is empty` /
-`Skipping undefined class_id`。
+永久启用时修改 `fast_lio/config/param_outdoor_elevation.yaml` 的 `lawn_layer.enabled`，
+并将感知 launch 纳入自己的启动流程。模型迁移本身不会启动底盘或导航。
+LabelInfo 使用 RELIABLE + TRANSIENT_LOCAL，晚启动的 Nav2 也可收到类别表。
 
-## 模型
-
-`models/model.onnx` 取自 nav2 官方教程 `nav2_semantic_segmentation_demo`
-（BSD-3-Clause，见 `models/MODEL_LICENSE.md`）。类别 **0=background 1=sidewalk 2=grass**，
-H/W 动态 float16，所以 640×480 可直接喂、掩码原生就在彩色网格上。
-
-后端是 **TensorRT 不是 onnxruntime**：本机是 NVIDIA Thor = **sm_110**，PyPI 的
-`onnxruntime-gpu` aarch64 wheel 只烧了 sm_89/90a/120a/121a 且**不含 PTX**，
-实测报 `cudaErrorNoKernelImageForDevice`；jetson-ai-lab 的 jp7 索引里没有这个包。
-TensorRT 在运行时按实机架构编译，且 `tensorrt`/`cupy` 与 `rclpy` 同一解释器
-（系统 python 3.12），**所以这个包不需要 venv**。
-
-实测 640×480：**2.33 ms / 429.7 Hz**（CPU 4 线程是 308.8 ms / 3.2 Hz，快 133 倍）。
-
-## 暗场 fail-safe（`min_mean_brightness`）
-
-这个模型在本园区的**暗湿铺装**上会整片误判成草坪。实测（240 帧）近场条带平均亮度与
-"路面被误判成 grass 的比例"相关系数 **r = -0.850**：
-
-| 近场亮度 | 误判中位% | >20% 的帧 |
+| launch 参数 | 默认 | 说明 |
 |---|---|---|
-| 60-80 | 54.9 | 100% |
-| 80-100 | 21.4 | 59% |
-| 100-120 | **0.0** | 3% |
+| `segmentation` | `sam3_trt` | `sam3_trt` / `sam3`（PyTorch）/ `trt`（旧模型）/ `none` |
+| `sam3_engine_dir` | `~/.cache/navi/sam3/trt_engines` | 本机构建的 SAM3 引擎目录 |
+| `sam3_model_path` | `~/.cache/navi/sam3` | checkpoint 目录；也支持环境变量 `SAM3_CHECKPOINT_DIR` |
+| `sam3_python` | 空 | 自动定位 `<Navi>/envs/sam3/.venv/bin/python` |
+| `sam3_device` | `cuda` | TensorRT 仅支持 CUDA；PyTorch 也支持 `cpu` |
+| `target_rate` | `3.0` | 输入点云限速；忙时只保留最新待处理帧 |
+| `camera_ns` | `/camera1/camera1` | 深度和彩色共同的相机命名空间 |
+| `use_sim_time` | `false` | bag 回放设为 true，并发布 /clock |
+| `extrinsics_source` | `topic` | `topic` / `tf` |
 
-所以近场亮度低于 100 时直接发**全 background 掩码**（保持与点云 1:1 的 stamp，但这一层
-什么都不标）。效果：近场 >20% 的帧从 22% 降到 **2%**，最大 89.4% 降到 35.7%，代价是真
-草坪面积保留 53%。
+`precision` 仅影响 PyTorch；TensorRT 精度由构建时决定。其他 SAM3 参数放在 `config/sam3.yaml`：`precision`、`score_threshold`、
+`mask_threshold`、`max_pair_dt`、`max_result_age`、`model_path`、`config_path` 和 `processor_path`。
+CPU 自动使用 float32，但速度远低于实时；离线 CPU 调试需提高 `max_result_age`
+（例如 60 秒），否则默认 2 秒会丢弃结果。实时导航使用 CUDA。
 
-**置信度阈值分不开这两者**（坏帧上要 240 才压住，而真草坪 conf 的 p75 才 231），亮度可以。
+## 慢推理与帧同步
+
+```text
+color/image_raw ─────────────────────────────┐
+depth -> depth_to_color_cloud -> points_raw ──┤ SAM3 单工作线程
+                                            └─ segmentation + confidence + points
+                                               三者均带原点云的采集 stamp/frame_id
+```
+
+输入彩色与深度时间差最大 50 ms。SAM3 后处理将实例 mask 恢复到原始彩色尺寸，
+节点同时校验 width 和 height，避免像素总数相同却转置的错配。
+单个推理工作线程不会阻塞 ROS 接收；推理期间更新最新待处理点云，不累积推理任务。
+只在推理成功后同时发布对应点云、类别和置信度，避免 Nav2 的同步队列先淘汰点云。
+推理失败或结果过期时整组丢弃，不将旧结果改盖新时间戳。
+默认 `max_result_age=2.0` 秒，同时检查接收后的墙钟耗时和采集时间相对 ROS 时钟的年龄。
+该策略保证帧关联；SAM3 本身约 0.3 秒的观测延迟仍需在移动机器人上评估。
+
+| 话题 | 作用 |
+|---|---|
+| `/semantic/camera1/points_raw` | SAM3 内部输入；Nav2 不订阅 |
+| `/semantic/camera1/points` | 推理完成后发布的原始组织化点云 |
+| `/semantic/camera1/segmentation` | mono8 类别 ID，供 lawn_layer 消费 |
+| `/semantic/camera1/confidence` | mono8 0..255 实例分数 |
+| `/semantic/camera1/label_info` | latched 类别表 |
+| `/semantic/camera1/segmentation_color` | rgb8 叠加图，RELIABLE，供 RViz 查看 |
+
+没有掩码/置信度/输出点云/可视化订阅者时不执行推理。
+检查输出速率时对话题分别执行 `ros2 topic hz`；点云、掩码与置信度的输出帧数应一致。
+`segmentation` 的值只有 0/2，在 RViz Image 中看起来近乎全黑，应查看 `_color` 话题。
+
+## 验证与旧模型回退
+
+```bash
+cd ~/Navi/ros2_ws
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+colcon test --packages-select navi_semantic_perception
+colcon test-result --verbose
+```
+
+测试覆盖类别 ID、实例重叠和 confidence、空检测、RGB/BGR 行填充、彩色晚到、
+慢推理时跳过中间帧、结果过期、模型异常，以及点云/掩码逐维和时间戳一致性。
+测试使用受控推理器，不需要模型权重/GPU。
+
+本机迁移验证使用已有 `analysis/rgbd_align/frames.npz` 的真实 640×480 图像。
+PyTorch 后端首帧约 844 ms，随后 294–308 ms/帧；默认的 TensorRT FP16 后端首帧约
+230 ms，随后 148–153 ms/帧，掩码像素数与 PyTorch 的差异在 0.1% 以内。
+两者输出均为 uint8 类别/置信度图。
+这仅验证执行链和数据契约，不代表园区草地精度已经完成验收。
+
+需要回退时：
+
+```bash
+ros2 launch navi_semantic_perception semantic_perception.launch.py \
+  segmentation:=trt target_rate:=10.0
+```
+
+旧 TensorRT 模型和 `build_trt_engine` 仍可用，类别 ID 不变；其亮度过滤仍默认 100。
+引擎缓存位于 `~/.cache/navi_semantic_perception/`，首次缺失时会编译。
+`segmentation:=none` 则只发布点云，没有类别表/掩码，lawn_layer 无法工作。
 
 ## 已知限制
 
-- `camera1_z` 仍是待定的 `0.0`。对 2D 代价图影响很小（平移不改 x/y），但要精确需用
-  RViz 把 `/semantic/camera1/points` 与雷达 `/cloud_registered` 叠起来标定。
-- **camera2 未接**。`rs_multi_camera_launch.py:70-78` 发了一条全零 dummy
-  `camera1_link -> camera2_link`；补上 `base_link -> camera1_link` 后 camera2 会从
-  "明显断开"变成"静默地等于 camera1"。要用它得先改 robot-sensors。
-- `config/ontology.yaml` 里的 `model.device` 是上游遗留字段，本包不读。
-- 层本身在 `param_outdoor_elevation.yaml` 里是 `enabled: False`，见那里的注释。
-
-## 相关分析
-
-| | |
-|---|---|
-| `analysis/rgbd_align/` | 深度↔彩色对齐的量化与离线验证 |
-| `analysis/lawn_layer/` | 层的 bag 回放测试台（RViz 配色代价图 + 视频） |
+- 相机安装高度 `camera1_z` 仍为待标定的 0.0，精确边界需结合雷达点云标定。
+- 当前只接 camera1；camera2 的安装外参尚未标定。
+- SAM3 的草地提示词、分数阈值和观测延迟需结合实际路线验收。

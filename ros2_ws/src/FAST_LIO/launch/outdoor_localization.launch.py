@@ -249,6 +249,15 @@ def generate_launch_description():
                      'max_h_var': 1.0,
                      'max_variance': 4.0,          # var 封顶，防增益趋 1
                      'sustained_offset_sec': 3.0,  # 持续偏移改为限速爬入
+                     # 假固定检测：解算精度没跃升却发生位置阶跃，说明整周模糊度
+                     # 解错了。这种偏移同样"持续"，会被上面的爬入当成 LIO 漂移
+                     # 吃进来；而且 gate 约 2.5m，比它小的假固定压根进不了门限，
+                     # 直接就融合了。检测到就暂停位置融合、纯 LIO 推算，直到接
+                     # 收机自己跳回来（跳回会被识别为撤销，立即恢复融合）。
+                     'step_detect_speed': 3.0,     # GPS 与 LIO 增量失配(m/s)，0=关
+                     'step_sigma_ratio': 5.0,      # sigma 改善几倍算真的解恢复
+                     # 假固定持续超过该时长则退回原行为(限速爬入)，按实测调整
+                     'step_distrust_sec': 600.0,
                      'bad_gps_hold_sec': 3.0,      # 差解超时 -> 纯 LIO 推算
                      'reseed_on_heading_lock_sec': 30.0,
                      'datum_lat': datum_lat,        # 与 gps_heading_align / campus_nav 一致
