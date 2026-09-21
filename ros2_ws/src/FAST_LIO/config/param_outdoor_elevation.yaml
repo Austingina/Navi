@@ -215,7 +215,7 @@ local_costmap:
 
       lawn_layer:
         plugin: "semantic_segmentation_layer::SemanticSegmentationLayer"
-        enabled: False
+        enabled: True
         combination_method: 1            # Max：只抬高，不覆盖 terrain 的 lethal
         use_approximate_time_sync: True  # slop 是源码里硬编码的 100 ms，不可配
         sensor_data_depth: 10
@@ -232,7 +232,7 @@ local_costmap:
           camera_vertical_fov: 1.109
           fov_decay_time: -1.0           # 关闭：<0 即禁用
           outside_fov_decay_time: -1.0
-          tile_map_decay_time: 5.0
+          tile_map_decay_time: 3600.0
           observation_persistence: 0.0
           # 刻意为 0：任何正值都会在掉帧时让 isCurrent() 为假，
           # 把整层标成 not-current，从而拖住整张代价图。
@@ -248,8 +248,6 @@ local_costmap:
             # 结果是【整层静默零效果】——最难查的一种失败。
             classes: ["grass"]
             base_cost: 100
-            # 253 而非 254：草坪是"强烈不希望"而非"不可通过"。
-            # 253 在 INSCRIBED_INFLATED_OBSTACLE 之下一档，车真上了草地还能恢复。
             max_cost: 253
             samples_to_max_cost: 3
             mark_confidence: 128         # 要求 softmax 置信度 >=50% 才标记
@@ -282,7 +280,7 @@ global_costmap:
       track_unknown_space: false
       footprint: "[ [-0.30, -0.25], [-0.3, 0.25],[0.3, 0.25],[0.30, -0.25] ]"
       # terrain_layer 提供全局的分级地形代价 + 陡坡/路沿 lethal，且随 60m 窗口累积持久。
-      plugins: ["terrain_layer", "obstacle_layer", "inflation_layer"]
+      plugins: ["terrain_layer", "lawn_layer", "obstacle_layer", "inflation_layer"]
 
       # 自定义地形代价层（同局部）。/terrain_cost_cloud 为 odom 系，层内经 tf 变换到
       # global_frame(map) 并写入自身滚动栅格累积；本机 map->odom 仅平移,变换稳定。
@@ -298,6 +296,42 @@ global_costmap:
         clearing_enabled: True
         clear_elevation_on_reset: False
         elevation_clear_service: /elevation_mapping_cupy/clear_map
+
+      lawn_layer:
+        plugin: "semantic_segmentation_layer::SemanticSegmentationLayer"
+        enabled: True
+        combination_method: 1
+        use_approximate_time_sync: True
+        sensor_data_depth: 10
+        publish_debug_topics: False
+        observation_sources: "camera1"
+        camera1:
+          segmentation_topic: /semantic/camera1/segmentation
+          pointcloud_topic: /semantic/camera1/points
+          labels_topic: /semantic/camera1/label_info
+          confidence_topic: /semantic/camera1/confidence
+          min_obstacle_distance: 0.4
+          max_obstacle_distance: 5.0
+          camera_horizontal_fov: 1.379
+          camera_vertical_fov: 1.109
+          fov_decay_time: -1.0
+          outside_fov_decay_time: -1.0
+          tile_map_decay_time: 3600.0
+          observation_persistence: 0.0
+          expected_update_rate: 0.0
+          use_cost_selection: True
+          visualize_tile_map: False
+          visualize_frustum_fov: False
+          class_types: ["lawn"]
+          lawn:
+            classes: ["grass"]
+            base_cost: 100
+            # 必须与 local 那份保持一致，改之前先看那里对 253 的完整说明
+            # （253 对 NavFn 就是障碍，不是"贵一点"）。
+            max_cost: 253
+            samples_to_max_cost: 3
+            mark_confidence: 128
+            dominant_priority: False
 
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"

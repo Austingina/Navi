@@ -11,5 +11,5 @@ ontology:
       color: [255, 0, 0]  # BGR format: Blue
       sam3_prompt: ""  # Reserve class ID 1; lawn_layer only needs grass.
     - name: grass
-      color: [0, 255, 0]  # BGR format: Green
+      color: [0, 0, 255]  # BGR format: Red
       sam3_prompt: grass  # Class ID 2 stays compatible with lawn_layer.
