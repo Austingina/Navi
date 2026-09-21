@@ -10,8 +10,8 @@ fastlio_mapping 与 body->base_link / odom->camera_init 静态 TF；
 
   t=0s   outdoor_localization  —  FAST-LIO + navsat + heading_align + map->odom
                                    + 静态 TF (+ 可选 cupy 高程图)
-  t=0s   semantic_perception   —  草坪语义感知，仅 enable_lawn:=true 时（默认关）。
-                                   必须早于 Nav2：lawn_layer 要先拿到 LabelInfo
+  t=20s  semantic_perception   —  草坪语义感知，enable_lawn:=true 时启动（默认开）。
+                                   延迟加载 TensorRT，避免与定位起栈争抢 GPU
   t=3s   outdoor_nav2          —  Nav2 bringup（需要 localization 先立起 TF）
   t=7s   route_planner         —  campus_nav 路网/路由（send_to_nav2 需 Nav2 就绪）
 
@@ -24,7 +24,8 @@ fastlio_mapping 与 body->base_link / odom->camera_init 静态 TF；
   ros2 launch fast_lio outdoor_bringup_heading_align.launch.py map_odom_source:=ekf
   ros2 launch fast_lio outdoor_bringup_heading_align.launch.py enable_elevation:=false
   ros2 launch fast_lio outdoor_bringup_heading_align.launch.py send_to_nav2:=false
-  ros2 launch fast_lio outdoor_bringup_heading_align.launch.py enable_lawn:=true
+  ros2 launch fast_lio outdoor_bringup_heading_align.launch.py enable_lawn:=false
+  ros2 launch fast_lio outdoor_bringup_heading_align.launch.py semantic_delay:=20.0
 """
 
 import os
@@ -55,6 +56,7 @@ _STALE_PATTERNS = [
     'cloud_to_laserscan/cloud_to_2d_laserscan',
     'navi_semantic_perception/depth_to_color_cloud',
     'navi_semantic_perception/segmentation_trt',
+    'navi_semantic_perception/segmentation_sam3',
 ]
 
 
@@ -129,6 +131,7 @@ def generate_launch_description():
     datum_lon = LaunchConfiguration('datum_lon')
     safety_stop_on_exit = LaunchConfiguration('safety_stop_on_exit')
     enable_lawn = LaunchConfiguration('enable_lawn')
+    semantic_delay = LaunchConfiguration('semantic_delay')
 
     # ---- top-level args (透传给子 launch) ----
     declare_args = [
@@ -162,18 +165,22 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'send_to_nav2', default_value='true',
             description='route_planner: forward campus waypoints to Nav2'),
-        # 草坪语义感知节点（点云 + 掩码 + LabelInfo）。默认关：要烧 GPU(TensorRT)，
-        # 且依赖 camera1 在线（真机相机由外部 robot-sensors.service 提供，本栈不起相机）。
+        # 草坪语义感知节点（点云 + 掩码 + LabelInfo）。依赖 camera1 在线（真机相机由
+        # 外部 robot-sensors.service 提供，本栈不起相机）。与已启用的 lawn_layer 配套默认开。
         # 注意这个开关只管【感知节点】。消费端 local_costmap.lawn_layer.enabled 在
         # param_outdoor_elevation.yaml 里手工改 —— 两边要一起开：只开层不开节点，那层
         # 会因 isClassIdCostMapEmpty() 一直 WARN 刷屏且零效果
         # （semantic_segmentation_layer.cpp:511）；只开节点不开层则纯烧 GPU 不影响导航。
         DeclareLaunchArgument(
-            'enable_lawn', default_value='false',
+            'enable_lawn', default_value='true',
             description='Start lawn semantic perception nodes (needs camera1 + '
-                        'GPU/TensorRT). Off by default. The consuming '
+                        'GPU/TensorRT). On by default. The consuming '
                         'local_costmap.lawn_layer.enabled is set by hand in the '
                         'Nav2 param yaml.'),
+        DeclareLaunchArgument(
+            'semantic_delay', default_value='20.0',
+            description='Delay SAM3 startup to avoid competing with localization '
+                        'and elevation mapping for GPU resources'),
         DeclareLaunchArgument(
             'safety_stop_on_exit', default_value='true',
             description='Publish zero /cmd_vel when this launch is stopped '
@@ -217,15 +224,22 @@ def generate_launch_description():
         }.items(),
     )
 
-    # t=0 —— 草坪语义感知（默认关，enable_lawn:=true 开启）。
-    # 必须早于 Nav2：lawn_layer 只在收到第一帧掩码之前拿到 LabelInfo 才能建起
-    # class->cost 映射（semantic_segmentation_layer.cpp:511-516），晚到就整层静默失效。
+    # 默认 t=20 —— 草坪语义感知。两个 TensorRT 引擎约 1.6 GB，延迟反序列化，避免和
+    # t=0 的 FAST-LIO / elevation_mapping_cupy 争抢 GPU。LabelInfo 使用
+    # TRANSIENT_LOCAL，SAM3 晚于 Nav2 启动仍可建立 class->cost 映射。
     lawn_perception = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
                 get_package_share_directory('navi_semantic_perception'),
                 'launch', 'semantic_perception.launch.py')),
-        launch_arguments={'use_sim_time': use_sim_time}.items(),
+        launch_arguments={
+            'use_sim_time': use_sim_time,
+            'sim': sim,
+        }.items(),
+    )
+    delayed_lawn_perception = TimerAction(
+        period=semantic_delay,
+        actions=[lawn_perception],
         condition=IfCondition(enable_lawn),
     )
 
@@ -272,4 +286,4 @@ def generate_launch_description():
 
     return LaunchDescription(
         declare_args
-        + [safety_stop, localization, lawn_perception, nav2, route_planner])
+        + [safety_stop, localization, delayed_lawn_perception, nav2, route_planner])

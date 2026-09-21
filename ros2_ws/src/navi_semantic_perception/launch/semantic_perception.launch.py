@@ -122,7 +122,6 @@ def generate_launch_description():
                               description='时钟源走 /clock。由上层 bringup 透传，'
                                           '保证掩码/点云与 costmap 同一时间轴'),
         DeclareLaunchArgument('camera_ns', default_value='/camera1/camera1'),
-        DeclareLaunchArgument('use_sim_time', default_value='false', choices=['true', 'false']),
         # sim 与 use_sim_time 分开，同 outdoor_localization.launch.py：use_sim_time 只管
         # 时钟源，sim 管相机硬件 profile（话题名 / 分辨率 / 深度编码 / 外参来源）。
         DeclareLaunchArgument('sim', default_value='false', choices=['true', 'false'],
@@ -133,7 +132,7 @@ def generate_launch_description():
         DeclareLaunchArgument('target_rate', default_value='3.0',
                               description='Input cloud rate; busy SAM3 skips older frames'),
         DeclareLaunchArgument('sam3_model_path', default_value=str(checkpoint_directory()),
-                              description='External directory containing model.safetensors'),
+                              description='Directory containing model.safetensors'),
         DeclareLaunchArgument('sam3_engine_dir',
                               default_value=str(checkpoint_directory() / 'trt_engines'),
                               description='Local SAM3 TensorRT engine directory'),

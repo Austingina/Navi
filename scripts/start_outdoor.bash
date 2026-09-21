@@ -1,6 +1,6 @@
 #! /bin/bash
-# 启动「室外 GPS」栈：定位(heading-align) + Nav2 + campus_nav 路网规划器。
-# 一条 launch 全包（内部已错峰 t=0 定位 / t=3 Nav2 / t=7 路网）。
+# 启动「室外 GPS」栈：定位(heading-align) + Nav2 + campus_nav 路网规划器 + SAM3。
+# 一条 launch 全包（内部错峰 t=0 定位 / t=7 路网 / t=8 Nav2 / t=20 SAM3）。
 #
 # 用法:
 #   ./start_outdoor.bash            # 真实环境（use_sim_time:=false）
