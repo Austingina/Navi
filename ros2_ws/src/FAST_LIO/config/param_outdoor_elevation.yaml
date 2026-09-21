@@ -190,8 +190,8 @@ local_costmap:
         combination_method: 1
         footprint_clearing_enabled: True
         # scan 已做地面感知过滤，高度范围放宽即可（2D 单线，本无高度维度）。
-        min_obstacle_height: -20.0
-        max_obstacle_height: 20.0
+        min_obstacle_height: -200.0
+        max_obstacle_height: 200.0
         observation_sources: lidar_scan
         lidar_scan:
           topic: /livox_scan2
@@ -204,8 +204,8 @@ local_costmap:
           raytrace_min_range: 0.0
           obstacle_max_range: 6.0
           obstacle_min_range: 0.0
-          max_obstacle_height: 20.0
-          min_obstacle_height: -20.0
+          max_obstacle_height: 200.0
+          min_obstacle_height: -200.0
 
       lawn_layer:
         plugin: "semantic_segmentation_layer::SemanticSegmentationLayer"
@@ -298,8 +298,8 @@ global_costmap:
         enabled: True
         combination_method: 1
         footprint_clearing_enabled: True
-        min_obstacle_height: -20.0
-        max_obstacle_height: 20.0
+        min_obstacle_height: -200.0
+        max_obstacle_height: 200.0
         observation_sources: lidar_scan
         lidar_scan:
           topic: /livox_scan2
@@ -312,8 +312,8 @@ global_costmap:
           raytrace_min_range: 0.0
           obstacle_max_range: 8.0
           obstacle_min_range: 0.0
-          max_obstacle_height: 20.0
-          min_obstacle_height: -20.0
+          max_obstacle_height: 200.0
+          min_obstacle_height: -200.0
 
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
@@ -327,7 +327,7 @@ planner_server:
     planner_plugins: ["GridBased"]
     GridBased:
       plugin: "nav2_smac_planner::SmacPlanner2D"
-      tolerance: 1.0
+      tolerance: 3.0
       # 室外无地图：允许把路径规划进未知空间，否则目标在感知范围外会规划失败。
       allow_unknown: true
       # 不降采样：降到 0.2 m 后窄路只剩几格，两侧膨胀一压就判不通，

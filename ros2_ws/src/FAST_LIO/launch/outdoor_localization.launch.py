@@ -246,7 +246,7 @@ def generate_launch_description():
                      'var_scale_status_sbas': 2.0,  # status 1
                      'var_scale_status_fix': 9.0,   # status 0: SINGLE
                      'min_fix_status': 2,
-                     'max_h_var': 4.0,
+                     'max_h_var': 1.0,
                      'max_variance': 4.0,          # var 封顶，防增益趋 1
                      'sustained_offset_sec': 3.0,  # 持续偏移改为限速爬入
                      'bad_gps_hold_sec': 3.0,      # 差解超时 -> 纯 LIO 推算
