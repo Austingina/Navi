@@ -21,4 +21,4 @@ the native Meta API is a separate backend change with additional dependencies.
 Runtime installation: [envs/sam3/README.md](../envs/sam3/README.md). The environment is created inside
 Navi at envs/sam3/.venv. Non-weight model assets are tracked in the ROS package at
 models/sam3 and installed by colcon. The model.safetensors checkpoint and generated ONNX/TensorRT engines are
-stored outside the repository, by default in ~/.cache/navi/sam3/.
+stored in the git-ignored repository directory checkpoints/sam3/ by default.

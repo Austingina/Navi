@@ -1,7 +1,7 @@
 segmentation_sam3:
   ros__parameters:
-    # Environment: <Navi>/envs/sam3/.venv; checkpoint and TensorRT engines are external.
-    model_path: ""       # SAM3_CHECKPOINT_DIR or ~/.cache/navi/sam3
+    # Environment: <Navi>/envs/sam3/.venv; weights/engines are under ignored checkpoints/.
+    model_path: ""       # SAM3_CHECKPOINT_DIR or <Navi>/checkpoints/sam3
     config_path: ""      # installed package: models/sam3
     processor_path: ""   # installed package: models/sam3/processor
     device: cuda

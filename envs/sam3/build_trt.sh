@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Build machine-specific SAM3 engines from the external checkpoint.
+# Build machine-specific SAM3 engines from the repository-local checkpoint.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NAVI_REPO="$(cd "$HERE/../.." && pwd)"
-SAM3_CHECKPOINT_DIR="${SAM3_CHECKPOINT_DIR:-$HOME/.cache/navi/sam3}"
+SAM3_CHECKPOINT_DIR="${SAM3_CHECKPOINT_DIR:-$NAVI_REPO/checkpoints/sam3}"
 SAM3_ENGINE_DIR="${SAM3_ENGINE_DIR:-$SAM3_CHECKPOINT_DIR/trt_engines}"
 SAM3_ONNX_DIR="${SAM3_ONNX_DIR:-$SAM3_CHECKPOINT_DIR/onnx}"
 SAM3_RUNTIME="$HERE/.venv/bin/python"

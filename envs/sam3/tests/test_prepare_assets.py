@@ -1,4 +1,4 @@
-"""Check external checkpoint imports and non-weight assets shipped with Navi."""
+"""Check repository-local checkpoint imports and non-weight assets shipped with Navi."""
 
 import importlib.util
 import json

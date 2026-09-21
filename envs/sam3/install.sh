@@ -3,7 +3,8 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SAM3_CHECKPOINT_DIR="${SAM3_CHECKPOINT_DIR:-$HOME/.cache/navi/sam3}"
+NAVI_REPO="$(cd "$HERE/../.." && pwd)"
+SAM3_CHECKPOINT_DIR="${SAM3_CHECKPOINT_DIR:-$NAVI_REPO/checkpoints/sam3}"
 SAM3_PYTHON="${SAM3_PYTHON:-/usr/bin/python3}"
 SAM3_TORCH_INDEX_URL="${SAM3_TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu130}"
 SAM3_TORCH_VERSION="${SAM3_TORCH_VERSION:-2.13.0}"
@@ -20,12 +21,12 @@ while [[ $# -gt 0 ]]; do
             cat <<'HELP'
 Usage: bash envs/sam3/install.sh [--env-only | --from-local /path/to/sam3-assets]
 
-Default: create <Navi>/envs/sam3/.venv; keep weights in ~/.cache/navi/sam3.
+Default: create <Navi>/envs/sam3/.venv; keep weights in <Navi>/checkpoints/sam3.
 --env-only    Install/check Python dependencies without downloading model weights.
 --from-local  Import an existing model.safetensors file or deployment directory.
 
 Environment:
-  SAM3_CHECKPOINT_DIR   External weight directory (default: ~/.cache/navi/sam3)
+  SAM3_CHECKPOINT_DIR   Local weight directory (default: <Navi>/checkpoints/sam3)
   SAM3_PYTHON           ROS-compatible Python (default: /usr/bin/python3)
   SAM3_TORCH_INDEX_URL  PyTorch wheel index (default: official cu130 for Thor)
   SAM3_TORCH_VERSION    Version installed when CUDA torch is missing (default: 2.13.0)

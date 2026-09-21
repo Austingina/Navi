@@ -7,4 +7,4 @@ https://huggingface.co/facebook/sam3. Its license is preserved in LICENSE.
 
 The pinned checkpoint source is recorded in envs/sam3/prepare_assets.py. The
 model.safetensors file is downloaded or imported separately into
-~/.cache/navi/sam3/ by default; it must not be committed here.
+<Navi>/checkpoints/sam3/ by default; the repository root .gitignore excludes it.

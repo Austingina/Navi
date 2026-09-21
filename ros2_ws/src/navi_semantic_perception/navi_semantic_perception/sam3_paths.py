@@ -1,12 +1,24 @@
-"""Resolve in-repository SAM3 runtime and external checkpoint locations."""
+"""Resolve in-repository SAM3 runtime and checkpoint locations."""
 
 import os
 from pathlib import Path
 
 
+def repository_root():
+    """Find the Navi checkout from an explicit setting or this source/install path."""
+    for name in ('NAVI_ROOT', 'NAVI_ROOT_DIR'):
+        if os.environ.get(name):
+            return Path(os.environ[name]).expanduser()
+    for root in Path(__file__).resolve().parents:
+        if (root / 'envs/sam3/install.sh').is_file():
+            return root
+    raise RuntimeError('Cannot locate Navi repository; set NAVI_ROOT or NAVI_ROOT_DIR')
+
+
 def checkpoint_directory():
-    """Return the external checkpoint directory, optionally overridden by deployment."""
-    return Path(os.environ.get('SAM3_CHECKPOINT_DIR', '~/.cache/navi/sam3')).expanduser()
+    """Return the ignored repository-local checkpoint directory."""
+    override = os.environ.get('SAM3_CHECKPOINT_DIR')
+    return Path(override).expanduser() if override else repository_root() / 'checkpoints/sam3'
 
 
 def runtime_python(package_share):

@@ -5,6 +5,8 @@ ros2_ws/install
 logs/
 analysis/
 mapdata/
+# Local SAM3 weights and generated ONNX/TensorRT engines (about 8 GB).
+checkpoints/sam3/
 __pycache__/
 AGENTS.md
 CLAUDE.md

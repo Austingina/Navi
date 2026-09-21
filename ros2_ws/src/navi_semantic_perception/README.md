@@ -28,8 +28,8 @@ with segmentation."。也就是说**点 N 必须等于像素 N**。
 
 SAM3 源码和工具保存在 `sam3/`，运行环境安装到仓库内的
 `envs/sam3/.venv`。模型配置、tokenizer 和预处理参数随本 ROS 包提交并安装；
-checkpoint 位于 `~/.cache/navi/sam3/model.safetensors`，生成的 TensorRT 引擎位于
-`~/.cache/navi/sam3/trt_engines/`，均不提交 Git。
+checkpoint 位于 `<Navi>/checkpoints/sam3/model.safetensors`，生成的 TensorRT 引擎位于
+`<Navi>/checkpoints/sam3/trt_engines/`，由根目录 `.gitignore` 排除，不提交 Git。
 
 换机器 clone 后按 [SAM3 部署步骤](../../../envs/sam3/README.md)执行
 `bash envs/sam3/install.sh`，装上 `envs/sam3/requirements-export.txt` 的导出依赖，
@@ -92,8 +92,8 @@ LabelInfo 使用 RELIABLE + TRANSIENT_LOCAL，晚启动的 Nav2 也可收到类�
 | launch 参数 | 默认 | 说明 |
 |---|---|---|
 | `segmentation` | `sam3_trt` | `sam3_trt` / `sam3`（PyTorch）/ `trt`（旧模型）/ `none` |
-| `sam3_engine_dir` | `~/.cache/navi/sam3/trt_engines` | 本机构建的 SAM3 引擎目录 |
-| `sam3_model_path` | `~/.cache/navi/sam3` | checkpoint 目录；也支持环境变量 `SAM3_CHECKPOINT_DIR` |
+| `sam3_engine_dir` | `<Navi>/checkpoints/sam3/trt_engines` | 本机构建的 SAM3 引擎目录 |
+| `sam3_model_path` | `<Navi>/checkpoints/sam3` | checkpoint 目录；也支持环境变量 `SAM3_CHECKPOINT_DIR` |
 | `sam3_python` | 空 | 自动定位 `<Navi>/envs/sam3/.venv/bin/python` |
 | `sam3_device` | `cuda` | TensorRT 仅支持 CUDA；PyTorch 也支持 `cpu` |
 | `target_rate` | `3.0` | 输入点云限速；忙时只保留最新待处理帧 |

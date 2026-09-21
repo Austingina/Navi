@@ -1,4 +1,4 @@
-"""Prepare external SAM3 checkpoint weights using model assets tracked in Navi."""
+"""Prepare local SAM3 checkpoint weights using model assets tracked in Navi."""
 
 import argparse
 import json
@@ -11,11 +11,12 @@ REPO_ID = 'facebook/sam3'
 REVISION = '3c879f39826c281e95690f02c7821c4de09afae7'
 ASSET_DIR = (Path(__file__).resolve().parents[2]
              / 'ros2_ws/src/navi_semantic_perception/models/sam3')
+DEFAULT_CHECKPOINT_DIR = Path(__file__).resolve().parents[2] / 'checkpoints/sam3'
 
 
 def checkpoint_directory():
-    """Use the same external weight location as the ROS node."""
-    return Path(os.environ.get('SAM3_CHECKPOINT_DIR', '~/.cache/navi/sam3')).expanduser()
+    """Use the same repository-local weight location as the ROS node."""
+    return Path(os.environ.get('SAM3_CHECKPOINT_DIR', DEFAULT_CHECKPOINT_DIR)).expanduser()
 
 
 def require_files(directory, names):

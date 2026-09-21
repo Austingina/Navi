@@ -1,7 +1,8 @@
 # SAM3 仓库布局与部署
 
 SAM3 的源码、工具、配置、tokenizer 和安装脚本都在 Navi 中。运行不依赖用户家目录下
-另一份 SAM3 checkout。checkpoint 权重和本机生成的 ONNX/TensorRT 引擎放在仓库外。
+另一份 SAM3 checkout。checkpoint 权重和本机生成的 ONNX/TensorRT 引擎放在仓库内、
+但由 `.gitignore` 排除的 `checkpoints/sam3/` 中。
 
 ```text
 Navi/
@@ -10,13 +11,13 @@ Navi/
 │   ├── install.sh / requirements.txt    # 可复现的环境安装入口
 │   ├── prepare_assets.py               # 权重下载/导入/校验
 │   └── .venv/                          # 本机环境，安装生成，不提交 Git
+├── checkpoints/sam3/                   # 权重、ONNX、TensorRT 引擎，不提交 Git
+│   └── model.safetensors               # 唯一需要单独获取的模型权重
 └── ros2_ws/src/navi_semantic_perception/
     ├── navi_semantic_perception/        # SAM3 推理适配器和 ROS 节点
     └── models/sam3/                     # Git 跟踪，colcon 安装
         ├── config.json / LICENSE
         └── processor/                  # tokenizer + 预处理配置
-
-~/.cache/navi/sam3/model.safetensors      # 唯一需要单独获取的模型权重
 ```
 
 默认导航后端使用从 Transformers `Sam3Model` 导出的 TensorRT 引擎，原始 Meta 实现保存在
@@ -28,7 +29,7 @@ Navi/
 前提：Ubuntu 24.04 / ROS 2 Jazzy / Python 3.12，目标机器已安装相应 NVIDIA 驱动、
 `python3-venv`，以及与驱动匹配的系统 TensorRT —— `.venv` 以 `--system-site-packages`
 创建，直接复用系统的 `tensorrt` Python 包，不单独安装。磁盘需为
-`~/.cache/navi/sam3` 预留约 8 GB（权重 3.3 GB + ONNX 中间产物 3.2 GB + 引擎 1.6 GB），
+`<Navi>/checkpoints/sam3` 预留约 8 GB（权重 3.3 GB + ONNX 中间产物 3.2 GB + 引擎 1.6 GB），
 `envs/sam3/.venv` 另需约 5 GB。
 
 从零到可用共五步，前三步在 Navi 根目录执行，后两步的细节见下面各节：
@@ -101,8 +102,8 @@ envs/sam3/.venv/bin/python -m pip install -r envs/sam3/requirements-export.txt
 bash envs/sam3/build_trt.sh
 ```
 
-脚本从仓库配置和外部 checkpoint 导出两个 ONNX 图，再在当前 GPU 上构建 FP16 引擎。
-默认输出为 `~/.cache/navi/sam3/onnx/` 和 `~/.cache/navi/sam3/trt_engines/`。
+脚本从仓库配置和本地 checkpoint 导出两个 ONNX 图，再在当前 GPU 上构建 FP16 引擎。
+默认输出为 `<Navi>/checkpoints/sam3/onnx/` 和 `<Navi>/checkpoints/sam3/trt_engines/`。
 可用 `SAM3_CHECKPOINT_DIR`、`SAM3_ONNX_DIR`、`SAM3_ENGINE_DIR` 覆盖目录。
 已有 ONNX 时可用 `--skip-export`。检测器按单提示词构建，多个提示词顺序执行并复用视觉特征。
 换 GPU 或 TensorRT 版本后重新构建；不要将旧机器的引擎直接作为新机器部署产物。

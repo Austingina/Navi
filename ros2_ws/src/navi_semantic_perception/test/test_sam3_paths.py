@@ -33,9 +33,10 @@ def test_explicit_repo_root_supports_detached_ros_install(tmp_path, monkeypatch)
         tmp_path / 'envs/sam3/.venv/bin/python')
 
 
-def test_default_checkpoint_is_external(monkeypatch):
+def test_default_checkpoint_is_in_repository(monkeypatch):
     monkeypatch.delenv('SAM3_CHECKPOINT_DIR', raising=False)
-    assert checkpoint_directory() == Path('~/.cache/navi/sam3').expanduser()
+    monkeypatch.setenv('NAVI_ROOT', '/tmp/navi-checkout')
+    assert checkpoint_directory() == Path('/tmp/navi-checkout/checkpoints/sam3')
 
 
 def test_checkpoint_override(monkeypatch, tmp_path):
