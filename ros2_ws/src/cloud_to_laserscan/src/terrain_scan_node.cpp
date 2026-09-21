@@ -163,6 +163,12 @@ public:
     fallback_on_unknown_ = declare_parameter<bool>("fallback_on_unknown_elevation", true);
     fallback_min_height_ = declare_parameter<double>("fallback_min_height", 0.05);
     fallback_max_height_ = declare_parameter<double>("fallback_max_height", 1.6);
+    // 近场地面外推：ground 未知时，优先沿"点 -> 车"方向收集洞外的有效 ground，
+    // 线性拟合 h=a+b*d 外推出该点的地面高度（cliffRefHeight 同款数学，悬崖链已
+    // 实测验证：坡地误报 749~795 格/帧清零、灵敏度不丢）。外推失败才退回
+    // fallback_on_unknown_elevation 的脚底高度带。这是 1.5m 内盲区（雷达下视
+    // 打不到地面）里"人贴近车"能被检出的关键 —— 不依赖水平面假设，跟随坡度。
+    near_ground_extrapolate_ = declare_parameter<bool>("near_ground_extrapolate", true);
 
     // ---- 坡度 -> 分级代价 ---------------------------------------------------
     // slope <= free_deg           -> 代价 0（视为平地）
@@ -313,12 +319,16 @@ private:
   //
   // 除了有效 slope_cost, 还会为"观测到是空的"格子发 cost=0. 这是必需的:
   // TerrainLayer 只遍历本点云里的点, 没出现的格子它一律不碰、旧值永久保留
-  // (见 terrain_layer.cpp cloudCallback 的循环). 而 NaN 有两种完全不同的含义:
-  //   * 该格有高程数据但坡度不可信(物体/边界) -> 我们确实不知道地形, 不能清
-  //   * 该格连高程数据都没有, 且在车附近可信半径内 -> 看过了, 那儿什么都没有,
-  //     这是一次有效的"清除观测"
-  // 少了后者, 人走开后高程图虽然清了, 那些格子仍然进不了点云, 之前写下的
-  // lethal 就永久留在 costmap 上 —— 实测就是这个现象.
+  // (见 terrain_layer.cpp cloudCallback 的循环). 所以 slope_cost 为 NaN 的格子,
+  // 只要在车附近的可信半径内, 就一律发 0 —— 两种 NaN 都算"看过了那儿没东西":
+  //   * 连高程数据都没有            -> 射线扫过、什么都没打到;
+  //   * 有高程但坡度 NaN(差分边界)  -> 该格被观测到了, 只是中心差分窗口压到
+  //     数据边界算不出梯度, 这不构成"那里可能有障碍"的证据。
+  // 后者曾被 skip(理由是"确实不知道地形"), 代价是这些格子永远不进点云, 于是
+  // 之前写下的 lethal 永久留在 costmap 上: 人走开、高程图都清了, 那块还堵着。
+  // 实测残留成片出现在"真空区与高程图交界"(1.5~2.0 m 环带 193 格) —— 交界格
+  // 自己有高程而邻居没有, 差分必然 NaN, 正好落进当年被 skip 的那一类。
+  // 漏判风险由另两条链兜住: 真障碍走 obstacle_layer(scan), 悬崖在下面优先判 100.
   //
   // 负障碍(下沉台阶/悬崖)不会因此变危险: 空洞边缘的上沿格子有数据、会照常算出
   // 陡坡判 lethal, 车要进空洞必须先穿过那圈 lethal.
@@ -379,9 +389,7 @@ private:
         out_cost = c;
         grid.getPosition(idx, pos);
       } else {
-        // 只有"连高程都没有"且在可信半径内的格子, 才算观测到空 -> 发 0 去清除.
-        // 有高程但坡度 NaN(物体/差分边界) 的格子跳过: 那是真的不知道.
-        if (!clear_empty || std::isfinite(elev(idx(0), idx(1)))) continue;
+        if (!clear_empty) continue;
         grid.getPosition(idx, pos);
         const double dx = pos.x() - x_robot;
         const double dy = pos.y() - y_robot;
@@ -930,11 +938,18 @@ private:
     }
 
     // 脚底高度 z_foot = base_link 原点在 grid(odom) 下的 z,由上面两个变换复合反解,
-    // 不再单独查一次 TF(理由同上)。
+    // 不再单独查一次 TF(理由同上)。x_foot/y_foot 同时解出,供近场地面外推用。
     const Eigen::Matrix4f m_base_to_grid =
       (toMatrix(t_body_to_base) * toMatrix(t_body_to_grid).inverse()).inverse();
     const bool have_foot = true;
+    const double x_foot = static_cast<double>(m_base_to_grid(0, 3));
+    const double y_foot = static_cast<double>(m_base_to_grid(1, 3));
     const double z_foot = static_cast<double>(m_base_to_grid(2, 3));
+    // 近场外推的起点: 车脚下格。车不在 grid 内时外推整体禁用(退兜底)。
+    grid_map::Index foot_idx(0, 0);
+    const bool have_foot_idx =
+      near_ground_extrapolate_ &&
+      grid->getIndex(grid_map::Position(x_foot, y_foot), foot_idx);
 
     sensor_msgs::msg::PointCloud2 cloud_in_grid;
     tf2::doTransform(*cloud_msg, cloud_in_grid, t_body_to_grid);
@@ -949,10 +964,12 @@ private:
 
       double ground = 0.0;
       bool have_ground = false;
+      grid_map::Index idx;
+      bool have_idx = false;
       const grid_map::Position pos(p.x, p.y);
       if (grid->isInside(pos)) {
-        grid_map::Index idx;
         if (grid->getIndex(pos, idx)) {
+          have_idx = true;
           ground = grid->at("ground", idx);
           have_ground = std::isfinite(ground);
         }
@@ -963,10 +980,24 @@ private:
         if (h <= obstacle_min_height_) continue;    // 贴地/地面 -> 丢
         if (h > obstacle_max_height_) continue;     // 过高(天花板等) -> 丢
       } else {
-        // 地面未知: 回退到脚底高度带(平地够用). 拿不到脚底就直接丢.
-        if (!fallback_on_unknown_ || !have_foot) continue;
-        const double h = p.z - z_foot;
-        if (h < fallback_min_height_ || h > fallback_max_height_) continue;
+        // 地面未知: 优先坡面外推补一个地面参照(跟随坡度, 见构造函数的参数说明),
+        // 外推失败才退回脚底高度带(平地够用). 都拿不到就直接丢.
+        double g_ref = std::numeric_limits<double>::quiet_NaN();
+        if (have_foot_idx && have_idx) {
+          const double d_p = std::hypot(p.x - x_foot, p.y - y_foot);
+          g_ref = cliffRefHeight(*grid, (*grid)["ground"], idx, foot_idx,
+                                 x_foot, y_foot, d_p);
+        }
+        if (std::isfinite(g_ref)) {
+          const double h = p.z - g_ref;             // 相对外推地面高度
+          if (h <= obstacle_min_height_) continue;  // 与正常路径同一判据
+          if (h > obstacle_max_height_) continue;
+        } else if (fallback_on_unknown_ && have_foot) {
+          const double h = p.z - z_foot;
+          if (h < fallback_min_height_ || h > fallback_max_height_) continue;
+        } else {
+          continue;
+        }
       }
       survivors->points.push_back(p);
     }
@@ -1051,6 +1082,7 @@ private:
   double obstacle_min_height_, obstacle_max_height_;
   bool fallback_on_unknown_;
   double fallback_min_height_, fallback_max_height_;
+  bool near_ground_extrapolate_;
   bool slope_enable_;
   int slope_window_;
   double slope_object_height_, slope_terrain_band_;

@@ -193,7 +193,12 @@ def test_backend_selects_factory_and_default_asset_directory(monkeypatch, backen
         if backend == 'tensorrt':
             expected += '/trt_engines'
         assert captured['model_path'] == expected
-        assert captured['prompts'] == [(2, 'grass')]
+        # Prompts come from the installed ontology. Assert the contract rather
+        # than the class list, which grows: an empty sam3_prompt reserves a class
+        # ID without querying it, so sidewalk (ID 1) must stay out.
+        assert (2, 'grass') in captured['prompts']
+        assert all(text.strip() for _, text in captured['prompts'])
+        assert all(class_id != 1 for class_id, _ in captured['prompts'])
     finally:
         if instance is not None:
             instance.destroy_node()

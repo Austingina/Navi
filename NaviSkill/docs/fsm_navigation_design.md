@@ -1,4 +1,4 @@
-# 多模态导航 FSM 设计文档（SLAM / GNSS / VLN）
+# 多模式导航 FSM 设计文档（SLAM / GNSS / VLN）
 
 > 状态：设计草案（Draft）
 > 适用范围：`NaviSkill/server.py` 及其依赖的 `nav_node.py` / `map_manager.py`，以及

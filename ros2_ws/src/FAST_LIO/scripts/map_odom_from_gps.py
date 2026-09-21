@@ -66,6 +66,58 @@ with the previous defaults (r from a 2 cm RTK sigma, q=0.05, gate=5 sigma), a
 Raising r alone does not fix this (still 2.26 m in one step); the rate limit
 does (0.015 m per cycle at 0.3 m/s and 20 Hz).
 
+False fixes (why none of the checks above can see them)
+------------------------------------------------------
+An RTK fixed solution works by resolving the carrier-phase integer ambiguity
+N. Under multipath the solver can resolve it to the *wrong* integer: position
+is then off by a geometric combination of wavelengths (19 cm on L1), so
+decimetres to metres, while the receiver keeps reporting a 2 cm sigma because
+its error model assumes N is correct. No amount of trust policy catches this
+-- a false fix is not bad data, it is a self-consistent wrong answer, and it
+passes min_fix_status, max_h_var and the variance floor untouched.
+
+What does give it away is that a wrong N stays *constant* while the fix
+holds, so it cancels out of position differences. A false fix is a square
+wave: one step in when the solver latches the wrong N, a plateau where the
+absolute position is off but increments are still correct, one step back out
+when it re-resolves. Only the two edges are observable at all.
+
+Hence step detection compares the GPS increment against the LIO increment
+over one measurement interval. LIO drift accumulates slowly (0.01-0.1 m/s of
+mismatch); a solution step dumps metres into a single 0.1 s epoch, i.e. tens
+of m/s. Two to three orders of magnitude apart, which is why the threshold
+is uncritical -- it only has to sit between them.
+
+A step on its own must not condemn a fix, though. The identical edge appears
+when a long PSRDIFF stretch finally fixes: the metres of LIO drift that piled
+up meanwhile get corrected at once, and that correction is both real and
+wanted. The two cases differ in whether the *reported sigma* jumped with the
+position -- a genuine recovery arrives with the solution mode improving by
+orders of magnitude, a false fix goes on claiming the same centimetres it
+claimed before the step. That ratio is the discriminator (step_sigma_ratio),
+and it must be computed on the receiver's raw variance, not on the scaled one
+the filter acts on, because gps_variance_floor deliberately compresses the
+very range being measured.
+
+Once a step is condemned, position fusing stops for step_distrust_sec and the
+filter dead-reckons on LIO. Rejecting outright rather than leaning on the
+gate is deliberate: the gate cannot see an offset smaller than itself and
+gps_variance_floor pins it near 2.5 m, so every sub-gate false fix used to be
+fused whole. Dropping the plateau costs nothing -- its increments are good
+but LIO already supplies those, and its absolute position is the one thing
+known to be wrong.
+
+The hold ends when the receiver re-resolves, recognised as a step cancelling
+the one being held against. That comparison is made against the held offset
+rather than against the estimate, because by then the estimate has
+dead-reckoned away from where the hold began: judged against it, the trailing
+edge reads backwards as soon as LIO has drifted past half the offset, which
+condemns the recovery and strands the filter on a stale position. If no
+cancelling step arrives the hold just expires and the sustained-offset escape
+takes over as before, so step_distrust_sec bounds how long a plateau can be
+ridden out and one that outlasts it degrades to the old behaviour rather than
+to anything worse.
+
 Inputs:
     /odometry/gps (nav_msgs/Odometry)      -- robot position in map (from navsat)
     /gps/fix (sensor_msgs/NavSatFix)       -- solution quality always; position
@@ -162,7 +214,28 @@ class MapOdomFromGps(Node):
         # A gate rejection that persists this long with a consistent innovation
         # sign is a real offset, not a spike: accept it and let the rate limit
         # ease it in. 0 disables (gate rejects forever until variance grows).
+        # Unreachable during a false-fix hold, which rejects further upstream:
+        # a false fix produces exactly this signature and would be ramped in.
         self.declare_parameter('sustained_offset_sec', 3.0)
+        # --- False-fix detection (see module docstring) ----------------------
+        # Mismatch speed between the GPS and LIO increments above which the
+        # position is taken to have stepped rather than moved. LIO drift sits
+        # near 0.1 m/s and a metre-class step at 10 Hz is tens of m/s, so this
+        # only has to clear the jitter from GPS/timer phase misalignment (up to
+        # ~1 m/s at speed). 0 disables the detector entirely.
+        self.declare_parameter('step_detect_speed', 3.0)
+        # A step is excused when the receiver's raw sigma improved by at least
+        # this factor, i.e. the mode genuinely recovered (PSRDIFF 1.5 m -> INT
+        # 0.03 m is 50x) rather than jumping at constant claimed accuracy
+        # (false fix, 2 cm -> 2 cm is 1x).
+        self.declare_parameter('step_sigma_ratio', 5.0)
+        # How long an unexcused step suspends position fusing. Ends early when
+        # the receiver re-resolves. Must outlast the typical false-fix plateau,
+        # or it expires mid-plateau and the sustained-offset escape ramps the
+        # wrong position in after all -- but not by more than needed, since a
+        # misjudged step costs this long on dead reckoning. 0 disables the
+        # detector, as does step_detect_speed.
+        self.declare_parameter('step_distrust_sec', 25.0)
         # How long to keep trying to re-seed the estimate once the heading lock
         # arrives, before giving up and easing the offset in the old way.
         # Until gps_heading_align locks, yaw_offset is 0 while the truth can be
@@ -205,6 +278,11 @@ class MapOdomFromGps(Node):
         self.max_h_var = float(self.get_parameter('max_h_var').value)
         self.max_var = float(self.get_parameter('max_variance').value)
         self.sustained_sec = float(self.get_parameter('sustained_offset_sec').value)
+        self.step_speed = float(self.get_parameter('step_detect_speed').value)
+        self.step_sigma_ratio = float(
+            self.get_parameter('step_sigma_ratio').value)
+        self.step_distrust_sec = float(
+            self.get_parameter('step_distrust_sec').value)
         self.reseed_window = float(
             self.get_parameter('reseed_on_heading_lock_sec').value)
         self.bad_hold_sec = float(self.get_parameter('bad_gps_hold_sec').value)
@@ -267,6 +345,18 @@ class MapOdomFromGps(Node):
         # Per-axis gate rejection tracking, for the sustained-offset escape.
         self.rej = {'x': {'since': None, 'sign': 0, 'count': 0},
                     'y': {'since': None, 'sign': 0, 'count': 0}}
+
+        # Solution-step detection. _lio_accum holds the map-frame LIO
+        # displacement since the last fused measurement; the GPS increment is
+        # compared against it. _last_raw_h_var is the receiver's own variance,
+        # deliberately not the scaled one (see module docstring).
+        self._lio_accum = [0.0, 0.0]
+        self._last_z = None
+        self._last_z_t = None
+        self._last_raw_h_var = None
+        self.step_since = None
+        self.step_vec = (0.0, 0.0)
+        self.step_count = 0
 
         self.lio_prev = None     # last LIO position used for prediction
         self.last_time = None
@@ -610,6 +700,9 @@ class MapOdomFromGps(Node):
         # correction below is rate-limited.
         self.pub_x += mdx
         self.pub_y += mdy
+        # Same delta the step detector weighs the next GPS increment against.
+        self._lio_accum[0] += mdx
+        self._lio_accum[1] += mdy
         self.lio_prev = lio
         self.var_x = min(self.var_x + self.q * dt, self.max_var)
         self.var_y = min(self.var_y + self.q * dt, self.max_var)
@@ -628,6 +721,7 @@ class MapOdomFromGps(Node):
                     f'GPS variance {max(rx, ry):.1f} > max_gps_variance '
                     f'{self.r_max}; skipping update', throttle_duration_sec=5.0)
             else:
+                self._detect_solution_step(zx, zy, now_t)
                 self.last_r = 0.5 * (rx + ry)
                 ok_x = self._kf_update_axis('x', zx, rx, now_t)
                 ok_y = self._kf_update_axis('y', zy, ry, now_t)
@@ -640,6 +734,102 @@ class MapOdomFromGps(Node):
         self._apply_rate_limit(dt)
         self._broadcast_from_state(lio)
 
+    def _detect_solution_step(self, zx, zy, now_t) -> None:
+        """Flag a GPS position step that no gain in solution quality explains.
+
+        Runs once per fused measurement, ahead of the KF update, so a hold it
+        raises or releases takes effect on that same measurement.
+        """
+        prev_z, prev_t = self._last_z, self._last_z_t
+        prev_h_var = self._last_raw_h_var
+        lio_dx, lio_dy = self._lio_accum
+        self._last_z = (zx, zy)
+        self._last_z_t = now_t
+        self._last_raw_h_var = self.fix_h_var
+        self._lio_accum = [0.0, 0.0]
+
+        if (self.step_speed <= 0.0 or self.step_distrust_sec <= 0.0
+                or prev_z is None or prev_t is None):
+            return
+        dt = now_t - prev_t
+        # On a gap (dead-reckon hold, dropped fixes) _lio_accum spans motion the
+        # GPS increment cannot be checked against, so skip rather than read the
+        # accumulated mismatch as a step.
+        if dt <= 0.0 or dt > 1.0:
+            return
+
+        step_dx = zx - prev_z[0] - lio_dx
+        step_dy = zy - prev_z[1] - lio_dy
+        step = math.hypot(step_dx, step_dy)
+        if step / dt <= self.step_speed:
+            return
+
+        if self._step_distrusted(now_t):
+            # Already holding, so the reference for "is the fix coming back" is
+            # the offset being held against -- not the estimate, which has been
+            # dead-reckoning away from where the hold began and would read the
+            # trailing edge exactly backwards once LIO has drifted far enough.
+            held = math.hypot(*self.step_vec)
+            if math.hypot(step_dx + self.step_vec[0],
+                          step_dy + self.step_vec[1]) < 0.5 * held:
+                self._accept_step(f'stepped {step:.2f} m, undoing the '
+                                  f'{held:.2f} m it was held for')
+                return
+            # Stepped somewhere else again. Extend the hold and accumulate, so
+            # the trailing edge still cancels whenever it comes.
+            self.step_since = now_t
+            self.step_vec = (self.step_vec[0] + step_dx,
+                             self.step_vec[1] + step_dy)
+            self.step_count += 1
+            self.get_logger().warn(
+                f'GPS stepped another {step:.2f} m while held; offset now '
+                f'{math.hypot(*self.step_vec):.2f} m')
+            return
+
+        # Not holding. A step that leaves the fix *closer* to the estimate is
+        # the receiver arriving at a position we already had right, so it is
+        # the old solution that was wrong, not this one.
+        d_now = math.hypot(zx - self.px, zy - self.py)
+        d_no_step = math.hypot(zx - step_dx - self.px, zy - step_dy - self.py)
+        if d_now < d_no_step:
+            self._accept_step(f'stepped {step:.2f} m toward the estimate')
+            return
+
+        # It stepped away. Did the receiver's own accuracy claim improve enough
+        # to account for it? sqrt because what is stored is a variance.
+        ratio = 0.0
+        if (prev_h_var is not None and self.fix_h_var is not None
+                and prev_h_var > 0.0 and self.fix_h_var > 0.0):
+            ratio = math.sqrt(prev_h_var / self.fix_h_var)
+        if ratio >= self.step_sigma_ratio:
+            self._accept_step(
+                f'stepped {step:.2f} m as sigma improved {ratio:.0f}x')
+            return
+
+        self.step_since = now_t
+        self.step_vec = (step_dx, step_dy)
+        self.step_count += 1
+        self.get_logger().warn(
+            f'GPS stepped {step:.2f} m ({step / dt:.0f} m/s vs LIO) at '
+            f'unchanged accuracy (sigma {ratio:.1f}x): suspected false fix, '
+            f'suspending position fusing for {self.step_distrust_sec:.0f}s')
+
+    def _accept_step(self, what: str) -> None:
+        """Take a step as legitimate, releasing any hold it interrupts."""
+        held = self.step_since is not None
+        self.step_since = None
+        self.step_vec = (0.0, 0.0)
+        self.get_logger().info(
+            f'GPS {what}: accepting, '
+            + ('false-fix hold released' if held
+               else f'easing in at {self.max_corr_speed} m/s'))
+
+    def _step_distrusted(self, now_t) -> bool:
+        """True while a suspected false fix should keep fusing suspended."""
+        return (self.step_since is not None
+                and self.step_distrust_sec > 0.0
+                and (now_t - self.step_since) < self.step_distrust_sec)
+
     def _kf_update_axis(self, axis, z, r, now_t) -> bool:
         """Standard scalar KF update. Returns True if the fix was accepted."""
         if axis == 'x':
@@ -651,6 +841,19 @@ class MapOdomFromGps(Node):
         self.last_innov = innov
         rj = self.rej[axis]
 
+        if self._step_distrusted(now_t):
+            # Hold: the fix carries a known wrong offset, so its absolute
+            # position is worthless until the receiver re-resolves. Its
+            # increments are still good but LIO already supplies those, so
+            # there is nothing left here worth fusing -- dead-reckon instead.
+            # This has to come before the gate, which cannot see an offset
+            # smaller than itself (gps_variance_floor holds it near 2.5 m).
+            self.get_logger().warn(
+                f'GPS {axis} held off (innov={innov:.2f}): suspected false fix '
+                f'{now_t - self.step_since:.0f}s ago',
+                throttle_duration_sec=5.0)
+            return False
+
         if self.gate > 0.0 and s > 0.0 and (innov * innov) > (self.gate * self.gate) * s:
             sign = 1 if innov > 0.0 else -1
             if rj['since'] is None or rj['sign'] != sign:
@@ -659,6 +862,15 @@ class MapOdomFromGps(Node):
                 rj['count'] += 1
             sustained = (self.sustained_sec > 0.0
                          and (now_t - rj['since']) >= self.sustained_sec)
+            if sustained and self._step_distrusted(now_t):
+                # Persistence alone cannot tell a false fix from LIO drift --
+                # both hold a steady offset. The step that opened this offset
+                # can, and it said false fix, so go on rejecting.
+                self.get_logger().warn(
+                    f'GPS {axis} offset {innov:.2f} m not accepted: arrived as '
+                    f'a solution step {now_t - self.step_since:.0f}s ago',
+                    throttle_duration_sec=5.0)
+                return False
             if not sustained:
                 self.get_logger().warn(
                     f'GPS {axis} rejected (innov={innov:.2f}, '
@@ -766,6 +978,8 @@ class MapOdomFromGps(Node):
             'var_y': round(self.var_y, 4),
             'reject_x': self.rej['x']['count'],
             'reject_y': self.rej['y']['count'],
+            'steps': self.step_count,
+            'step_hold': self._step_distrusted(self._now()),
             'correction_backlog': round(
                 math.hypot(self.px - self.pub_x, self.py - self.pub_y), 3),
             'yaw_offset_deg': round(math.degrees(self.yaw_offset), 2),

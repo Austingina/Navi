@@ -118,6 +118,9 @@ def _nodes(context):
 def generate_launch_description():
     """Select SAM3 TensorRT by default, using the repository SAM3 environment."""
     return LaunchDescription([
+        DeclareLaunchArgument('use_sim_time', default_value='false',
+                              description='时钟源走 /clock。由上层 bringup 透传，'
+                                          '保证掩码/点云与 costmap 同一时间轴'),
         DeclareLaunchArgument('camera_ns', default_value='/camera1/camera1'),
         DeclareLaunchArgument('use_sim_time', default_value='false', choices=['true', 'false']),
         # sim 与 use_sim_time 分开，同 outdoor_localization.launch.py：use_sim_time 只管
