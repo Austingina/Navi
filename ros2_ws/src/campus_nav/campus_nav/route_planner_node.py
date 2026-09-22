@@ -543,6 +543,13 @@ class RoutePlanner(Node):
             "nav_waypoint_markers_topic", "campus_nav_waypoint_markers"
         )
         self.declare_parameter("nav_waypoint_spacing_m", 10.0)
+        # Only these OSM highway types are motor roads for lateral waypoint
+        # policy. Pedestrian ways are deliberately excluded.
+        self.declare_parameter(
+            "road_right_offset_highways",
+            ["service", "residential", "unclassified", "tertiary", "tertiary_link"],
+        )
+        self.declare_parameter("road_right_offset_m", 0.0)
         # Sphere diameter (m) of the RViz route waypoint markers. Labels and z
         # offsets scale with it. Patrol waypoints keep their own larger size.
         self.declare_parameter("nav_waypoint_marker_size_m", 0.8)
@@ -1819,9 +1826,55 @@ class RoutePlanner(Node):
         prefix = list(lonlat_path[:start_idx])
         road_part = lonlat_path[start_idx:end_idx + 1]
         suffix = list(lonlat_path[end_idx + 1:])
-        out = prefix + self._densify(road_part, step_m) + suffix
+        dense_road = self._densify(road_part, step_m)
+        offset_m = float(self.get_parameter("road_right_offset_m").value)
+        motor_highways = set(
+            self.get_parameter("road_right_offset_highways").value
+        )
+        if abs(offset_m) > 1e-6 and len(dense_road) >= 2:
+            selected = [
+                self.graph.highway_at(lon, lat) in motor_highways
+                for lon, lat in dense_road
+            ]
+            dense_road = self._offset_selected_route_right(
+                dense_road, offset_m, selected
+            )
+        out = prefix + dense_road + suffix
         goal_entry_index = len(out) - 2 if suffix else None
         return out, goal_entry_index
+
+    def _offset_selected_route_right(self, lonlat_path, offset_m, selected):
+        """Right-offset only points belonging to selected OSM road types."""
+        if len(lonlat_path) != len(selected):
+            raise ValueError("selected flags must match route points")
+        xy = [self.enu.to_xy(lon, lat) for lon, lat in lonlat_path]
+        shifted = []
+        for i, ((x, y), should_offset) in enumerate(zip(xy, selected)):
+            if not should_offset:
+                shifted.append(lonlat_path[i])
+                continue
+            tangents = []
+            if i > 0:
+                dx, dy = x - xy[i - 1][0], y - xy[i - 1][1]
+                norm = math.hypot(dx, dy)
+                if norm > 1e-6:
+                    tangents.append((dx / norm, dy / norm))
+            if i + 1 < len(xy):
+                dx, dy = xy[i + 1][0] - x, xy[i + 1][1] - y
+                norm = math.hypot(dx, dy)
+                if norm > 1e-6:
+                    tangents.append((dx / norm, dy / norm))
+            tx = sum(t[0] for t in tangents)
+            ty = sum(t[1] for t in tangents)
+            norm = math.hypot(tx, ty)
+            if norm <= 1e-6:
+                tx, ty = tangents[-1] if tangents else (1.0, 0.0)
+            else:
+                tx, ty = tx / norm, ty / norm
+            shifted.append(self.enu.to_lonlat(
+                x + offset_m * ty, y - offset_m * tx
+            ))
+        return shifted
 
     # -- rolling waypoint batching ------------------------------------------
     @staticmethod

@@ -136,6 +136,8 @@ class RouteGraph:
     _key_to_id: dict = field(default_factory=dict)
     # via_node_id -> list of {kind: "no"/"only", from: set(way_id), to: set(way_id), rtype}
     restrictions: dict = field(default_factory=dict)
+    # OSM way id -> highway value, used by downstream navigation policy.
+    way_highways: dict = field(default_factory=dict)
     _id_coords: np.ndarray = None  # (N,2) lon,lat for nearest lookup
     _id_list: np.ndarray = None
 
@@ -229,6 +231,13 @@ class RouteGraph:
             "dist": haversine(lon, lat, plon, plat),
             "way_id": self._edge_wayid[i],
         }
+
+    def highway_at(self, lon, lat):
+        """Return the highway tag of the closest graph edge, if known."""
+        projection = self.project_to_edge(lon, lat)
+        if projection is None:
+            return None
+        return self.way_highways.get(projection["way_id"])
 
     def access_segment_crosses_network(
         self, lon1, lat1, lon2, lat2, endpoint_margin_m=0.5
@@ -964,7 +973,7 @@ def build_graph(
     )
     g = RouteGraph()
     kept = skipped = 0
-    for geom, highway, oneway, foot, access in cur:
+    for row_index, (geom, highway, oneway, foot, access) in enumerate(cur):
         if not _keep(highway, foot, access, mode, allow_private):
             skipped += 1
             continue
@@ -974,6 +983,10 @@ def build_graph(
         kept += 1
         ow = respect_oneway and mode == "car" and (oneway in ("yes", "true", "1"))
         rev = oneway == "-1"
+        # The legacy route_edges query has no OSM id. A stable synthetic id
+        # preserves the highway type for downstream policy.
+        way_id = -(row_index + 1)
+        g.way_highways[way_id] = highway
         for pts in lines:
             prev = None
             seq = pts[::-1] if rev else pts
@@ -983,7 +996,7 @@ def build_graph(
                     plon, plat = g.coords[prev]
                     w = haversine(plon, plat, lon, lat)
                     if w > 0:
-                        g._add_edge(prev, nid, w, oneway=ow)
+                        g._add_edge(prev, nid, w, way_id=way_id, oneway=ow)
                 prev = nid
     con.close()
     g.finalize()
@@ -1389,6 +1402,7 @@ def build_graph_from_pbf(
                 return
             counters["kept"] += 1
             wid = w.id
+            g.way_highways[wid] = hw
             ow = (
                 respect_oneway and mode == "car"
                 and _tag(tags, "oneway") in ("yes", "true", "1")
@@ -1470,6 +1484,8 @@ def _add_way_linestring(g, wid, tags, pts, mode, respect_oneway, allow_private):
         way_id = int(wid)
     except (TypeError, ValueError):
         way_id = None
+    if way_id is not None:
+        g.way_highways[way_id] = hw
     ow = (
         respect_oneway and mode == "car"
         and tags.get("oneway") in ("yes", "true", "1")

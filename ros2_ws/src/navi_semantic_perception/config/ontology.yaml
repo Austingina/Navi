@@ -9,18 +9,10 @@ ontology:
   classes:
     - name: sidewalk
       color: [255, 0, 0]  # BGR format: Blue
-      sam3_prompt: ""  # Reserve class ID 1; lawn_layer only needs grass.
+      sam3_prompt: "sidewalk"  # Reserve class ID 1; lawn_layer only needs grass.
     - name: grass
       color: [0, 0, 255]  # BGR format: Red
       sam3_prompt: grass  # Class ID 2 stays compatible with lawn_layer.
     - name: road
-      color: [0, 0, 255]  # BGR format: Red
-      # 机动车道，仅用于可视化，禁止接入 costmap。
-      # 选词时在几帧远景里 "asphalt road" 只命中真车道（面积 0.4%），
-      # 但 bag 回放到园区花岗岩铺装广场时，它把机器人脚下的整片铺装
-      # 判成车道（面积 68%，峰值置信度 173）—— 与被否决的
-      # "paved road for cars" 是同一种失败，只是换帧才暴露。
-      # 因此 param_outdoor_elevation.yaml 的 lawn_layer.class_types 不含本类；
-      # 接入会把机器人自己站立的地面抬到 max_cost 把自己困住。
-      # 要改为导航可用，必须先在铺装广场帧上验证不误检。
-      sam3_prompt: asphalt road
+      color: [0, 255, 0]  # BGR format: Green
+      sam3_prompt: road

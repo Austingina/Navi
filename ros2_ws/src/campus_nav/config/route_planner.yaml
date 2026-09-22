@@ -31,6 +31,11 @@
     nav_waypoints_topic: campus_nav_waypoints
     nav_waypoint_markers_topic: campus_nav_waypoint_markers
     nav_waypoint_spacing_m: 4.0
+    # Only motor-road OSM ways are shifted. footway/path/pedestrian and every
+    # unlisted highway type remain on their mapped geometry.
+    road_right_offset_highways:
+      [service, residential, unclassified, tertiary, tertiary_link]
+    road_right_offset_m: 4.0
     nav_waypoint_marker_size_m: 0.8
     send_to_nav2: true
     nav2_action_name: navigate_through_poses

@@ -234,7 +234,7 @@ local_costmap:
           use_cost_selection: True       # COST-BASED 选择（日志里会打印这行）
           visualize_tile_map: True
           visualize_frustum_fov: False
-          class_types: ["lawn"]
+          class_types: ["lawn", "road"]
           lawn:
             # "grass" 必须与 LabelInfo 里的 class_name 逐字节相同。
             # 这是 ontology.yaml 里的原名（0=background 1=sidewalk 2=grass）。
@@ -246,6 +246,18 @@ local_costmap:
             samples_to_max_cost: 3
             mark_confidence: 128         # 要求 softmax 置信度 >=50% 才标记
             dominant_priority: False
+          road:
+            classes: ["road"]
+            base_cost: 170
+            max_cost: 220
+            samples_to_max_cost: 1
+            mark_confidence: 128
+            dominant_priority: False
+            # 前视相机：图像右侧对应机器人前进方向的右侧。
+            lateral_gradient: True
+            lateral_right_cost: 110
+            lateral_left_cost: 220
+            lateral_min_width_pixels: 30
 
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
@@ -316,7 +328,7 @@ global_costmap:
           use_cost_selection: True
           visualize_tile_map: False
           visualize_frustum_fov: False
-          class_types: ["lawn"]
+          class_types: ["lawn", "road"]
           lawn:
             classes: ["grass"]
             base_cost: 100
@@ -326,6 +338,17 @@ global_costmap:
             samples_to_max_cost: 3
             mark_confidence: 128
             dominant_priority: False
+          road:
+            classes: ["road"]
+            base_cost: 170
+            max_cost: 220
+            samples_to_max_cost: 1
+            mark_confidence: 128
+            dominant_priority: False
+            lateral_gradient: True
+            lateral_right_cost: 110
+            lateral_left_cost: 220
+            lateral_min_width_pixels: 30
 
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
