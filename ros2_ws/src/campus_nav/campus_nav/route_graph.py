@@ -159,6 +159,12 @@ class RouteGraph:
 
     def finalize(self):
         ids = sorted(self.coords)
+        # PBF loading preserves OSM node ids and fills coords directly instead
+        # of going through _node().  Build the same coordinate lookup here so
+        # route vertices can be mapped back to their topology in either source.
+        self._key_to_id = {
+            _key(*self.coords[node]): node for node in ids
+        }
         self._id_list = np.array(ids, dtype=np.int64)
         self._id_coords = np.array([self.coords[i] for i in ids], dtype=np.float64)
         self._build_edge_index()
@@ -238,6 +244,26 @@ class RouteGraph:
         if projection is None:
             return None
         return self.way_highways.get(projection["way_id"])
+
+    def is_junction(self, lon, lat, highways=None):
+        """Whether an exact OSM route vertex has at least three road arms.
+
+        Planned paths contain the original graph vertices, so an exact lookup is
+        preferable to a nearest-edge guess here.  Start/goal projections and
+        authored access points intentionally return False.  ``highways`` may
+        restrict the counted arms to the caller's motor-road policy.
+        """
+        node = self._key_to_id.get(_key(lon, lat))
+        if node is None:
+            return False
+        edges = self.adj.get(node, ())
+        if highways is not None:
+            allowed = set(highways)
+            edges = [
+                edge for edge in edges
+                if self.way_highways.get(edge[2]) in allowed
+            ]
+        return len({edge[0] for edge in edges}) >= 3
 
     def access_segment_crosses_network(
         self, lon1, lat1, lon2, lat2, endpoint_margin_m=0.5

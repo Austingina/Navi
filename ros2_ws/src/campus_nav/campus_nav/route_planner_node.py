@@ -1,13 +1,15 @@
 import json
 import math
 import os
-from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 
+import numpy as np
 import rclpy
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PointStamped, PoseStamped
 from nav_msgs.msg import OccupancyGrid, Path
-from nav2_msgs.action import NavigateThroughPoses, NavigateToPose
+from nav2_msgs.action import NavigateThroughPoses, NavigateToPose, Spin
 from nav2_msgs.srv import ClearEntireCostmap
 from rcl_interfaces.msg import SetParametersResult
 from rclpy.action import ActionClient
@@ -15,15 +17,22 @@ from rclpy.duration import Duration
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.time import Time
+from sensor_msgs.msg import Image, PointCloud2, PointField
 from std_msgs.msg import Empty, String
 from tf2_ros import Buffer, TransformException, TransformListener
+from vision_msgs.msg import LabelInfo
 from rclpy.qos import (
     QoSDurabilityPolicy,
     QoSHistoryPolicy,
     QoSProfile,
     QoSReliabilityPolicy,
+    qos_profile_sensor_data,
 )
 
+from campus_nav.semantic_lateral_adapter import (
+    RoadBoundaryEstimator,
+    RouteCorridor,
+)
 from campus_nav.route_graph import (
     ENU,
     build_graph,
@@ -550,6 +559,79 @@ class RoutePlanner(Node):
             ["service", "residential", "unclassified", "tertiary", "tertiary_link"],
         )
         self.declare_parameter("road_right_offset_m", 0.0)
+        # Phase 2.1 semantic lateral adapter. Closed loop is the default after
+        # bag validation: motor-road targets replace the biased OSM waypoint,
+        # while pedestrian/unlisted ways continue to use their reference route.
+        self.declare_parameter("semantic_lateral_enabled", True)
+        self.declare_parameter("semantic_lateral_shadow_mode", False)
+        self.declare_parameter(
+            "semantic_lateral_segmentation_topic",
+            "/semantic/camera1/segmentation",
+        )
+        self.declare_parameter(
+            "semantic_lateral_confidence_topic",
+            "/semantic/camera1/confidence",
+        )
+        self.declare_parameter(
+            "semantic_lateral_cloud_topic", "/semantic/camera1/points"
+        )
+        self.declare_parameter(
+            "semantic_lateral_labels_topic", "/semantic/camera1/label_info"
+        )
+        self.declare_parameter("semantic_lateral_road_class", "road")
+        self.declare_parameter("semantic_lateral_min_pixel_confidence", 128)
+        self.declare_parameter("semantic_lateral_pixel_stride", 2)
+        self.declare_parameter("semantic_lateral_image_edge_margin_px", 8)
+        self.declare_parameter("semantic_lateral_max_frame_age_s", 0.8)
+        self.declare_parameter("semantic_lateral_near_m", 1.0)
+        self.declare_parameter("semantic_lateral_far_m", 7.0)
+        self.declare_parameter("semantic_lateral_bin_size_m", 0.5)
+        self.declare_parameter("semantic_lateral_limit_m", 12.0)
+        self.declare_parameter("semantic_lateral_min_points_per_bin", 20)
+        self.declare_parameter("semantic_lateral_width_min_m", 2.5)
+        self.declare_parameter("semantic_lateral_width_max_m", 15.0)
+        self.declare_parameter("semantic_lateral_lookahead_m", 4.0)
+        self.declare_parameter("semantic_lateral_inside_margin_m", 0.75)
+        self.declare_parameter("semantic_lateral_min_target_confidence", 0.45)
+        self.declare_parameter("semantic_lateral_hold_last_s", 1.0)
+        self.declare_parameter("semantic_lateral_acquire_frames", 3)
+        self.declare_parameter("semantic_lateral_max_lateral_step_m", 0.4)
+        self.declare_parameter("semantic_lateral_filter_alpha", 0.25)
+        self.declare_parameter("semantic_lateral_fit_max_slope", 0.35)
+        self.declare_parameter("semantic_lateral_center_innovation_m", 0.6)
+        self.declare_parameter("semantic_lateral_width_innovation_m", 0.6)
+        self.declare_parameter("semantic_lateral_junction_guard_before_m", 4.0)
+        self.declare_parameter("semantic_lateral_junction_guard_after_m", 3.0)
+        self.declare_parameter("semantic_lateral_junction_release_frames", 3)
+        self.declare_parameter("semantic_lateral_tangent_window_m", 1.5)
+        self.declare_parameter("semantic_lateral_target_move_m", 0.35)
+        self.declare_parameter("semantic_lateral_target_progress_m", 1.0)
+        # A rearward route cannot produce forward-route semantic points until
+        # the front camera faces it.  Rotate in place first, then reacquire.
+        self.declare_parameter("semantic_lateral_align_heading_enable", True)
+        self.declare_parameter("semantic_lateral_align_enter_deg", 60.0)
+        self.declare_parameter("semantic_lateral_align_exit_deg", 20.0)
+        self.declare_parameter("semantic_lateral_align_action_name", "spin")
+        self.declare_parameter("semantic_lateral_align_timeout_s", 45.0)
+        self.declare_parameter("semantic_lateral_align_max_retries", 1)
+        # The merged local costmap already contains Livox obstacles and terrain;
+        # use it as the final footprint gate rather than trusting road semantics.
+        self.declare_parameter(
+            "semantic_lateral_safety_costmap_topic", "/local_costmap/costmap"
+        )
+        self.declare_parameter("semantic_lateral_safety_radius_m", 0.75)
+        self.declare_parameter("semantic_lateral_safety_inward_step_m", 0.2)
+        self.declare_parameter("semantic_lateral_lethal_occupancy", 99)
+        self.declare_parameter("semantic_lateral_costmap_max_age_s", 1.0)
+        self.declare_parameter(
+            "semantic_lateral_debug_topic", "/campus_lateral/debug"
+        )
+        self.declare_parameter(
+            "semantic_lateral_target_topic", "/campus_lateral/adapted_path"
+        )
+        self.declare_parameter(
+            "semantic_lateral_status_topic", "/campus_lateral/status"
+        )
         # Sphere diameter (m) of the RViz route waypoint markers. Labels and z
         # offsets scale with it. Patrol waypoints keep their own larger size.
         self.declare_parameter("nav_waypoint_marker_size_m", 0.8)
@@ -767,6 +849,7 @@ class RoutePlanner(Node):
             self._load_entry_points()
         self.nav_action_client = None
         self.final_action_client = None
+        self.route_spin_action_client = None
         # -- rolling waypoint batching state --
         self._nav_route_poses = []      # full sampled route (PoseStamped, frame_id)
         self._nav_cursor = 0            # index of next waypoint to still pursue
@@ -801,6 +884,37 @@ class RoutePlanner(Node):
         self._final_retry = 0
         self._final_cancel_pending = False  # waiting for the batch goal to end
         self._final_wait_ticks = 0
+        # Initial camera/route heading alignment. This is route-local and must
+        # be reset whenever a new Campus route replaces the old one.
+        self._route_align_checked = False
+        self._route_align_required = False
+        self._route_align_complete = False
+        self._route_align_pending = False
+        self._route_align_active = False
+        self._route_align_goal_handle = None
+        self._route_align_seq = 0
+        self._route_align_retries = 0
+        self._route_align_error_rad = None
+        # -- semantic route-frame lateral adapter (phase 2.1) --
+        self._lateral_route = None
+        self._lateral_s = 0.0
+        self._lateral_robot_d = 0.0
+        self._lateral_target = None
+        self._lateral_target_stamp_ns = None
+        self._lateral_target_seq = 0
+        self._lateral_seq_d = None
+        self._lateral_seq_s = None
+        self._lateral_state = "REFERENCE_ONLY"
+        self._lateral_reason = "no_route"
+        self._lateral_good_frames = 0
+        self._lateral_costmap = None
+        self._lateral_safety_ok = False
+        self._lateral_safety_reason = "safety_costmap_missing"
+        self._lateral_pending = {}
+        self._lateral_future = None
+        self._lateral_worker = None
+        self._lateral_last_debug_points = np.empty((0, 2), dtype=np.float64)
+        self._init_semantic_lateral_adapter()
         # -- heading-lock state --
         # Two separate things, deliberately not one flag:
         #   _heading_locked      the physical fact — has the heading aligned yet
@@ -854,6 +968,13 @@ class RoutePlanner(Node):
                 self,
                 NavigateThroughPoses,
                 self.get_parameter("nav2_action_name").value,
+            )
+            self.route_spin_action_client = ActionClient(
+                self,
+                Spin,
+                self.get_parameter(
+                    "semantic_lateral_align_action_name"
+                ).value,
             )
             if self.get_parameter("nav2_final_precise_enable").value:
                 self.final_action_client = ActionClient(
@@ -1623,6 +1744,735 @@ class RoutePlanner(Node):
             f"/patrol_waypoints, /patrol_corners."
         )
 
+    # -- semantic lateral route adapter ------------------------------------
+    def _init_semantic_lateral_adapter(self):
+        """Subscribe to exact-stamp semantic frames and start shadow output."""
+        self._lateral_route_generation = 0
+        self._nav_route_s = []
+        self._nav_route_motor = []
+        self._lateral_estimator = RoadBoundaryEstimator(
+            near=self.get_parameter("semantic_lateral_near_m").value,
+            far=self.get_parameter("semantic_lateral_far_m").value,
+            bin_size=self.get_parameter("semantic_lateral_bin_size_m").value,
+            lateral_limit=self.get_parameter("semantic_lateral_limit_m").value,
+            min_points=self.get_parameter(
+                "semantic_lateral_min_points_per_bin"
+            ).value,
+            width_min=self.get_parameter("semantic_lateral_width_min_m").value,
+            width_max=self.get_parameter("semantic_lateral_width_max_m").value,
+            lookahead=self.get_parameter("semantic_lateral_lookahead_m").value,
+            inside_margin=self.get_parameter(
+                "semantic_lateral_inside_margin_m"
+            ).value,
+            temporal_alpha=self.get_parameter(
+                "semantic_lateral_filter_alpha"
+            ).value,
+            fit_max_slope=self.get_parameter(
+                "semantic_lateral_fit_max_slope"
+            ).value,
+            center_innovation=self.get_parameter(
+                "semantic_lateral_center_innovation_m"
+            ).value,
+            width_innovation=self.get_parameter(
+                "semantic_lateral_width_innovation_m"
+            ).value,
+            junction_guard_before=self.get_parameter(
+                "semantic_lateral_junction_guard_before_m"
+            ).value,
+            junction_guard_after=self.get_parameter(
+                "semantic_lateral_junction_guard_after_m"
+            ).value,
+            junction_release_frames=self.get_parameter(
+                "semantic_lateral_junction_release_frames"
+            ).value,
+        )
+        self._lateral_target_pub = self.create_publisher(
+            Path,
+            self.get_parameter("semantic_lateral_target_topic").value,
+            rviz_qos(),
+        )
+        self._lateral_status_pub = self.create_publisher(
+            String,
+            self.get_parameter("semantic_lateral_status_topic").value,
+            rviz_qos(),
+        )
+        if HAVE_MARKERS:
+            self._lateral_debug_pub = self.create_publisher(
+                MarkerArray,
+                self.get_parameter("semantic_lateral_debug_topic").value,
+                rviz_qos(),
+            )
+        if not self.get_parameter("semantic_lateral_enabled").value:
+            self.get_logger().info("Semantic lateral adapter disabled.")
+            return
+        self._lateral_worker = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="campus_lateral"
+        )
+        self.create_subscription(
+            LabelInfo,
+            self.get_parameter("semantic_lateral_labels_topic").value,
+            self._on_lateral_labels,
+            latched_qos(),
+        )
+        self.create_subscription(
+            OccupancyGrid,
+            self.get_parameter(
+                "semantic_lateral_safety_costmap_topic"
+            ).value,
+            self._on_lateral_costmap,
+            qos_profile_sensor_data,
+        )
+        for msg_type, parameter, kind in (
+            (Image, "semantic_lateral_segmentation_topic", "segmentation"),
+            (Image, "semantic_lateral_confidence_topic", "confidence"),
+            (PointCloud2, "semantic_lateral_cloud_topic", "cloud"),
+        ):
+            self.create_subscription(
+                msg_type,
+                self.get_parameter(parameter).value,
+                lambda msg, k=kind: self._cache_lateral_frame(k, msg),
+                qos_profile_sensor_data,
+            )
+        self.create_timer(0.1, self._lateral_tick)
+        mode = (
+            "SHADOW (debug only)"
+            if self.get_parameter("semantic_lateral_shadow_mode").value
+            else "CLOSED LOOP"
+        )
+        self.get_logger().info(
+            f"Semantic lateral adapter enabled in {mode}: route direction "
+            "defines right; sensor acquisition-time TF transforms road points."
+        )
+
+    @staticmethod
+    def _stamp_ns(header):
+        return int(header.stamp.sec) * 1_000_000_000 + int(
+            header.stamp.nanosec
+        )
+
+    def _on_lateral_labels(self, msg):
+        wanted = self.get_parameter("semantic_lateral_road_class").value
+        road_id = None
+        for semantic_class in msg.class_map:
+            if semantic_class.class_name == wanted:
+                road_id = int(semantic_class.class_id)
+                break
+        self._lateral_road_class_id = road_id
+        if road_id is None:
+            self.get_logger().error(
+                f"Semantic lateral adapter cannot find class '{wanted}' in LabelInfo."
+            )
+        else:
+            self.get_logger().info(
+                f"Semantic lateral road class '{wanted}' has id {road_id}."
+            )
+
+    def _on_lateral_costmap(self, msg):
+        self._lateral_costmap = msg
+
+    def _cache_lateral_frame(self, kind, msg):
+        stamp_ns = self._stamp_ns(msg.header)
+        slot = self._lateral_pending.setdefault(stamp_ns, {})
+        slot[kind] = msg
+        # Exact synchronization is intentional: the organized cloud and mask
+        # share a pixel index only when they came from the same acquisition.
+        while len(self._lateral_pending) > 8:
+            del self._lateral_pending[min(self._lateral_pending)]
+        self._try_start_lateral_job()
+
+    def _try_start_lateral_job(self):
+        if self._lateral_worker is None or self._lateral_route is None:
+            return
+        if self._route_align_required and not self._route_align_complete:
+            return
+        if self._lateral_future is not None:
+            return
+        road_id = getattr(self, "_lateral_road_class_id", None)
+        if road_id is None:
+            return
+        ready = [
+            stamp for stamp, slot in self._lateral_pending.items()
+            if {"segmentation", "confidence", "cloud"} <= slot.keys()
+        ]
+        if not ready:
+            return
+        stamp_ns = max(ready)
+        slot = self._lateral_pending.pop(stamp_ns)
+        for old_stamp in [s for s in self._lateral_pending if s <= stamp_ns]:
+            del self._lateral_pending[old_stamp]
+
+        now_ns = self.get_clock().now().nanoseconds
+        max_age = float(
+            self.get_parameter("semantic_lateral_max_frame_age_s").value
+        )
+        if now_ns - stamp_ns > max_age * 1e9:
+            self._lateral_state = (
+                "HOLD_LAST" if self._lateral_target is not None
+                else "ACQUIRE_BOUNDARY"
+            )
+            self._lateral_reason = "stale_semantic_frame"
+            return
+        cloud = slot["cloud"]
+        try:
+            sensor_tf = self.tf_buffer.lookup_transform(
+                self.frame_id,
+                cloud.header.frame_id,
+                Time.from_msg(cloud.header.stamp),
+                timeout=Duration(seconds=0.08),
+            )
+            robot_tf = self.tf_buffer.lookup_transform(
+                self.frame_id,
+                self.get_parameter("robot_frame").value,
+                Time.from_msg(cloud.header.stamp),
+                timeout=Duration(seconds=0.08),
+            )
+        except TransformException as exc:
+            self._lateral_state = (
+                "HOLD_LAST" if self._lateral_target is not None
+                else "ACQUIRE_BOUNDARY"
+            )
+            self._lateral_reason = "acquisition_tf_unavailable"
+            self.get_logger().warn(
+                f"Semantic lateral acquisition-time TF unavailable: {exc}",
+                throttle_duration_sec=5.0,
+            )
+            return
+
+        route = self._lateral_route
+        robot_projection = route.project(
+            robot_tf.transform.translation.x,
+            robot_tf.transform.translation.y,
+            s_hint=self._lateral_s,
+        )
+        self._lateral_s = max(self._lateral_s, robot_projection.s)
+        self._lateral_robot_d = robot_projection.d
+        if not route.sample(self._lateral_s).motor_road:
+            self._lateral_target = None
+            self._lateral_target_stamp_ns = None
+            self._lateral_safety_ok = False
+            self._lateral_safety_reason = "non_motor_segment"
+            self._lateral_state = "REFERENCE_ONLY"
+            self._lateral_reason = "non_motor_segment"
+            return
+        rotation, translation = self._transform_arrays(sensor_tf.transform)
+        self._lateral_future = self._lateral_worker.submit(
+            self._process_lateral_frame,
+            slot["segmentation"],
+            slot["confidence"],
+            cloud,
+            rotation,
+            translation,
+            route,
+            self._lateral_s,
+            road_id,
+            self._lateral_route_generation,
+            stamp_ns,
+            max(1, int(self.get_parameter(
+                "semantic_lateral_pixel_stride"
+            ).value)),
+            int(self.get_parameter(
+                "semantic_lateral_min_pixel_confidence"
+            ).value),
+            self._lateral_robot_d,
+            int(self.get_parameter(
+                "semantic_lateral_image_edge_margin_px"
+            ).value),
+        )
+
+    @staticmethod
+    def _transform_arrays(transform):
+        q = transform.rotation
+        x, y, z, w = q.x, q.y, q.z, q.w
+        rotation = np.array([
+            [1 - 2 * (y * y + z * z), 2 * (x * y - z * w),
+             2 * (x * z + y * w)],
+            [2 * (x * y + z * w), 1 - 2 * (x * x + z * z),
+             2 * (y * z - x * w)],
+            [2 * (x * z - y * w), 2 * (y * z + x * w),
+             1 - 2 * (x * x + y * y)],
+        ], dtype=np.float64)
+        translation = np.array([
+            transform.translation.x,
+            transform.translation.y,
+            transform.translation.z,
+        ], dtype=np.float64)
+        return rotation, translation
+
+    def _process_lateral_frame(
+        self, segmentation, confidence, cloud, rotation, translation,
+        route, s_robot, road_id, generation, stamp_ns, stride,
+        min_pixel_confidence, robot_d=0.0, image_edge_margin_px=8,
+    ):
+        """Heavy pixel/cloud projection; runs on the single worker thread."""
+        if segmentation.encoding not in ("mono8", "8UC1"):
+            raise ValueError(
+                f"unsupported segmentation encoding {segmentation.encoding}"
+            )
+        if confidence.encoding not in ("mono8", "8UC1"):
+            raise ValueError(
+                f"unsupported confidence encoding {confidence.encoding}"
+            )
+        shape = (int(segmentation.height), int(segmentation.width))
+        if shape != (int(confidence.height), int(confidence.width)):
+            raise ValueError("segmentation/confidence dimensions differ")
+        if shape != (int(cloud.height), int(cloud.width)):
+            raise ValueError("semantic images/cloud dimensions differ")
+        segmentation_array = np.ndarray(
+            shape, dtype=np.uint8, buffer=segmentation.data,
+            strides=(int(segmentation.step), 1),
+        )
+        confidence_array = np.ndarray(
+            shape, dtype=np.uint8, buffer=confidence.data,
+            strides=(int(confidence.step), 1),
+        )
+        field_map = {field.name: field for field in cloud.fields}
+        for name in ("x", "y", "z"):
+            if name not in field_map:
+                raise ValueError(f"organized cloud has no '{name}' field")
+            if field_map[name].datatype != PointField.FLOAT32:
+                raise ValueError(f"organized cloud '{name}' is not float32")
+        dtype = np.dtype(">f4" if cloud.is_bigendian else "<f4")
+        coordinates = []
+        for name in ("x", "y", "z"):
+            coordinates.append(np.ndarray(
+                shape,
+                dtype=dtype,
+                buffer=cloud.data,
+                offset=int(field_map[name].offset),
+                strides=(int(cloud.row_step), int(cloud.point_step)),
+            ))
+        sample = np.s_[::stride, ::stride]
+        mask = (
+            (segmentation_array[sample] == road_id)
+            & (confidence_array[sample] >= min_pixel_confidence)
+        )
+        sampled_columns = np.arange(0, shape[1], stride, dtype=np.int32)
+        mask_columns = np.nonzero(mask)[1]
+        pixel_columns = sampled_columns[mask_columns]
+        edge_margin = max(0, int(image_edge_margin_px))
+        image_edge = (
+            (pixel_columns < edge_margin)
+            | (pixel_columns >= shape[1] - edge_margin)
+        )
+        camera_points = np.column_stack([
+            coordinate[sample][mask] for coordinate in coordinates
+        ]).astype(np.float64, copy=False)
+        finite = np.isfinite(camera_points).all(axis=1)
+        camera_points = camera_points[finite]
+        image_edge = image_edge[finite]
+        map_points = camera_points @ rotation.T + translation
+        road_xy = map_points[:, :2]
+        target, reason = self._lateral_estimator.estimate(
+            route, road_xy, s_robot, image_edge=image_edge, robot_d=robot_d
+        )
+        return generation, target, reason, road_xy, stamp_ns
+
+    def _lateral_tick(self):
+        if self._lateral_future is not None and self._lateral_future.done():
+            future = self._lateral_future
+            self._lateral_future = None
+            try:
+                generation, target, reason, road_xy, stamp_ns = future.result()
+            except Exception as exc:  # noqa: BLE001 -- bad sensor frame is recoverable
+                self._lateral_state = "DEGRADED_STOP"
+                self._lateral_reason = f"frame_error:{exc}"
+                self.get_logger().error(
+                    f"Semantic lateral frame rejected: {exc}",
+                    throttle_duration_sec=5.0,
+                )
+            else:
+                if generation == self._lateral_route_generation:
+                    self._consume_lateral_result(
+                        target, reason, road_xy, stamp_ns
+                    )
+                else:
+                    # A frame from the previous route may have finished after
+                    # _configure_lateral_route() reset the state. Clear its
+                    # fitted model before admitting a frame for the new route.
+                    self._lateral_estimator.reset()
+        self._try_start_lateral_job()
+
+        if self._lateral_target_stamp_ns is not None:
+            age = (
+                self.get_clock().now().nanoseconds
+                - self._lateral_target_stamp_ns
+            ) / 1e9
+            hold = float(self.get_parameter("semantic_lateral_hold_last_s").value)
+            if age > hold:
+                self._lateral_target = None
+                self._lateral_safety_ok = False
+                self._lateral_safety_reason = "target_expired"
+                self._lateral_state = "DEGRADED_STOP"
+                self._lateral_reason = "target_expired"
+        self._publish_lateral_status()
+
+    def _consume_lateral_result(self, target, reason, road_xy, stamp_ns):
+        self._lateral_last_debug_points = road_xy
+        minimum = float(
+            self.get_parameter("semantic_lateral_min_target_confidence").value
+        )
+        if target is not None and target.confidence >= minimum:
+            old = self._lateral_target
+            max_step = float(self.get_parameter(
+                "semantic_lateral_max_lateral_step_m"
+            ).value)
+            previous_d = old.d if old is not None else self._lateral_robot_d
+            delta_d = target.d - previous_d
+            if abs(delta_d) > max_step:
+                limited_d = previous_d + math.copysign(max_step, delta_d)
+                route_sample = self._lateral_route.sample(target.s)
+                target = replace(
+                    target,
+                    d=limited_d,
+                    x=route_sample.x + limited_d * math.sin(route_sample.yaw),
+                    y=route_sample.y - limited_d * math.cos(route_sample.yaw),
+                )
+            # The slew limiter changes the actual commanded point, so safety
+            # must be evaluated after it.  Doing this in the opposite order can
+            # find a safe point near the center and then move it back into a
+            # lethal cell while retaining the misleading inward-shift reason.
+            target, shifted_for_safety = self._shift_target_inward_for_safety(
+                target
+            )
+            if shifted_for_safety:
+                self.get_logger().warning(
+                    "Laterally limited target intersects the fused costmap; "
+                    f"shifted toward road center to d={target.d:.2f} m.",
+                    throttle_duration_sec=2.0,
+                )
+            lateral_change = (
+                float("inf") if self._lateral_seq_d is None
+                else abs(target.d - self._lateral_seq_d)
+            )
+            route_progress = (
+                float("inf") if self._lateral_seq_s is None
+                else target.s - self._lateral_seq_s
+            )
+            if (
+                lateral_change >= float(self.get_parameter(
+                    "semantic_lateral_target_move_m"
+                ).value)
+                or route_progress >= float(self.get_parameter(
+                    "semantic_lateral_target_progress_m"
+                ).value)
+            ):
+                self._lateral_target_seq += 1
+                self._lateral_seq_d = target.d
+                self._lateral_seq_s = target.s
+            self._lateral_target = target
+            self._lateral_target_stamp_ns = stamp_ns
+            (
+                self._lateral_safety_ok,
+                self._lateral_safety_reason,
+            ) = self._lateral_target_is_safe(target.x, target.y)
+            self._lateral_good_frames += 1
+            required = max(1, int(self.get_parameter(
+                "semantic_lateral_acquire_frames"
+            ).value))
+            if target.junction_guard:
+                self._lateral_state = "JUNCTION_GUARD"
+                self._lateral_reason = target.state_reason
+            elif (
+                target.state_reason == "seek_right_edge"
+                and self._lateral_good_frames >= required
+            ):
+                self._lateral_state = "SEEK_RIGHT_EDGE"
+                self._lateral_reason = target.state_reason
+            elif self._lateral_good_frames >= required:
+                self._lateral_state = "TRACK_RIGHT"
+                self._lateral_reason = target.state_reason
+            else:
+                self._lateral_state = "ACQUIRE_BOUNDARY"
+                self._lateral_reason = (
+                    f"acquiring:{self._lateral_good_frames}/{required}"
+                )
+        else:
+            self._lateral_reason = reason if target is None else "low_confidence"
+            self._lateral_state = (
+                "HOLD_LAST" if self._lateral_target is not None
+                else "ACQUIRE_BOUNDARY"
+            )
+        debug_target = (
+            self._lateral_target
+            if self._lateral_state == "HOLD_LAST"
+            else target
+        )
+        self._publish_lateral_debug(debug_target, road_xy, stamp_ns)
+
+    def _publish_lateral_status(self):
+        target = self._lateral_target
+        payload = {
+            "state": self._lateral_state,
+            "reason": self._lateral_reason,
+            "shadow_mode": bool(
+                self.get_parameter("semantic_lateral_shadow_mode").value
+            ),
+            "route_s_m": round(self._lateral_s, 3),
+            "road_class_id": getattr(self, "_lateral_road_class_id", None),
+            "safety_ok": self._lateral_safety_ok,
+            "safety_reason": self._lateral_safety_reason,
+            "route_align_required": self._route_align_required,
+            "route_align_complete": self._route_align_complete,
+            "route_heading_error_deg": (
+                None if self._route_align_error_rad is None
+                else round(math.degrees(self._route_align_error_rad), 2)
+            ),
+        }
+        if target is not None:
+            age = (
+                self.get_clock().now().nanoseconds
+                - self._lateral_target_stamp_ns
+            ) / 1e9
+            payload.update({
+                "target_x": round(target.x, 3),
+                "target_y": round(target.y, 3),
+                "target_d_m": round(target.d, 3),
+                "left_d_m": round(target.left, 3),
+                "right_d_m": round(target.right, 3),
+                "road_center_d_m": round(target.center, 3),
+                "road_width_m": round(target.width, 3),
+                "junction_guard": target.junction_guard,
+                "confidence": round(target.confidence, 3),
+                "observation_age_s": round(max(0.0, age), 3),
+            })
+        self._lateral_status_pub.publish(String(data=json.dumps(payload)))
+
+    def _publish_lateral_debug(self, target, road_xy, stamp_ns):
+        if target is not None:
+            path = Path()
+            path.header.frame_id = self.frame_id
+            path.header.stamp = Time(nanoseconds=stamp_ns).to_msg()
+            # This topic represents the point we can actually command, not the
+            # ideal right-edge trace (already shown by the boundary markers).
+            # Joining raw boundary bins directly to a slew-limited target made
+            # the visualization appear to notch into the road center even
+            # though Nav2 receives only the final target pose.
+            span = max(0.0, target.s - self._lateral_s)
+            count = max(2, int(math.ceil(span / 0.5)) + 1)
+            for ratio in np.linspace(0.0, 1.0, count):
+                sample_s = self._lateral_s + ratio * span
+                smooth = ratio * ratio * (3.0 - 2.0 * ratio)
+                sample_d = (
+                    self._lateral_robot_d
+                    + smooth * (target.d - self._lateral_robot_d)
+                )
+                route_sample = self._lateral_route.sample(sample_s)
+                pose = PoseStamped()
+                pose.header = path.header
+                pose.pose.position.x = float(
+                    route_sample.x + sample_d * math.sin(route_sample.yaw)
+                )
+                pose.pose.position.y = float(
+                    route_sample.y - sample_d * math.cos(route_sample.yaw)
+                )
+                qx, qy, qz, qw = _quat_from_yaw(route_sample.yaw)
+                pose.pose.orientation.x = qx
+                pose.pose.orientation.y = qy
+                pose.pose.orientation.z = qz
+                pose.pose.orientation.w = qw
+                path.poses.append(pose)
+            self._lateral_target_pub.publish(path)
+        if not HAVE_MARKERS or not hasattr(self, "_lateral_debug_pub"):
+            return
+        stamp = Time(nanoseconds=stamp_ns).to_msg()
+        markers = []
+        clear = Marker()
+        clear.header.frame_id = self.frame_id
+        clear.header.stamp = stamp
+        clear.action = Marker.DELETEALL
+        markers.append(clear)
+
+        points_marker = Marker()
+        points_marker.header.frame_id = self.frame_id
+        points_marker.header.stamp = stamp
+        points_marker.ns = "semantic_road_points"
+        points_marker.id = 0
+        points_marker.type = Marker.POINTS
+        points_marker.action = Marker.ADD
+        points_marker.pose.orientation.w = 1.0
+        points_marker.scale.x = 0.08
+        points_marker.scale.y = 0.08
+        points_marker.color = ColorRGBA(r=0.1, g=0.55, b=1.0, a=0.45)
+        if len(road_xy):
+            step = max(1, len(road_xy) // 2500)
+            points_marker.points = [
+                Point(x=float(x), y=float(y), z=0.04)
+                for x, y in road_xy[::step]
+            ]
+        markers.append(points_marker)
+        if self._lateral_route is not None:
+            osm_route = Marker()
+            osm_route.header.frame_id = self.frame_id
+            osm_route.header.stamp = stamp
+            osm_route.ns = "osm_route_reference"
+            osm_route.id = 5
+            osm_route.type = Marker.LINE_STRIP
+            osm_route.action = Marker.ADD
+            osm_route.pose.orientation.w = 1.0
+            osm_route.scale.x = 0.10
+            osm_route.color = ColorRGBA(r=1.0, g=1.0, b=1.0, a=0.95)
+            osm_route.points = [
+                Point(x=float(x), y=float(y), z=0.14)
+                for x, y in self._lateral_route.xy
+            ]
+            markers.append(osm_route)
+        if target is not None and self._lateral_route is not None:
+            for marker_id, side, color in (
+                (1, "left", (1.0, 0.65, 0.0)),
+                (2, "right", (0.0, 1.0, 0.35)),
+            ):
+                line = Marker()
+                line.header.frame_id = self.frame_id
+                line.header.stamp = stamp
+                line.ns = "road_boundaries"
+                line.id = marker_id
+                line.type = Marker.LINE_STRIP
+                line.action = Marker.ADD
+                line.pose.orientation.w = 1.0
+                line.scale.x = 0.12
+                line.color = ColorRGBA(
+                    r=color[0], g=color[1], b=color[2], a=0.95
+                )
+                for boundary_bin in target.bins:
+                    route_sample = self._lateral_route.sample(boundary_bin.s)
+                    d = getattr(boundary_bin, side)
+                    line.points.append(Point(
+                        x=route_sample.x + d * math.sin(route_sample.yaw),
+                        y=route_sample.y - d * math.cos(route_sample.yaw),
+                        z=0.10,
+                    ))
+                markers.append(line)
+            goal = Marker()
+            goal.header.frame_id = self.frame_id
+            goal.header.stamp = stamp
+            goal.ns = "right_target"
+            goal.id = 3
+            goal.type = Marker.SPHERE
+            goal.action = Marker.ADD
+            goal.pose.position.x = float(target.x)
+            goal.pose.position.y = float(target.y)
+            # Lift the target above road points, costmaps and green OSM waypoint
+            # spheres.  At ground level the old 0.45 m sphere was effectively
+            # invisible in the outdoor RViz scene.
+            goal.pose.position.z = 0.65
+            goal.pose.orientation.w = 1.0
+            goal.scale.x = goal.scale.y = goal.scale.z = 0.80
+            goal.color = ColorRGBA(r=1.0, g=0.0, b=1.0, a=1.0)
+            markers.append(goal)
+
+            label = Marker()
+            label.header = goal.header
+            label.ns = "right_target_label"
+            label.id = 6
+            label.type = Marker.TEXT_VIEW_FACING
+            label.action = Marker.ADD
+            label.pose.position.x = float(target.x)
+            label.pose.position.y = float(target.y)
+            label.pose.position.z = 1.35
+            label.pose.orientation.w = 1.0
+            label.scale.z = 0.42
+            label.color = ColorRGBA(r=1.0, g=0.0, b=1.0, a=1.0)
+            label.text = "DYNAMIC TARGET"
+            markers.append(label)
+            route_sample = self._lateral_route.sample(self._lateral_s)
+            right = Marker()
+            right.header.frame_id = self.frame_id
+            right.header.stamp = stamp
+            right.ns = "route_right"
+            right.id = 4
+            right.type = Marker.ARROW
+            right.action = Marker.ADD
+            right.pose.orientation.w = 1.0
+            right.scale.x = 0.10
+            right.scale.y = 0.22
+            right.scale.z = 0.30
+            right.color = ColorRGBA(r=1.0, g=1.0, b=0.0, a=1.0)
+            right.points = [
+                Point(x=route_sample.x, y=route_sample.y, z=0.25),
+                Point(
+                    x=route_sample.x + 2.0 * math.sin(route_sample.yaw),
+                    y=route_sample.y - 2.0 * math.cos(route_sample.yaw),
+                    z=0.25,
+                ),
+            ]
+            markers.append(right)
+        self._lateral_debug_pub.publish(MarkerArray(markers=markers))
+
+    def _configure_lateral_route(
+        self, lonlat_path, road_start_index, road_end_index, mode
+    ):
+        """Build the directed route frame and mark only motor-road segments."""
+        # Heading alignment is local to one directed route.  In particular, a
+        # new goal may reverse the same OSM edge: carrying ``checked/complete``
+        # over from the previous route would make the front camera keep looking
+        # at the old direction while the estimator searches behind the robot.
+        self._reset_route_alignment()
+        self._lateral_route_generation += 1
+        self._lateral_estimator.reset()
+        self._lateral_pending.clear()
+        self._lateral_route = None
+        self._lateral_s = 0.0
+        self._lateral_robot_d = 0.0
+        self._lateral_target = None
+        self._lateral_target_stamp_ns = None
+        self._lateral_seq_d = None
+        self._lateral_seq_s = None
+        self._lateral_good_frames = 0
+        self._lateral_safety_ok = False
+        self._lateral_safety_reason = "no_target"
+        self._lateral_state = "REFERENCE_ONLY"
+        self._lateral_reason = "route_has_no_motor_segment"
+        if len(lonlat_path) < 2 or mode != "road":
+            return
+        start = road_start_index if road_start_index is not None else 0
+        end = (
+            road_end_index
+            if road_end_index is not None
+            else len(lonlat_path) - 1
+        )
+        motor_highways = set(
+            self.get_parameter("road_right_offset_highways").value
+        )
+        points = [self.enu.to_xy(*lonlat_path[0])]
+        junction_s = (
+            [0.0] if self.graph.is_junction(
+                *lonlat_path[0], highways=motor_highways
+            ) else []
+        )
+        route_s = 0.0
+        motor_segments = []
+        for i in range(len(lonlat_path) - 1):
+            next_xy = self.enu.to_xy(*lonlat_path[i + 1])
+            segment_length = math.hypot(
+                next_xy[0] - points[-1][0], next_xy[1] - points[-1][1]
+            )
+            if segment_length <= 1e-5:
+                continue
+            lon = (lonlat_path[i][0] + lonlat_path[i + 1][0]) * 0.5
+            lat = (lonlat_path[i][1] + lonlat_path[i + 1][1]) * 0.5
+            is_motor = (
+                start <= i < end
+                and self.graph.highway_at(lon, lat) in motor_highways
+            )
+            points.append(next_xy)
+            motor_segments.append(is_motor)
+            route_s += segment_length
+            if self.graph.is_junction(
+                *lonlat_path[i + 1], highways=motor_highways
+            ):
+                junction_s.append(route_s)
+        if len(points) < 2:
+            return
+        self._lateral_route = RouteCorridor(
+            points, motor_segments, junction_s=junction_s,
+            tangent_window=self.get_parameter(
+                "semantic_lateral_tangent_window_m"
+            ).value,
+        )
+        if any(motor_segments):
+            self._lateral_state = "ACQUIRE_BOUNDARY"
+            self._lateral_reason = "waiting_for_semantic_frame"
+
     def _plan_and_send_to_nav(self, start_lonlat, goal_lonlat):
         road_kwargs = dict(
             entries=self.entries,
@@ -1747,6 +2597,11 @@ class RoutePlanner(Node):
         path_z = float(self.get_parameter("network_z").value)
         self._publish_path_msg(
             self.path_pub, lonlat_path, length, label="campus path", z=path_z
+        )
+        # Preserve the unshifted, directed OSM geometry as the longitudinal
+        # reference. Semantic observations may change d, never the route order.
+        self._configure_lateral_route(
+            lonlat_path, road_start_index, road_end_index, mode
         )
 
         step = self.get_parameter("nav_waypoint_spacing_m").value
@@ -1925,7 +2780,194 @@ class RoutePlanner(Node):
             cursor += 1
         return cursor
 
-    def _robot_xy(self):
+    def _advance_nav_cursor_by_route_progress(
+        self, rx, ry, poses, cursor, reach_tol, stop_index=None
+    ):
+        """Retire motor-road anchors by s, not by hitting their OSM lateral d."""
+        limit = len(poses) if stop_index is None else stop_index
+        while cursor < limit:
+            if self._nav_route_motor[cursor]:
+                passed = self._nav_route_s[cursor] <= self._lateral_s + reach_tol
+            else:
+                # Entry/access/direct portions retain exact geometric semantics.
+                passed = self._waypoint_passed(
+                    rx, ry, poses, cursor, reach_tol
+                )
+            if not passed:
+                break
+            cursor += 1
+        return cursor
+
+    def _lateral_closed_loop_required(self):
+        # Before the GPS heading snap, campus-map yaw is not trustworthy and
+        # the robot deliberately has to move to establish it.  Do not deadlock
+        # that bootstrap on a camera corridor expressed in the unaligned frame.
+        if self._heading_status_seen and not self._heading_locked:
+            return False
+        if (
+            not self.get_parameter("semantic_lateral_enabled").value
+            or self.get_parameter("semantic_lateral_shadow_mode").value
+            or self._nav_mode != "road"
+            or self._lateral_route is None
+        ):
+            return False
+        return self._lateral_route.sample(self._lateral_s).motor_road
+
+    def _lateral_closed_loop_pose(self):
+        if self._lateral_target is None:
+            return None
+        if self._lateral_state not in (
+            "TRACK_RIGHT", "SEEK_RIGHT_EDGE", "JUNCTION_GUARD", "HOLD_LAST"
+        ):
+            return None
+        age = (
+            self.get_clock().now().nanoseconds - self._lateral_target_stamp_ns
+        ) / 1e9
+        if age > float(self.get_parameter("semantic_lateral_hold_last_s").value):
+            return None
+        target = self._lateral_target
+        # Reject a result that has fallen behind current route progress while a
+        # slow worker was running.
+        if target.s + 0.5 < self._lateral_s:
+            return None
+        safe, reason = self._lateral_target_is_safe(target.x, target.y)
+        if not safe:
+            self._lateral_state = "DEGRADED_STOP"
+            self._lateral_reason = reason
+            return None
+        pose = PoseStamped()
+        pose.header.frame_id = self.frame_id
+        pose.header.stamp = self.get_clock().now().to_msg()
+        pose.pose.position.x = float(target.x)
+        pose.pose.position.y = float(target.y)
+        qx, qy, qz, qw = _quat_from_yaw(target.yaw)
+        pose.pose.orientation.x = qx
+        pose.pose.orientation.y = qy
+        pose.pose.orientation.z = qz
+        pose.pose.orientation.w = qw
+        return pose
+
+    def _lateral_target_is_safe(self, x, y):
+        """Check a circular footprint in the fused Nav2 local costmap."""
+        grid = self._lateral_costmap
+        if grid is None:
+            return False, "safety_costmap_missing"
+        stamp_ns = self._stamp_ns(grid.header)
+        max_age = float(
+            self.get_parameter("semantic_lateral_costmap_max_age_s").value
+        )
+        if stamp_ns and self.get_clock().now().nanoseconds - stamp_ns > max_age * 1e9:
+            return False, "safety_costmap_stale"
+        target_frame = grid.header.frame_id or self.frame_id
+        if target_frame != self.frame_id:
+            try:
+                transform = self.tf_buffer.lookup_transform(
+                    target_frame, self.frame_id, Time(),
+                    timeout=Duration(seconds=0.05),
+                ).transform
+            except TransformException:
+                return False, "safety_costmap_tf_unavailable"
+            yaw = _yaw_from_quat(transform.rotation)
+            c, s = math.cos(yaw), math.sin(yaw)
+            x, y = (
+                transform.translation.x + c * x - s * y,
+                transform.translation.y + s * x + c * y,
+            )
+        resolution = float(grid.info.resolution)
+        if resolution <= 0.0:
+            return False, "safety_costmap_invalid"
+        origin = grid.info.origin
+        origin_yaw = _yaw_from_quat(origin.orientation)
+        c, s = math.cos(origin_yaw), math.sin(origin_yaw)
+        dx = x - origin.position.x
+        dy = y - origin.position.y
+        local_x = c * dx + s * dy
+        local_y = -s * dx + c * dy
+        center_x = int(math.floor(local_x / resolution))
+        center_y = int(math.floor(local_y / resolution))
+        width = int(grid.info.width)
+        height = int(grid.info.height)
+        radius = float(
+            self.get_parameter("semantic_lateral_safety_radius_m").value
+        )
+        cells = int(math.ceil(radius / resolution))
+        if (
+            center_x - cells < 0 or center_y - cells < 0
+            or center_x + cells >= width or center_y + cells >= height
+        ):
+            return False, "target_outside_safety_costmap"
+        lethal = int(
+            self.get_parameter("semantic_lateral_lethal_occupancy").value
+        )
+        radius2 = radius * radius
+        for gy in range(center_y - cells, center_y + cells + 1):
+            for gx in range(center_x - cells, center_x + cells + 1):
+                cell_dx = (gx + 0.5) * resolution - local_x
+                cell_dy = (gy + 0.5) * resolution - local_y
+                if cell_dx * cell_dx + cell_dy * cell_dy > radius2:
+                    continue
+                value = int(grid.data[gy * width + gx])
+                if value < 0:
+                    return False, "target_footprint_unknown"
+                if value >= lethal:
+                    return False, "target_footprint_lethal"
+        return True, "ok"
+
+    def _shift_target_inward_for_safety(self, target):
+        """Move an obstructed right-side target toward road center, if safe.
+
+        The semantic edge remains the preferred target.  This search is only
+        used when that target's footprint overlaps a lethal fused-costmap cell;
+        it approaches the fitted road center from either side and never crosses
+        it.  Supporting both sides matters while the lateral slew limiter is
+        still moving a robot from the OSM-biased side toward the right edge.
+        Unknown, stale, missing, or out-of-window failures remain fail-closed.
+        """
+        safe, reason = self._lateral_target_is_safe(target.x, target.y)
+        if safe or reason != "target_footprint_lethal":
+            return target, False
+        distance = target.center - target.d
+        if abs(distance) <= 1e-6:
+            return target, False
+        step = max(
+            0.05,
+            float(self.get_parameter(
+                "semantic_lateral_safety_inward_step_m"
+            ).value),
+        )
+        route_sample = self._lateral_route.sample(target.s)
+        direction = math.copysign(1.0, distance)
+        count = int(math.ceil(abs(distance) / step))
+        for index in range(1, count + 1):
+            move = min(abs(distance), index * step)
+            candidate_d = target.d + direction * move
+            candidate_x = (
+                route_sample.x + candidate_d * math.sin(route_sample.yaw)
+            )
+            candidate_y = (
+                route_sample.y - candidate_d * math.cos(route_sample.yaw)
+            )
+            candidate_safe, _ = self._lateral_target_is_safe(
+                candidate_x, candidate_y
+            )
+            if candidate_safe:
+                return replace(
+                    target,
+                    x=float(candidate_x),
+                    y=float(candidate_y),
+                    d=float(candidate_d),
+                    state_reason="costmap_inward_shift",
+                ), True
+        return target, False
+
+    @staticmethod
+    def _shortest_angle(target, current):
+        return math.atan2(
+            math.sin(float(target) - float(current)),
+            math.cos(float(target) - float(current)),
+        )
+
+    def _robot_pose(self):
         robot_frame = self.get_parameter("robot_frame").value
         try:
             tf = self.tf_buffer.lookup_transform(
@@ -1933,12 +2975,239 @@ class RoutePlanner(Node):
             )
         except TransformException:
             return None
-        return tf.transform.translation.x, tf.transform.translation.y
+        return (
+            tf.transform.translation.x,
+            tf.transform.translation.y,
+            _yaw_from_quat(tf.transform.rotation),
+        )
+
+    def _robot_xy(self):
+        pose = self._robot_pose()
+        return None if pose is None else pose[:2]
+
+    def _cancel_route_spin(self):
+        """Cancel only the route-alignment behavior, invalidating callbacks."""
+        self._route_align_seq += 1
+        handle = self._route_align_goal_handle
+        if handle is not None:
+            try:
+                handle.cancel_goal_async()
+            except Exception as exc:  # noqa: BLE001 -- best-effort cancellation
+                self.get_logger().warn(
+                    f"Failed to cancel route-alignment Spin: {exc}"
+                )
+        self._route_align_goal_handle = None
+        self._route_align_pending = False
+        self._route_align_active = False
+
+    def _reset_route_alignment(self):
+        """Start a fresh heading check for a newly selected directed route."""
+        self._cancel_route_spin()
+        self._route_align_checked = False
+        self._route_align_required = False
+        self._route_align_complete = False
+        self._route_align_retries = 0
+        self._route_align_error_rad = None
+
+    def _complete_route_alignment(self):
+        """Admit only fresh, post-turn camera frames into the road fit."""
+        self._route_align_required = False
+        self._route_align_complete = True
+        self._route_align_pending = False
+        self._route_align_active = False
+        self._route_align_goal_handle = None
+        self._lateral_route_generation += 1
+        self._lateral_estimator.reset()
+        self._lateral_pending.clear()
+        self._lateral_target = None
+        self._lateral_target_stamp_ns = None
+        self._lateral_good_frames = 0
+        self._lateral_seq_d = None
+        self._lateral_seq_s = None
+        self._lateral_safety_ok = False
+        self._lateral_safety_reason = "waiting_for_post_align_target"
+        self._lateral_state = "ACQUIRE_BOUNDARY"
+        self._lateral_reason = "waiting_for_post_align_semantic_frame"
+        self.get_logger().info(
+            "Route heading aligned; discarded pre-turn semantic frames and "
+            "started fresh boundary acquisition."
+        )
+
+    def _route_heading_alignment_tick(self, robot_yaw):
+        """Return True while Nav2 driving must wait for an initial in-place turn."""
+        if (
+            not self.get_parameter(
+                "semantic_lateral_align_heading_enable"
+            ).value
+            or self._lateral_route is None
+            or not self.get_parameter("semantic_lateral_enabled").value
+            or self.get_parameter("semantic_lateral_shadow_mode").value
+            or self._nav_mode != "road"
+            or not self._lateral_route.sample(self._lateral_s).motor_road
+        ):
+            self._route_align_complete = True
+            return False
+
+        # Before GPS heading lock, campus_map yaw is not physically meaningful.
+        # Preserve the existing bootstrap (ordinary OSM navigation) until it
+        # locks; _lateral_closed_loop_required() is disabled in the same phase.
+        if self._heading_status_seen and not self._heading_locked:
+            return False
+
+        route_yaw = self._lateral_route.sample(self._lateral_s).yaw
+        error = self._shortest_angle(route_yaw, robot_yaw)
+        self._route_align_error_rad = error
+        enter = math.radians(float(self.get_parameter(
+            "semantic_lateral_align_enter_deg"
+        ).value))
+        exit_angle = math.radians(float(self.get_parameter(
+            "semantic_lateral_align_exit_deg"
+        ).value))
+
+        if not self._route_align_checked:
+            self._route_align_checked = True
+            if abs(error) <= enter:
+                self._route_align_complete = True
+                return False
+            self._route_align_required = True
+            self._route_align_complete = False
+            self.get_logger().info(
+                f"Route begins {math.degrees(error):.1f} deg from camera "
+                "heading; aligning in place before semantic right tracking."
+            )
+
+        if self._route_align_complete:
+            return False
+        self._lateral_state = "ALIGN_ROUTE_HEADING"
+        self._lateral_reason = (
+            f"route_heading_error:{math.degrees(error):.1f}deg"
+        )
+        self._lateral_target = None
+        self._lateral_target_stamp_ns = None
+
+        if self._route_align_pending or self._route_align_active:
+            return True
+        if abs(error) <= exit_angle:
+            self._complete_route_alignment()
+            return False
+
+        maximum = int(self.get_parameter(
+            "semantic_lateral_align_max_retries"
+        ).value)
+        if self._route_align_retries > maximum:
+            self._lateral_state = "DEGRADED_STOP"
+            self._lateral_reason = "route_heading_alignment_failed"
+            return True
+        if self.route_spin_action_client is None:
+            self._lateral_state = "DEGRADED_STOP"
+            self._lateral_reason = "route_spin_client_missing"
+            return True
+        action_name = self.get_parameter(
+            "semantic_lateral_align_action_name"
+        ).value
+        if not self.route_spin_action_client.wait_for_server(timeout_sec=0.2):
+            self._lateral_reason = f"route_spin_unavailable:{action_name}"
+            self.get_logger().warn(
+                f"Holding rearward Campus route: Spin action '{action_name}' "
+                "is unavailable.",
+                throttle_duration_sec=5.0,
+            )
+            return True
+
+        goal = Spin.Goal()
+        goal.target_yaw = float(error)
+        goal.time_allowance = Duration(
+            seconds=float(self.get_parameter(
+                "semantic_lateral_align_timeout_s"
+            ).value)
+        ).to_msg()
+        self._route_align_pending = True
+        self._route_align_seq += 1
+        seq = self._route_align_seq
+        future = self.route_spin_action_client.send_goal_async(goal)
+        future.add_done_callback(
+            lambda f, s=seq: self._on_route_spin_response(f, s)
+        )
+        return True
+
+    def _on_route_spin_response(self, future, seq):
+        try:
+            handle = future.result()
+        except Exception as exc:  # noqa: BLE001 -- action transport failure
+            if seq == self._route_align_seq:
+                self._route_align_pending = False
+                self._route_align_retries += 1
+                self._lateral_reason = f"route_spin_send_error:{exc}"
+            return
+        if seq != self._route_align_seq:
+            if handle.accepted:
+                handle.cancel_goal_async()
+            return
+        self._route_align_pending = False
+        if not handle.accepted:
+            self._route_align_retries += 1
+            self._lateral_reason = "route_spin_rejected"
+            return
+        self._route_align_goal_handle = handle
+        self._route_align_active = True
+        handle.get_result_async().add_done_callback(
+            lambda f, s=seq: self._on_route_spin_result(f, s)
+        )
+
+    def _on_route_spin_result(self, future, seq):
+        if seq != self._route_align_seq:
+            return
+        self._route_align_goal_handle = None
+        self._route_align_active = False
+        try:
+            wrapped = future.result()
+            result = wrapped.result
+            status = getattr(wrapped, "status", GoalStatus.STATUS_SUCCEEDED)
+            error_code = int(getattr(result, "error_code", 0))
+            error_msg = str(getattr(result, "error_msg", ""))
+        except Exception as exc:  # noqa: BLE001 -- action transport failure
+            status = GoalStatus.STATUS_ABORTED
+            error_code = -1
+            error_msg = str(exc)
+        if status != GoalStatus.STATUS_SUCCEEDED or error_code:
+            self._route_align_retries += 1
+            self._lateral_reason = (
+                f"route_spin_failed:{status}/{error_code}:{error_msg}"
+            )
+            self.get_logger().warn(
+                "Route-alignment Spin failed; holding navigation and retrying "
+                f"within policy ({self._lateral_reason})."
+            )
+            return
+
+        pose = self._robot_pose()
+        if pose is None:
+            self._lateral_reason = "route_spin_done_waiting_for_tf"
+            return
+        route_yaw = self._lateral_route.sample(self._lateral_s).yaw
+        error = self._shortest_angle(route_yaw, pose[2])
+        self._route_align_error_rad = error
+        exit_angle = math.radians(float(self.get_parameter(
+            "semantic_lateral_align_exit_deg"
+        ).value))
+        if abs(error) <= exit_angle:
+            self._complete_route_alignment()
+        else:
+            self._route_align_retries += 1
+            self._lateral_reason = (
+                f"route_spin_residual:{math.degrees(error):.1f}deg"
+            )
 
     def _start_batched_route(self, poses, entry_index=None, mode="road"):
         """Store the full route and let the timer feed it to Nav2 in batches."""
         self._cancel_nav2_goal()
         self._cancel_final_goal()
+        self._cancel_route_spin()
+        self._route_align_checked = False
+        self._route_align_required = False
+        self._route_align_complete = False
+        self._route_align_retries = 0
+        self._route_align_error_rad = None
         self._final_phase = False
         self._final_retry = 0
         self._final_cancel_pending = False
@@ -1946,6 +3215,21 @@ class RoutePlanner(Node):
         self._nav_mode = mode
         self._nav_entry_index = entry_index
         self._nav_route_poses = list(poses)
+        self._nav_route_s = []
+        self._nav_route_motor = []
+        if self._lateral_route is not None:
+            hint = 0.0
+            for pose in self._nav_route_poses:
+                px, py = self._pose_xy(pose)
+                projection = self._lateral_route.project(
+                    px, py, s_hint=hint, search_back=8.0,
+                    search_forward=100.0,
+                )
+                hint = max(hint, projection.s)
+                self._nav_route_s.append(projection.s)
+                self._nav_route_motor.append(
+                    self._lateral_route.sample(projection.s).motor_road
+                )
         self._nav_cursor = 0
         self._nav_goal_active = False
         self._nav_send_pending = False
@@ -1963,10 +3247,10 @@ class RoutePlanner(Node):
     def _nav_batch_tick(self):
         if not self._nav_running or not self._nav_route_poses:
             return
-        robot = self._robot_xy()
-        if robot is None:
+        robot_pose = self._robot_pose()
+        if robot_pose is None:
             return
-        rx, ry = robot
+        rx, ry, robot_yaw = robot_pose
         poses = self._nav_route_poses
         n = len(poses)
 
@@ -1985,12 +3269,30 @@ class RoutePlanner(Node):
         precise_final = self._precise_final_enabled()
         reach_tol = float(self.get_parameter("nav2_reach_tol_m").value)
         prev_cursor = self._nav_cursor
+        if self._lateral_route is not None:
+            projection = self._lateral_route.project(
+                rx, ry, s_hint=self._lateral_s
+            )
+            # Route progress is monotonic for a forward Campus Nav route. The
+            # hint window prevents a nearby parallel/self-crossing segment from
+            # stealing the projection.
+            self._lateral_s = max(self._lateral_s, projection.s)
+            self._lateral_robot_d = projection.d
+        if self._route_heading_alignment_tick(robot_yaw):
+            return
         # With the precise approach the last pose belongs to the final phase, so
         # the fly-through tolerance must not consume it.
         stop_index = n - 1 if precise_final else n
-        self._nav_cursor = self._advance_nav_cursor(
-            rx, ry, poses, self._nav_cursor, reach_tol, stop_index=stop_index
-        )
+        if len(self._nav_route_s) == n:
+            self._nav_cursor = self._advance_nav_cursor_by_route_progress(
+                rx, ry, poses, self._nav_cursor, reach_tol,
+                stop_index=stop_index,
+            )
+        else:
+            self._nav_cursor = self._advance_nav_cursor(
+                rx, ry, poses, self._nav_cursor, reach_tol,
+                stop_index=stop_index,
+            )
         cursor_advanced = self._nav_cursor > prev_cursor
         if cursor_advanced:
             self.get_logger().info(
@@ -2015,6 +3317,33 @@ class RoutePlanner(Node):
             self._nav_running = False
             self._nav_goal_active = False
             self.get_logger().info("Batched route complete (all waypoints reached).")
+            return
+
+        lateral_required = self._lateral_closed_loop_required()
+        lateral_pose = self._lateral_closed_loop_pose() if lateral_required else None
+        if lateral_required and lateral_pose is None:
+            # On a motor segment, closed-loop mode must fail closed. Falling
+            # through to the biased OSM waypoint recreates the original hazard.
+            self._cancel_nav2_goal()
+            return
+        if lateral_pose is not None:
+            key = (
+                self._nav_cursor,
+                self._nav_cursor + 1,
+                "semantic_lateral",
+                self._lateral_target_seq,
+            )
+            if key == self._nav_sent_key and self._nav_goal_active:
+                return
+            if not self._send_nav2_waypoints([lateral_pose], preempt=True):
+                return
+            self._nav_sent_key = key
+            self._nav_batch_last_xy = self._pose_xy(lateral_pose)
+            self._nav_force_resend = False
+            self.get_logger().info(
+                f"Feeding Nav2 semantic right-side target at route "
+                f"s={self._lateral_target.s:.1f} m."
+            )
             return
 
         # Active Nav2 goal still starts at a waypoint we already dropped -> must
@@ -2082,8 +3411,14 @@ class RoutePlanner(Node):
         self._nav_force_resend = False
 
     def _cancel_nav2_goal(self):
+        # Invalidate both accepted goals and send requests whose response has
+        # not arrived yet. Otherwise a rearward route could start Spin while a
+        # stale NavigateThroughPoses request becomes accepted concurrently.
+        self._nav_goal_seq += 1
+        self._nav_send_pending = False
         handle = self._nav_goal_handle
         if handle is None:
+            self._nav_goal_active = False
             return
         try:
             handle.cancel_goal_async()
@@ -2217,9 +3552,11 @@ class RoutePlanner(Node):
         )
 
     def _on_final_goal_response(self, future, seq):
-        if seq != self._final_goal_seq:
-            return  # superseded by a newer send
         goal_handle = future.result()
+        if seq != self._final_goal_seq:
+            if goal_handle.accepted:
+                goal_handle.cancel_goal_async()
+            return
         self._nav_send_pending = False
         if not goal_handle.accepted:
             self.get_logger().warn("Nav2 rejected the final campus goal.")
@@ -2257,6 +3594,8 @@ class RoutePlanner(Node):
         self._finish_route("Nav2 reported the final pose reached.")
 
     def _cancel_final_goal(self):
+        self._final_goal_seq += 1
+        self._nav_send_pending = False
         handle = self._final_goal_handle
         if handle is None:
             self._final_goal_active = False
@@ -2271,6 +3610,7 @@ class RoutePlanner(Node):
     def _finish_route(self, reason, warn=False):
         self._cancel_final_goal()
         self._cancel_nav2_goal()
+        self._cancel_route_spin()
         self._nav_running = False
         self._final_phase = False
         self._final_cancel_pending = False
@@ -2473,9 +3813,14 @@ class RoutePlanner(Node):
         return True
 
     def _on_nav2_goal_response(self, future, seq):
-        if seq != self._nav_goal_seq:
-            return  # superseded by a newer send
         goal_handle = future.result()
+        if seq != self._nav_goal_seq:
+            # The request was still in flight when a new route/preempt arrived.
+            # It must be explicitly cancelled after acceptance; merely ignoring
+            # its callback leaves Nav2 executing the stale route.
+            if goal_handle.accepted:
+                goal_handle.cancel_goal_async()
+            return
         self._nav_send_pending = False
         if not goal_handle.accepted:
             self.get_logger().warn("Nav2 rejected campus waypoint goal.")
@@ -2529,6 +3874,14 @@ class RoutePlanner(Node):
     def _plan(self, start_lonlat, goal_lonlat):
         """Compatibility helper for older manual calls."""
         self._plan_and_send_to_nav(start_lonlat, goal_lonlat)
+
+    def destroy_node(self):
+        """Stop the semantic worker before tearing down ROS entities."""
+        self._cancel_route_spin()
+        if self._lateral_worker is not None:
+            self._lateral_worker.shutdown(wait=False, cancel_futures=True)
+            self._lateral_worker = None
+        return super().destroy_node()
 
 
 def main():

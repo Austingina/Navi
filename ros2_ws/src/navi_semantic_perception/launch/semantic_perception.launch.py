@@ -76,6 +76,11 @@ def _nodes(context):
             'extrinsics_source': extrinsics_source,
             'color_distortion_model': value('color_distortion_model'),
             'output_topic': cloud_topic,
+            # Isaac's camera writers are reliable and are reached across a routed WLAN.
+            # Reliable readers recover missing DDS fragments instead of discarding an
+            # entire 640x360 image after one lost UDP datagram.  RealSense sensor-data
+            # publishers remain on their normal best-effort profile.
+            'reliable_image_input': sim,
             'use_sim_time': use_sim_time,
         }],
     )]
@@ -99,6 +104,7 @@ def _nodes(context):
                 'color_height': camera['color_size'][1],
                 'max_pair_dt': camera['max_pair_dt'],
                 'cloud_topic': cloud_topic,
+                'reliable_image_input': sim,
                 'use_sim_time': use_sim_time,
             }],
         ))
@@ -129,7 +135,11 @@ def generate_launch_description():
                                           'independent of use_sim_time'),
         DeclareLaunchArgument('segmentation', default_value='sam3_trt',
                               choices=['sam3_trt', 'sam3', 'trt', 'none']),
-        DeclareLaunchArgument('target_rate', default_value='3.0',
+        # Isaac + TensorRT + RViz share the embedded GPU.  At 3 Hz this platform
+        # repeatedly enters over-current throttling and the Isaac image writers
+        # eventually starve.  1.5 Hz is still responsive for the 2.5 m receding
+        # target while leaving enough render/power headroom.
+        DeclareLaunchArgument('target_rate', default_value='1.5',
                               description='Input cloud rate; busy SAM3 skips older frames'),
         DeclareLaunchArgument('sam3_model_path', default_value=str(checkpoint_directory()),
                               description='Directory containing model.safetensors'),

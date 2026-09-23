@@ -5,7 +5,7 @@ Panels:
     Property Tree Widget:
       Expanded: ~
       Splitter Ratio: 0.4571428596973419
-    Tree Height: 401
+    Tree Height: 344
   - Class: rviz_common/Selection
     Name: Selection
   - Class: rviz_common/Views
@@ -43,6 +43,8 @@ Visualization Manager:
       Value: true
     - Class: rviz_default_plugins/TF
       Enabled: false
+      Filter (blacklist): ""
+      Filter (whitelist): ""
       Frame Timeout: 15
       Frames:
         All Enabled: true
@@ -109,23 +111,32 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /gps/fix
+      Use Local Map:
+        Meter per Pixel (Zoom 0): 0
+        Origin CRS: ""
+        "Origin X ": 0
+        "Origin Y ": 0
+        Value: false
       Value: true
+      Visualize in UTM Frame: false
       Zoom: 18
     - Class: rviz_default_plugins/Image
-      Enabled: true
+      Enabled: false
       Max Value: 1
       Median window: 5
       Min Value: 0
-      Name: /zed/rgb/image_raw
+      Name: /semantic/camera1/segmentation_color
       Normalize Range: true
       Topic:
         Depth: 5
         Durability Policy: Volatile
         History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /zed/rgb/image_raw
-      Value: true
+        Reliability Policy: Best Effort
+        Value: /semantic/camera1/segmentation_color
+      Value: false
     - Alpha: 0.699999988079071
+      Binary representation: false
+      Binary threshold: 100
       Class: rviz_default_plugins/Map
       Color Scheme: costmap
       Draw Behind: true
@@ -147,6 +158,8 @@ Visualization Manager:
       Use Timestamp: false
       Value: true
     - Alpha: 0.699999988079071
+      Binary representation: false
+      Binary threshold: 100
       Class: rviz_default_plugins/Map
       Color Scheme: costmap
       Draw Behind: false
@@ -291,7 +304,7 @@ Visualization Manager:
       Enabled: true
       Name: /campus_network
       Namespaces:
-        road_network: true
+        {}
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -329,9 +342,49 @@ Visualization Manager:
       Value: true
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
-      Name: /campus_nav_waypoint_markers
+      Name: /campus_lateral/debug
       Namespaces:
         {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /campus_lateral/debug
+      Value: true
+    - Alpha: 1
+      Buffer Length: 1
+      Class: rviz_default_plugins/Path
+      Color: 213; 64; 255
+      Enabled: true
+      Head Diameter: 0.30000001192092896
+      Head Length: 0.20000000298023224
+      Length: 0.30000001192092896
+      Line Style: Billboards
+      Line Width: 0.15000000596046448
+      Name: /campus_lateral/adapted_path
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Pose Color: 213; 64; 255
+      Pose Style: Axes
+      Radius: 0.029999999329447746
+      Shaft Diameter: 0.10000000149011612
+      Shaft Length: 0.10000000149011612
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /campus_lateral/adapted_path
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: /campus_nav_waypoint_markers
+      Namespaces:
+        nav_wp: true
       Topic:
         Depth: 5
         Durability Policy: Transient Local
@@ -343,7 +396,7 @@ Visualization Manager:
       Enabled: true
       Name: /campus_entry_markers
       Namespaces:
-        {}
+        campus_entry: true
       Topic:
         Depth: 5
         Durability Policy: Transient Local
@@ -378,7 +431,6 @@ Visualization Manager:
       Topic:
         Depth: 5
         Durability Policy: Volatile
-        Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /cloud_registered_body
@@ -396,7 +448,7 @@ Visualization Manager:
         Depth: 5
         Durability Policy: Volatile
         History Policy: Keep Last
-        Reliability Policy: Reliable
+        Reliability Policy: Best Effort
         Value: /zed/rgb/image_raw
       Value: true
     - Alpha: 1
@@ -411,7 +463,7 @@ Visualization Manager:
       Color: 255; 255; 255
       Color Transformer: Intensity
       Decay Time: 0
-      Enabled: true
+      Enabled: false
       Invert Rainbow: false
       Max Color: 255; 255; 255
       Max Intensity: 0
@@ -426,13 +478,12 @@ Visualization Manager:
       Topic:
         Depth: 5
         Durability Policy: Volatile
-        Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /livox/points
       Use Fixed Frame: true
       Use rainbow: true
-      Value: true
+      Value: false
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
@@ -520,6 +571,8 @@ Visualization Manager:
       Value: true
       Visual Enabled: true
     - Alpha: 0.699999988079071
+      Binary representation: false
+      Binary threshold: 100
       Class: rviz_default_plugins/Map
       Color Scheme: map
       Draw Behind: false
@@ -577,7 +630,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 15.341469764709473
+      Distance: 53.366065979003906
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -592,22 +645,24 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 1.3303980827331543
+      Pitch: 1.5697963237762451
       Target Frame: base_link
       Value: Orbit (rviz_default_plugins)
-      Yaw: 1.2803981304168701
+      Yaw: 1.9453977346420288
     Saved: ~
 Window Geometry:
+  /semantic/camera1/segmentation_color:
+    collapsed: false
   /zed/rgb/image_raw:
     collapsed: false
   Displays:
     collapsed: false
-  Height: 736
+  Height: 731
   Hide Left Dock: false
   Hide Right Dock: true
   Navigation 2:
     collapsed: false
-  QMainWindow State: 000000ff00000000fd00000001000000000000016e00000286fc0200000009fb000000100044006900730070006c006100790073010000003d000001ce000000c900fffffffb0000001200530065006c0065006300740069006f006e000000025a000000d40000005c00fffffffb0000000a00560069006500770073000000026d0000010f000000a400fffffffb0000000a0049006d0061006700650100000366000001080000000000000000fb00000018004e0061007600690067006100740069006f006e0020003200000002550000022f0000013900fffffffb0000001e0054006f006f006c002000500072006f0070006500720074006900650073000000026a000000900000005c00fffffffb0000000a0049006d006100670065000000026a0000016c0000000000000000fb00000024002f007a00650064002f007200670062002f0069006d006100670065005f00720061007700000002890000014d0000002800fffffffb00000024002f007a00650064002f007200670062002f0069006d006100670065005f0072006100770100000211000000b20000002800ffffff000003460000028600000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  QMainWindow State: 000000ff00000000fd00000001000000000000016e00000281fc020000000afb000000100044006900730070006c006100790073010000003d00000195000000c900fffffffb0000001200530065006c0065006300740069006f006e000000025a000000d40000005c00fffffffb0000000a00560069006500770073000000026d0000010f000000a400fffffffb0000000a0049006d0061006700650100000366000001080000000000000000fb00000018004e0061007600690067006100740069006f006e0020003200000002550000022f000001df00fffffffb0000001e0054006f006f006c002000500072006f0070006500720074006900650073000000026a000000900000005c00fffffffb0000000a0049006d006100670065000000026a0000016c0000000000000000fb00000024002f007a00650064002f007200670062002f0069006d006100670065005f00720061007700000002890000014d0000001600fffffffb00000024002f007a00650064002f007200670062002f0069006d006100670065005f0072006100770100000211000000b20000000000000000fb00000048002f00730065006d0061006e007400690063002f00630061006d0065007200610031002f007300650067006d0065006e0074006100740069006f006e005f0063006f006c006f007201000001d8000000e60000001600ffffff000003460000028100000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
   Selection:
     collapsed: false
   Tool Properties:
@@ -616,4 +671,4 @@ Window Geometry:
     collapsed: false
   Width: 1210
   X: 70
-  Y: 27
+  Y: 32

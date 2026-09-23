@@ -253,8 +253,9 @@ local_costmap:
             samples_to_max_cost: 1
             mark_confidence: 128
             dominant_priority: False
-            # 前视相机：图像右侧对应机器人前进方向的右侧。
-            lateral_gradient: True
+            # 横向引导由 Campus Nav 的路线坐标系适配器负责；图像右侧在
+            # 车头朝向路沿时并不等于道路右侧，因此关闭旧的图像梯度。
+            lateral_gradient: False
             lateral_right_cost: 110
             lateral_left_cost: 220
             lateral_min_width_pixels: 30
@@ -345,7 +346,8 @@ global_costmap:
             samples_to_max_cost: 1
             mark_confidence: 128
             dominant_priority: False
-            lateral_gradient: True
+            # 与 local 一致：关闭基于图像列方向的横向梯度。
+            lateral_gradient: False
             lateral_right_cost: 110
             lateral_left_cost: 220
             lateral_min_width_pixels: 30

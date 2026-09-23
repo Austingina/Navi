@@ -31,11 +31,87 @@
     nav_waypoints_topic: campus_nav_waypoints
     nav_waypoint_markers_topic: campus_nav_waypoint_markers
     nav_waypoint_spacing_m: 4.0
-    # Only motor-road OSM ways are shifted. footway/path/pedestrian and every
-    # unlisted highway type remain on their mapped geometry.
+    # Motor-road whitelist shared by the route-frame semantic adapter.
+    # footway/path/pedestrian and every unlisted type remain reference-only.
     road_right_offset_highways:
       [service, residential, unclassified, tertiary, tertiary_link]
-    road_right_offset_m: 4.0
+    # Legacy fixed shift is disabled. Physical road boundaries now determine d.
+    road_right_offset_m: 0.0
+    # Closed-loop mode: on the motor-road whitelist, a fresh and costmap-safe
+    # measured right-side target replaces the biased OSM waypoint sent to Nav2.
+    # Missing/stale/unsafe targets fail closed by cancelling the Nav2 goal.
+    semantic_lateral_enabled: true
+    semantic_lateral_shadow_mode: false
+    semantic_lateral_segmentation_topic: /semantic/camera1/segmentation
+    semantic_lateral_confidence_topic: /semantic/camera1/confidence
+    semantic_lateral_cloud_topic: /semantic/camera1/points
+    semantic_lateral_labels_topic: /semantic/camera1/label_info
+    semantic_lateral_road_class: road
+    semantic_lateral_min_pixel_confidence: 128
+    semantic_lateral_pixel_stride: 2
+    # Road mask touching the horizontal image border is a censored free-space
+    # frontier, not a measured curb. It may guide SEEK_RIGHT_EDGE but may not
+    # update the tracked physical road width.
+    semantic_lateral_image_edge_margin_px: 8
+    semantic_lateral_max_frame_age_s: 0.8
+    semantic_lateral_near_m: 1.0
+    semantic_lateral_far_m: 7.0
+    semantic_lateral_bin_size_m: 0.5
+    semantic_lateral_limit_m: 12.0
+    semantic_lateral_min_points_per_bin: 20
+    semantic_lateral_width_min_m: 2.5
+    semantic_lateral_width_max_m: 15.0
+    # Keep the complete 0.75 m safety footprint inside the 10x10 m rolling
+    # local costmap even when the robot and target lie on opposite sides of the
+    # OSM reference.  A 4 m longitudinal lookahead could put the target just
+    # beyond the 5 m half-extent and deadlock closed-loop dispatch.
+    semantic_lateral_lookahead_m: 2.5
+    semantic_lateral_inside_margin_m: 0.75
+    semantic_lateral_min_target_confidence: 0.45
+    # SAM3 is intentionally rate-limited and currently arrives near 1 Hz over
+    # the routed WLAN.  Two seconds absorbs normal jitter without making a
+    # genuinely lost target linger for long.
+    semantic_lateral_hold_last_s: 2.0
+    semantic_lateral_acquire_frames: 3
+    semantic_lateral_max_lateral_step_m: 0.4
+    # Fit road center/width as a smooth lateral-offset model relative to the
+    # directed OSM route, then filter that model in route coordinates.
+    semantic_lateral_filter_alpha: 0.25
+    semantic_lateral_fit_max_slope: 0.35
+    semantic_lateral_center_innovation_m: 0.6
+    semantic_lateral_width_innovation_m: 0.6
+    # Freeze the last confirmed center offset and width across topological
+    # intersections; release only after three consistent post-junction frames.
+    semantic_lateral_junction_guard_before_m: 4.0
+    semantic_lateral_junction_guard_after_m: 3.0
+    semantic_lateral_junction_release_frames: 3
+    # Blend the OSM tangent through polyline corners so a fixed lateral offset
+    # follows a turn continuously instead of jumping when the segment changes.
+    semantic_lateral_tangent_window_m: 1.5
+    # Replan on meaningful lateral change or longitudinal progress separately.
+    # Normal forward motion must not be mistaken for lateral target noise.
+    semantic_lateral_target_move_m: 0.35
+    semantic_lateral_target_progress_m: 1.0
+    # If a newly selected route initially points behind the front camera, use
+    # Nav2's collision-checked Spin behavior before requiring a semantic target.
+    semantic_lateral_align_heading_enable: true
+    semantic_lateral_align_enter_deg: 60.0
+    semantic_lateral_align_exit_deg: 20.0
+    semantic_lateral_align_action_name: spin
+    semantic_lateral_align_timeout_s: 45.0
+    semantic_lateral_align_max_retries: 1
+    # Fused Nav2 grid includes Livox obstacles + elevation/terrain. Closed-loop
+    # mode fails stopped unless the whole target footprint is known and nonlethal.
+    semantic_lateral_safety_costmap_topic: /local_costmap/costmap
+    semantic_lateral_safety_radius_m: 0.75
+    # If the slew-limited target overlaps a lethal cell, search toward the
+    # fitted road center at this resolution. Never crosses the center.
+    semantic_lateral_safety_inward_step_m: 0.2
+    semantic_lateral_lethal_occupancy: 99
+    semantic_lateral_costmap_max_age_s: 1.0
+    semantic_lateral_debug_topic: /campus_lateral/debug
+    semantic_lateral_target_topic: /campus_lateral/adapted_path
+    semantic_lateral_status_topic: /campus_lateral/status
     nav_waypoint_marker_size_m: 0.8
     send_to_nav2: true
     nav2_action_name: navigate_through_poses
