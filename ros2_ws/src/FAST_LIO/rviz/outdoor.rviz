@@ -100,7 +100,7 @@ Visualization Manager:
       Blocks: 8
       Class: rviz_satellite/AerialMap
       Draw Behind: false
-      Enabled: true
+      Enabled: false
       Name: /gps/fix
       Object URI: https://tile.openstreetmap.org/{z}/{x}/{y}.png
       TF tolerance: 0.10000000149011612
@@ -117,11 +117,11 @@ Visualization Manager:
         "Origin X ": 0
         "Origin Y ": 0
         Value: false
-      Value: true
+      Value: false
       Visualize in UTM Frame: false
       Zoom: 18
     - Class: rviz_default_plugins/Image
-      Enabled: false
+      Enabled: true
       Max Value: 1
       Median window: 5
       Min Value: 0
@@ -133,7 +133,7 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Best Effort
         Value: /semantic/camera1/segmentation_color
-      Value: false
+      Value: true
     - Alpha: 0.699999988079071
       Binary representation: false
       Binary threshold: 100
@@ -304,7 +304,7 @@ Visualization Manager:
       Enabled: true
       Name: /campus_network
       Namespaces:
-        {}
+        road_network: true
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -344,7 +344,12 @@ Visualization Manager:
       Enabled: true
       Name: /campus_lateral/debug
       Namespaces:
-        {}
+        osm_route_reference: true
+        right_target: true
+        right_target_label: true
+        road_boundaries: true
+        route_right: true
+        semantic_road_points: true
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -630,7 +635,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 53.366065979003906
+      Distance: 35.97556686401367
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1

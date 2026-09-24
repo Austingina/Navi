@@ -98,14 +98,46 @@ class RouteCorridor:
             self.motor = flags
 
     def junction_in_guard(self, s, before, after):
-        """Return the guarded junction at ``s``, or None outside all guards."""
-        candidates = [
-            junction for junction in self.junction_s
-            if junction - before <= float(s) <= junction + after
-        ]
-        if not candidates:
-            return None
-        return min(candidates, key=lambda value: abs(value - s))
+        """Return a stable guard id, merging overlapping junction zones.
+
+        Two close junctions must behave as one intersection.  Returning the
+        nearest junction makes the id switch halfway through an overlapping
+        pair, which re-latches the corridor from an already contaminated
+        intersection observation.  The first junction in each connected guard
+        interval is therefore its stable identifier.
+        """
+        position = float(s)
+        for start, end, guard_id in self.junction_guard_intervals(before, after):
+            if start <= position <= end:
+                return guard_id
+        return None
+
+    def junction_guard_intervals(self, before, after):
+        """Return merged ``(start_s, end_s, guard_id)`` guard intervals."""
+        if not self.junction_s:
+            return ()
+        before = max(0.0, float(before))
+        after = max(0.0, float(after))
+        intervals = []
+        group_first = self.junction_s[0]
+        group_last = group_first
+        for junction in self.junction_s[1:]:
+            if junction - before <= group_last + after:
+                group_last = junction
+                continue
+            intervals.append((
+                max(0.0, group_first - before),
+                min(self.total_length, group_last + after),
+                group_first,
+            ))
+            group_first = junction
+            group_last = junction
+        intervals.append((
+            max(0.0, group_first - before),
+            min(self.total_length, group_last + after),
+            group_first,
+        ))
+        return tuple(intervals)
 
     def _position(self, s):
         s = float(np.clip(s, 0.0, self.total_length))
@@ -253,6 +285,7 @@ class RoadBoundaryEstimator:
         self._guard_s = None
         self._guard_center = None
         self._guard_half_width = None
+        self._guard_d = None
         self._guard_confidence = 0.0
         self._release_candidate = None
         self._release_good = 0
@@ -338,7 +371,7 @@ class RoadBoundaryEstimator:
         return self._target_from_model(
             route, target_s, self._guard_center, self._guard_half_width,
             self._guard_confidence, bin_s, junction_guard=True,
-            state_reason=reason,
+            state_reason=reason, target_d_override=self._guard_d,
         )
 
     def estimate(
@@ -378,6 +411,24 @@ class RoadBoundaryEstimator:
                     self.inside_margin,
                     self._half_width + self._half_width_slope * ds,
                 )
+                # Do not perform a lane change inside an intersection.  OSM
+                # chooses the branch and heading, while the achieved vehicle
+                # offset at guard entry is held through the complete junction.
+                desired_d = (
+                    self._guard_center + self._guard_half_width
+                    - self.inside_margin
+                )
+                if robot_d is None:
+                    self._guard_d = desired_d
+                else:
+                    left_limit = (
+                        self._guard_center - self._guard_half_width
+                        + self.inside_margin
+                    )
+                    right_limit = desired_d
+                    self._guard_d = float(np.clip(
+                        robot_d, left_limit, right_limit
+                    ))
                 self._guard_confidence = self._model_confidence
                 self._release_candidate = None
                 self._release_good = 0
@@ -616,6 +667,7 @@ class RoadBoundaryEstimator:
             self._guard_s = None
             self._guard_center = None
             self._guard_half_width = None
+            self._guard_d = None
             self._release_candidate = None
             self._release_good = 0
 

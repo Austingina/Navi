@@ -377,6 +377,50 @@ def test_junction_freezes_prejunction_center_and_width_until_stable_release():
     assert released.width < before.width
 
 
+def test_compound_junctions_share_one_guard_interval():
+    route = RouteCorridor(
+        [(0.0, 0.0), (30.0, 0.0)], [True], junction_s=[10.0, 15.0]
+    )
+
+    assert route.junction_in_guard(6.0, before=4.0, after=3.0) == 10.0
+    assert route.junction_in_guard(12.0, before=4.0, after=3.0) == 10.0
+    assert route.junction_in_guard(17.9, before=4.0, after=3.0) == 10.0
+    assert route.junction_in_guard(18.1, before=4.0, after=3.0) is None
+
+
+def test_junction_guard_intervals_match_merged_guard_logic():
+    route = RouteCorridor(
+        [(0.0, 0.0), (30.0, 0.0)], [True], junction_s=[1.0, 6.0, 20.0]
+    )
+    assert route.junction_guard_intervals(before=4.0, after=3.0) == (
+        (0.0, 9.0, 1.0),
+        (16.0, 23.0, 20.0),
+    )
+
+
+def test_junction_holds_achieved_robot_offset_instead_of_changing_lane():
+    route = RouteCorridor(
+        [(0.0, 0.0), (30.0, 0.0)], [True], junction_s=[10.0]
+    )
+    estimator = RoadBoundaryEstimator(
+        min_points=10, junction_guard_before=4.0,
+        junction_guard_after=3.0,
+    )
+    road = _road_points(
+        np.linspace(3.0, 9.0, 49), np.linspace(-3.0, 3.0, 81)
+    )
+    fitted, _ = estimator.estimate(route, road, s_robot=2.0, robot_d=-1.25)
+    guarded, reason = estimator.estimate(
+        route, np.empty((0, 2), dtype=float),
+        s_robot=6.5, robot_d=-1.25,
+    )
+
+    assert fitted.d > -1.25  # The normal target still prefers the right edge.
+    assert reason == "junction_guard"
+    assert guarded.junction_guard
+    assert math.isclose(guarded.d, -1.25, abs_tol=1e-6)
+
+
 def test_closed_loop_continues_driving_a_guarded_junction_target():
     planner = RoutePlanner.__new__(RoutePlanner)
     planner.frame_id = "campus_map"
@@ -407,6 +451,14 @@ def _safety_planner(grid):
     values = {
         "semantic_lateral_costmap_max_age_s": 1.0,
         "semantic_lateral_safety_radius_m": 0.75,
+        "semantic_lateral_safety_inward_step_m": 0.2,
+        "semantic_lateral_inside_margin_m": 0.75,
+        "semantic_lateral_avoid_max_lookahead_m": 5.0,
+        "semantic_lateral_avoid_release_frames": 3,
+        "semantic_lateral_min_lookahead_m": 0.6,
+        "semantic_lateral_safety_lookahead_step_m": 0.25,
+        "semantic_lateral_min_goal_distance_m": 1.3,
+        "semantic_lateral_far_m": 7.0,
         "semantic_lateral_lethal_occupancy": 99,
     }
     planner.get_parameter = lambda name: SimpleNamespace(value=values[name])
@@ -431,6 +483,256 @@ def test_fused_costmap_footprint_gate_rejects_lethal_cell():
     safe, reason = planner._lateral_target_is_safe(0.0, 0.0)
     assert not safe
     assert reason == "target_footprint_lethal"
+
+
+def test_lateral_slew_is_anchored_to_robot_not_previous_target():
+    planner = RoutePlanner.__new__(RoutePlanner)
+    planner._lateral_route = RouteCorridor(
+        [(0.0, 0.0), (10.0, 0.0)], [True]
+    )
+    planner._lateral_robot_d = -2.0
+    planner.get_parameter = lambda _name: SimpleNamespace(value=0.4)
+    target = LateralTarget(
+        x=4.0, y=-2.0, yaw=0.0, s=4.0, d=2.0,
+        left=-3.0, right=3.0, confidence=1.0, bins=(),
+        center=0.0, width=6.0,
+    )
+
+    limited = planner._limit_lateral_target_from_robot(target)
+
+    assert math.isclose(limited.d, -1.6, abs_tol=1e-6)
+    assert math.isclose(limited.y, 1.6, abs_tol=1e-6)
+
+
+def test_outside_target_recedes_along_osm_branch_until_footprint_is_safe():
+    grid = OccupancyGrid()
+    grid.header.frame_id = "campus_map"
+    grid.info.resolution = 0.1
+    grid.info.width = grid.info.height = 100
+    grid.info.origin.position.x = grid.info.origin.position.y = -5.0
+    grid.info.origin.orientation.w = 1.0
+    grid.data = [0] * 10000
+    planner = _safety_planner(grid)
+    planner._lateral_route = RouteCorridor(
+        [(0.0, 0.0), (10.0, 0.0)], [True]
+    )
+    planner._lateral_s = 0.0
+    planner._lateral_robot_d = 0.0
+    target = LateralTarget(
+        x=6.0, y=0.0, yaw=0.0, s=6.0, d=0.0,
+        left=-3.0, right=3.0, confidence=1.0, bins=(),
+        center=0.0, width=6.0, junction_guard=True,
+        state_reason="junction_guard",
+    )
+
+    adjusted, receded = planner._fit_target_in_safety_window(target)
+    safe, reason = planner._lateral_target_is_safe(adjusted.x, adjusted.y)
+
+    assert receded
+    assert adjusted.s < target.s
+    assert adjusted.s >= 0.6
+    assert adjusted.junction_guard
+    assert adjusted.state_reason == "costmap_receding_target"
+    assert safe
+    assert reason == "ok"
+
+
+def test_folded_junction_target_is_extended_beyond_nav2_goal_tolerance():
+    grid = OccupancyGrid()
+    grid.header.frame_id = "campus_map"
+    grid.info.resolution = 0.1
+    grid.info.width = grid.info.height = 100
+    grid.info.origin.position.x = grid.info.origin.position.y = -5.0
+    grid.info.origin.orientation.w = 1.0
+    grid.data = [0] * 10000
+    planner = _safety_planner(grid)
+    planner._lateral_route = RouteCorridor(
+        [(0.0, 0.0), (10.0, 0.0)], [True]
+    )
+    planner._lateral_s = 0.0
+    planner._lateral_robot_d = 0.0
+    planner._lateral_robot_xy = (0.0, 0.0)
+    # Route progress says 2.5 m, but a sharp offset turn has folded the actual
+    # target back to 0.55 m from the robot: Nav2's 1.0 m checker would finish it.
+    target = LateralTarget(
+        x=0.55, y=0.0, yaw=0.0, s=2.5, d=0.0,
+        left=-3.0, right=3.0, confidence=1.0, bins=(),
+        center=0.0, width=6.0, junction_guard=True,
+        state_reason="junction_guard",
+    )
+
+    adjusted, extended, reason = (
+        planner._ensure_target_beyond_goal_tolerance(target)
+    )
+
+    assert extended
+    assert reason == "ok"
+    assert adjusted.s > target.s
+    assert planner._target_robot_distance(adjusted) >= 1.3
+    assert adjusted.state_reason == "goal_distance_extended"
+
+
+def test_close_target_without_safe_forward_candidate_is_rejected():
+    planner = RoutePlanner.__new__(RoutePlanner)
+    planner._lateral_route = RouteCorridor(
+        [(0.0, 0.0), (10.0, 0.0)], [True]
+    )
+    planner._lateral_s = 0.0
+    planner._lateral_robot_d = 0.0
+    planner._lateral_robot_xy = (0.0, 0.0)
+    values = {
+        "semantic_lateral_min_goal_distance_m": 1.3,
+        "semantic_lateral_safety_lookahead_step_m": 0.25,
+        "semantic_lateral_safety_inward_step_m": 0.2,
+        "semantic_lateral_far_m": 7.0,
+    }
+    planner.get_parameter = lambda name: SimpleNamespace(value=values[name])
+    planner._lateral_target_is_safe = (
+        lambda _x, _y: (False, "target_footprint_unknown")
+    )
+    target = LateralTarget(
+        x=0.5, y=0.0, yaw=0.0, s=2.5, d=0.0,
+        left=-3.0, right=3.0, confidence=1.0, bins=(),
+    )
+
+    adjusted, extended, reason = (
+        planner._ensure_target_beyond_goal_tolerance(target)
+    )
+
+    assert adjusted is None
+    assert not extended
+    assert reason == "target_inside_goal_tolerance"
+
+
+def test_successful_nav_goal_records_key_and_route_progress():
+    planner = RoutePlanner.__new__(RoutePlanner)
+    planner._nav_goal_seq = 3
+    planner._nav_goal_active = True
+    planner._nav_goal_handle = object()
+    planner._nav_sent_key = (2, 3, "semantic_lateral", 8)
+    planner._lateral_s = 7.5
+    planner._final_phase = False
+    planner._final_cancel_pending = False
+    planner.get_logger = lambda: SimpleNamespace(
+        info=lambda _message: None,
+        warn=lambda _message: None,
+    )
+    wrapped = SimpleNamespace(
+        status=4,
+        result=SimpleNamespace(error_code=0, error_msg=""),
+    )
+    future = SimpleNamespace(result=lambda: wrapped)
+
+    planner._on_nav2_result(future, seq=3)
+
+    assert planner._nav_last_succeeded_key == planner._nav_sent_key
+    assert planner._nav_last_succeeded_route_s == 7.5
+
+
+def test_parked_vehicle_selects_safe_target_across_frozen_corridor():
+    grid = OccupancyGrid()
+    grid.header.frame_id = "campus_map"
+    grid.info.resolution = 0.1
+    grid.info.width = grid.info.height = 100
+    grid.info.origin.position.x = grid.info.origin.position.y = -5.0
+    grid.info.origin.orientation.w = 1.0
+    grid.data = [0] * 10000
+    # Eastbound right-positive d maps to negative y. Occupy the preferred
+    # endpoint at (2.5, -2.0) while leaving the road center free.
+    grid.data[30 * 100 + 75] = 100
+    planner = _safety_planner(grid)
+    planner._lateral_route = RouteCorridor(
+        [(0.0, 0.0), (10.0, 0.0)], [True]
+    )
+    planner._lateral_s = 0.0
+    planner._lateral_robot_d = 0.0
+    planner._lateral_robot_xy = (0.0, 0.0)
+    planner._lateral_avoid_active = False
+    planner._lateral_avoid_d = None
+    planner._lateral_avoid_clear_frames = 0
+    target = LateralTarget(
+        x=2.5, y=-2.0, yaw=0.0, s=2.5, d=2.0,
+        left=-3.0, right=3.0, confidence=1.0, bins=(),
+        center=0.0, width=6.0, junction_guard=True,
+        state_reason="junction_guard",
+    )
+
+    adjusted, avoiding = planner._avoid_obstacle_in_corridor(target)
+    safe, reason = planner._lateral_target_is_safe(adjusted.x, adjusted.y)
+
+    assert avoiding
+    assert adjusted.d < target.d
+    assert adjusted.left <= adjusted.d <= adjusted.right
+    assert adjusted.state_reason == "corridor_obstacle_avoid"
+    assert planner._lateral_avoid_active
+    assert safe
+    assert reason == "ok"
+
+
+def test_obstacle_bypass_offset_is_held_until_three_clear_frames():
+    planner = RoutePlanner.__new__(RoutePlanner)
+    planner._lateral_route = RouteCorridor(
+        [(0.0, 0.0), (10.0, 0.0)], [True]
+    )
+    planner._lateral_s = 0.0
+    planner._lateral_robot_d = 0.0
+    planner._lateral_robot_xy = (0.0, 0.0)
+    planner._lateral_avoid_active = True
+    planner._lateral_avoid_d = 0.8
+    planner._lateral_avoid_clear_frames = 0
+    values = {"semantic_lateral_avoid_release_frames": 3}
+    planner.get_parameter = lambda name: SimpleNamespace(value=values[name])
+    planner._lateral_target_is_safe = lambda _x, _y: (True, "ok")
+    target = LateralTarget(
+        x=2.5, y=-2.0, yaw=0.0, s=2.5, d=2.0,
+        left=-3.0, right=3.0, confidence=1.0, bins=(),
+        center=0.0, width=6.0, junction_guard=True,
+    )
+
+    first, first_avoiding = planner._avoid_obstacle_in_corridor(target)
+    second, second_avoiding = planner._avoid_obstacle_in_corridor(target)
+    third, third_avoiding = planner._avoid_obstacle_in_corridor(target)
+
+    assert first_avoiding and second_avoiding
+    assert first.d == second.d == 0.8
+    assert not third_avoiding
+    assert third.d == target.d
+    assert not planner._lateral_avoid_active
+
+
+def test_junction_occlusion_uses_cached_corridor_and_current_offset():
+    planner = RoutePlanner.__new__(RoutePlanner)
+    planner._lateral_route = RouteCorridor(
+        [(0.0, 0.0), (30.0, 0.0)], [True], junction_s=[10.0]
+    )
+    planner._lateral_s = 6.5
+    planner._lateral_robot_d = 1.1
+    planner._lateral_last_corridor = {
+        "left": -3.0,
+        "right": 3.0,
+        "center": 0.0,
+        "width": 6.0,
+        "confidence": 0.8,
+    }
+    planner._lateral_avoid_active = False
+    planner._lateral_avoid_d = None
+    values = {
+        "semantic_lateral_junction_guard_before_m": 4.0,
+        "semantic_lateral_junction_guard_after_m": 3.0,
+        "semantic_lateral_lookahead_m": 2.5,
+        "semantic_lateral_inside_margin_m": 0.75,
+        "semantic_lateral_min_target_confidence": 0.45,
+    }
+    planner.get_parameter = lambda name: SimpleNamespace(value=values[name])
+
+    target = planner._junction_occlusion_target("insufficient_road_points")
+
+    assert target is not None
+    assert target.junction_guard
+    assert target.state_reason == "junction_occlusion_hold"
+    assert math.isclose(target.d, 1.1, abs_tol=1e-6)
+    assert target.left == -3.0
+    assert target.right == 3.0
 
 
 def test_exact_organized_cloud_and_mask_decode_to_route_boundary():

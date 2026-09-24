@@ -30,6 +30,7 @@ from rclpy.qos import (
 )
 
 from campus_nav.semantic_lateral_adapter import (
+    LateralTarget,
     RoadBoundaryEstimator,
     RouteCorridor,
 )
@@ -556,7 +557,7 @@ class RoutePlanner(Node):
         # policy. Pedestrian ways are deliberately excluded.
         self.declare_parameter(
             "road_right_offset_highways",
-            ["service", "residential", "unclassified", "tertiary", "tertiary_link"],
+            ["service", "residential", "tertiary", "tertiary_link"],
         )
         self.declare_parameter("road_right_offset_m", 0.0)
         # Phase 2.1 semantic lateral adapter. Closed loop is the default after
@@ -591,6 +592,14 @@ class RoutePlanner(Node):
         self.declare_parameter("semantic_lateral_width_min_m", 2.5)
         self.declare_parameter("semantic_lateral_width_max_m", 15.0)
         self.declare_parameter("semantic_lateral_lookahead_m", 4.0)
+        self.declare_parameter("semantic_lateral_min_lookahead_m", 0.6)
+        self.declare_parameter(
+            "semantic_lateral_safety_lookahead_step_m", 0.25
+        )
+        # Must stay above Nav2's general_goal_checker.xy_goal_tolerance.  Route
+        # arc distance can greatly exceed Euclidean distance at a sharp offset
+        # junction, so a nominally forward target may already count as reached.
+        self.declare_parameter("semantic_lateral_min_goal_distance_m", 1.3)
         self.declare_parameter("semantic_lateral_inside_margin_m", 0.75)
         self.declare_parameter("semantic_lateral_min_target_confidence", 0.45)
         self.declare_parameter("semantic_lateral_hold_last_s", 1.0)
@@ -621,6 +630,8 @@ class RoutePlanner(Node):
         )
         self.declare_parameter("semantic_lateral_safety_radius_m", 0.75)
         self.declare_parameter("semantic_lateral_safety_inward_step_m", 0.2)
+        self.declare_parameter("semantic_lateral_avoid_max_lookahead_m", 5.0)
+        self.declare_parameter("semantic_lateral_avoid_release_frames", 3)
         self.declare_parameter("semantic_lateral_lethal_occupancy", 99)
         self.declare_parameter("semantic_lateral_costmap_max_age_s", 1.0)
         self.declare_parameter(
@@ -860,6 +871,8 @@ class RoutePlanner(Node):
         self._nav_goal_seq = 0          # bump on each send; ignore stale result CBs
         self._nav_batch_last_xy = None  # xy of last waypoint in the sent batch
         self._nav_sent_key = None       # (cursor, batch_end) of last sent batch
+        self._nav_last_succeeded_key = None
+        self._nav_last_succeeded_route_s = None
         # "re-send the batch on the next tick, whatever the advance gate says".
         # Deliberately NOT expressed as _nav_sent_key = None: that reads as "we
         # have not sent anything", which makes stale_active False and hands the
@@ -899,6 +912,7 @@ class RoutePlanner(Node):
         self._lateral_route = None
         self._lateral_s = 0.0
         self._lateral_robot_d = 0.0
+        self._lateral_robot_xy = None
         self._lateral_target = None
         self._lateral_target_stamp_ns = None
         self._lateral_target_seq = 0
@@ -910,10 +924,20 @@ class RoutePlanner(Node):
         self._lateral_costmap = None
         self._lateral_safety_ok = False
         self._lateral_safety_reason = "safety_costmap_missing"
+        self._lateral_goal_geometry_ok = False
+        self._lateral_last_corridor = None
+        self._lateral_avoid_active = False
+        self._lateral_avoid_d = None
+        self._lateral_avoid_clear_frames = 0
         self._lateral_pending = {}
         self._lateral_future = None
         self._lateral_worker = None
         self._lateral_last_debug_points = np.empty((0, 2), dtype=np.float64)
+        # Diagnostics are edge-triggered: planner decisions remain visible in
+        # the launch terminal without flooding it at the status timer rate.
+        self._lateral_last_log_signature = None
+        self._lateral_last_junction_guard = False
+        self._lateral_dispatch_blocked_signature = None
         self._init_semantic_lateral_adapter()
         # -- heading-lock state --
         # Two separate things, deliberately not one flag:
@@ -2092,6 +2116,18 @@ class RoutePlanner(Node):
                     self._lateral_estimator.reset()
         self._try_start_lateral_job()
 
+        if self._lateral_target is None:
+            now_ns = self.get_clock().now().nanoseconds
+            fallback = self._junction_occlusion_target(
+                "junction_semantic_target_missing"
+            )
+            if fallback is not None:
+                self._consume_lateral_result(
+                    fallback,
+                    fallback.state_reason,
+                    self._lateral_last_debug_points,
+                    now_ns,
+                )
         if self._lateral_target_stamp_ns is not None:
             age = (
                 self.get_clock().now().nanoseconds
@@ -2099,47 +2135,91 @@ class RoutePlanner(Node):
             ) / 1e9
             hold = float(self.get_parameter("semantic_lateral_hold_last_s").value)
             if age > hold:
-                self._lateral_target = None
-                self._lateral_safety_ok = False
-                self._lateral_safety_reason = "target_expired"
-                self._lateral_state = "DEGRADED_STOP"
-                self._lateral_reason = "target_expired"
+                now_ns = self.get_clock().now().nanoseconds
+                fallback = self._junction_occlusion_target(
+                    "junction_occlusion_timeout"
+                )
+                if fallback is not None:
+                    self._consume_lateral_result(
+                        fallback,
+                        fallback.state_reason,
+                        self._lateral_last_debug_points,
+                        now_ns,
+                    )
+                else:
+                    self._lateral_target = None
+                    self._lateral_safety_ok = False
+                    self._lateral_safety_reason = "target_expired"
+                    self._lateral_state = "DEGRADED_STOP"
+                    self._lateral_reason = "target_expired"
         self._publish_lateral_status()
 
     def _consume_lateral_result(self, target, reason, road_xy, stamp_ns):
         self._lateral_last_debug_points = road_xy
+        if target is None:
+            fallback = self._junction_occlusion_target(reason)
+            if fallback is not None:
+                target = fallback
+                reason = fallback.state_reason
+        if (
+            target is not None
+            and target.width > 0.0
+            and target.state_reason not in (
+                "junction_occlusion_hold",
+                "junction_osm_current_offset",
+                "junction_occlusion_timeout",
+            )
+        ):
+            self._lateral_last_corridor = {
+                "left": float(target.left),
+                "right": float(target.right),
+                "center": float(target.center),
+                "width": float(target.width),
+                "confidence": float(target.confidence),
+            }
         minimum = float(
             self.get_parameter("semantic_lateral_min_target_confidence").value
         )
         if target is not None and target.confidence >= minimum:
-            old = self._lateral_target
-            max_step = float(self.get_parameter(
-                "semantic_lateral_max_lateral_step_m"
-            ).value)
-            previous_d = old.d if old is not None else self._lateral_robot_d
-            delta_d = target.d - previous_d
-            if abs(delta_d) > max_step:
-                limited_d = previous_d + math.copysign(max_step, delta_d)
-                route_sample = self._lateral_route.sample(target.s)
-                target = replace(
-                    target,
-                    d=limited_d,
-                    x=route_sample.x + limited_d * math.sin(route_sample.yaw),
-                    y=route_sample.y - limited_d * math.cos(route_sample.yaw),
-                )
+            target = self._limit_lateral_target_from_robot(target)
             # The slew limiter changes the actual commanded point, so safety
             # must be evaluated after it.  Doing this in the opposite order can
             # find a safe point near the center and then move it back into a
             # lethal cell while retaining the misleading inward-shift reason.
-            target, shifted_for_safety = self._shift_target_inward_for_safety(
+            target, receded_for_window = self._fit_target_in_safety_window(
                 target
             )
-            if shifted_for_safety:
+            if receded_for_window:
                 self.get_logger().warning(
-                    "Laterally limited target intersects the fused costmap; "
-                    f"shifted toward road center to d={target.d:.2f} m.",
+                    "Dynamic target exceeded the local costmap; shortened it "
+                    f"to {target.s - self._lateral_s:.2f} m lookahead at "
+                    f"d={target.d:.2f} m.",
                     throttle_duration_sec=2.0,
                 )
+            target, avoiding_obstacle = self._avoid_obstacle_in_corridor(
+                target
+            )
+            if avoiding_obstacle:
+                self.get_logger().warning(
+                    "Preferred road target is occupied; selected a safe "
+                    f"corridor target at forward="
+                    f"{target.s - self._lateral_s:.2f} m, d={target.d:.2f} m.",
+                    throttle_duration_sec=2.0,
+                )
+            geometry_target, extended_for_goal, geometry_reason = (
+                self._ensure_target_beyond_goal_tolerance(target)
+            )
+            geometry_ok = geometry_target is not None
+            if geometry_ok:
+                target = geometry_target
+                if extended_for_goal:
+                    self.get_logger().warning(
+                        "Dynamic target fell inside Nav2 goal tolerance; "
+                        f"extended it along the selected OSM branch to "
+                        f"{target.s - self._lateral_s:.2f} m lookahead "
+                        f"({self._target_robot_distance(target):.2f} m away).",
+                        throttle_duration_sec=2.0,
+                    )
             lateral_change = (
                 float("inf") if self._lateral_seq_d is None
                 else abs(target.d - self._lateral_seq_d)
@@ -2161,15 +2241,26 @@ class RoutePlanner(Node):
                 self._lateral_seq_s = target.s
             self._lateral_target = target
             self._lateral_target_stamp_ns = stamp_ns
-            (
-                self._lateral_safety_ok,
-                self._lateral_safety_reason,
-            ) = self._lateral_target_is_safe(target.x, target.y)
+            self._lateral_goal_geometry_ok = geometry_ok
+            if geometry_ok:
+                (
+                    self._lateral_safety_ok,
+                    self._lateral_safety_reason,
+                ) = self._lateral_target_is_safe(target.x, target.y)
+            else:
+                self._lateral_safety_ok = False
+                self._lateral_safety_reason = geometry_reason
             self._lateral_good_frames += 1
             required = max(1, int(self.get_parameter(
                 "semantic_lateral_acquire_frames"
             ).value))
-            if target.junction_guard:
+            if not geometry_ok:
+                self._lateral_state = "DEGRADED_STOP"
+                self._lateral_reason = geometry_reason
+            elif avoiding_obstacle:
+                self._lateral_state = "AVOID_OBSTACLE"
+                self._lateral_reason = target.state_reason
+            elif target.junction_guard:
                 self._lateral_state = "JUNCTION_GUARD"
                 self._lateral_reason = target.state_reason
             elif (
@@ -2199,6 +2290,81 @@ class RoutePlanner(Node):
         )
         self._publish_lateral_debug(debug_target, road_xy, stamp_ns)
 
+    def _junction_occlusion_target(self, cause):
+        """Follow the selected OSM branch when a vehicle hides the road mask."""
+        route = self._lateral_route
+        if route is None:
+            return None
+        before = float(self.get_parameter(
+            "semantic_lateral_junction_guard_before_m"
+        ).value)
+        after = float(self.get_parameter(
+            "semantic_lateral_junction_guard_after_m"
+        ).value)
+        if route.junction_in_guard(self._lateral_s, before, after) is None:
+            return None
+        lookahead = float(self.get_parameter(
+            "semantic_lateral_lookahead_m"
+        ).value)
+        target_s = min(route.total_length, self._lateral_s + lookahead)
+        sample = route.sample(target_s)
+        margin = float(self.get_parameter(
+            "semantic_lateral_inside_margin_m"
+        ).value)
+        corridor = self._lateral_last_corridor
+        if corridor is None:
+            # No visual model was acquired before entering the intersection.
+            # Preserve only the achieved offset; do not invent a lane width.
+            left = self._lateral_robot_d - margin
+            right = self._lateral_robot_d + margin
+            center = self._lateral_robot_d
+            width = 2.0 * margin
+            confidence = float(self.get_parameter(
+                "semantic_lateral_min_target_confidence"
+            ).value)
+            target_d = self._lateral_robot_d
+            state_reason = "junction_osm_current_offset"
+        else:
+            left = corridor["left"]
+            right = corridor["right"]
+            center = corridor["center"]
+            width = corridor["width"]
+            confidence = max(
+                corridor["confidence"],
+                float(self.get_parameter(
+                    "semantic_lateral_min_target_confidence"
+                ).value),
+            )
+            preferred_d = (
+                self._lateral_avoid_d
+                if self._lateral_avoid_active
+                and self._lateral_avoid_d is not None
+                else self._lateral_robot_d
+            )
+            target_d = float(np.clip(
+                preferred_d, left + margin, right - margin
+            ))
+            state_reason = (
+                "junction_occlusion_timeout"
+                if cause == "junction_occlusion_timeout"
+                else "junction_occlusion_hold"
+            )
+        return LateralTarget(
+            x=float(sample.x + target_d * math.sin(sample.yaw)),
+            y=float(sample.y - target_d * math.cos(sample.yaw)),
+            yaw=float(sample.yaw),
+            s=float(target_s),
+            d=float(target_d),
+            left=float(left),
+            right=float(right),
+            confidence=float(confidence),
+            bins=(),
+            center=float(center),
+            width=float(width),
+            junction_guard=True,
+            state_reason=state_reason,
+        )
+
     def _publish_lateral_status(self):
         target = self._lateral_target
         payload = {
@@ -2227,15 +2393,94 @@ class RoutePlanner(Node):
                 "target_x": round(target.x, 3),
                 "target_y": round(target.y, 3),
                 "target_d_m": round(target.d, 3),
+                "robot_d_m": round(self._lateral_robot_d, 3),
+                "target_forward_m": round(target.s - self._lateral_s, 3),
+                "target_distance_m": round(
+                    self._target_robot_distance(target), 3
+                ),
                 "left_d_m": round(target.left, 3),
                 "right_d_m": round(target.right, 3),
                 "road_center_d_m": round(target.center, 3),
                 "road_width_m": round(target.width, 3),
                 "junction_guard": target.junction_guard,
+                "obstacle_avoidance": self._lateral_avoid_active,
+                "obstacle_avoid_d_m": (
+                    None if self._lateral_avoid_d is None
+                    else round(self._lateral_avoid_d, 3)
+                ),
                 "confidence": round(target.confidence, 3),
                 "observation_age_s": round(max(0.0, age), 3),
             })
+        self._log_lateral_status_transition(payload)
         self._lateral_status_pub.publish(String(data=json.dumps(payload)))
+
+    def _log_lateral_status_transition(self, payload):
+        """Print actionable lateral decisions only when their state changes."""
+        junction_guard = bool(payload.get("junction_guard", False))
+        if junction_guard != self._lateral_last_junction_guard:
+            event = "ENTER" if junction_guard else "EXIT"
+            self.get_logger().info(
+                f"[campus_lateral] junction guard {event}: "
+                f"route_s={payload['route_s_m']:.2f} m, "
+                f"road_width={payload.get('road_width_m', float('nan')):.2f} m; "
+                + (
+                    "holding the achieved lateral offset and frozen road width."
+                    if junction_guard
+                    else "releasing the frozen corridor after stable observations."
+                )
+            )
+        self._lateral_last_junction_guard = junction_guard
+
+        signature = (
+            payload.get("state"),
+            payload.get("reason"),
+            payload.get("safety_ok"),
+            payload.get("safety_reason"),
+            junction_guard,
+            payload.get("route_align_required"),
+            payload.get("route_align_complete"),
+            payload.get("shadow_mode"),
+        )
+        if signature == self._lateral_last_log_signature:
+            return
+        self._lateral_last_log_signature = signature
+
+        safety = (
+            "OK" if payload.get("safety_ok")
+            else f"BLOCKED({payload.get('safety_reason', 'unknown')})"
+        )
+        target_text = "target=none"
+        if "target_x" in payload:
+            target_text = (
+                f"target=({payload['target_x']:.2f},{payload['target_y']:.2f}), "
+                f"forward={payload['target_forward_m']:.2f} m, "
+                f"robot_d={payload['robot_d_m']:.2f} m, "
+                f"target_d={payload['target_d_m']:.2f} m, "
+                f"bounds=[{payload['left_d_m']:.2f},{payload['right_d_m']:.2f}] m, "
+                f"width={payload['road_width_m']:.2f} m, "
+                f"confidence={payload['confidence']:.2f}, "
+                f"age={payload['observation_age_s']:.2f} s"
+            )
+        message = (
+            f"[campus_lateral] state={payload['state']} "
+            f"reason={payload['reason']}, route_s={payload['route_s_m']:.2f} m, "
+            f"junction={junction_guard}, safety={safety}, {target_text}"
+        )
+        operational_states = {
+            "TRACK_RIGHT", "SEEK_RIGHT_EDGE", "JUNCTION_GUARD",
+            "AVOID_OBSTACLE", "HOLD_LAST", "DEGRADED_STOP",
+        }
+        if (
+            payload.get("state") == "DEGRADED_STOP"
+            or (
+                not payload.get("safety_ok")
+                and payload.get("state") in operational_states
+                and not payload.get("shadow_mode")
+            )
+        ):
+            self.get_logger().warning(message)
+        else:
+            self.get_logger().info(message)
 
     def _publish_lateral_debug(self, target, road_xy, stamp_ns):
         if target is not None:
@@ -2316,6 +2561,68 @@ class RoutePlanner(Node):
                 for x, y in self._lateral_route.xy
             ]
             markers.append(osm_route)
+
+            # Show the exact route-s intervals in which the fitted corridor is
+            # frozen. Close junctions are displayed as the same merged band,
+            # matching RouteCorridor.junction_in_guard() rather than drawing a
+            # misleading fixed-radius circle around every OSM vertex.
+            estimator = getattr(self, "_lateral_estimator", None)
+            before = getattr(estimator, "junction_guard_before", 4.0)
+            after = getattr(estimator, "junction_guard_after", 3.0)
+            active_guard = self._lateral_route.junction_in_guard(
+                getattr(self, "_lateral_s", 0.0), before, after
+            )
+            intervals = self._lateral_route.junction_guard_intervals(
+                before, after
+            )
+            for marker_id, (start_s, end_s, guard_id) in enumerate(intervals):
+                zone = Marker()
+                zone.header.frame_id = self.frame_id
+                zone.header.stamp = stamp
+                zone.ns = "junction_freeze_zones"
+                zone.id = marker_id
+                zone.type = Marker.LINE_STRIP
+                zone.action = Marker.ADD
+                zone.pose.orientation.w = 1.0
+                active = active_guard == guard_id
+                zone.scale.x = 0.75 if active else 0.45
+                zone.color = (
+                    ColorRGBA(r=1.0, g=0.05, b=0.05, a=0.90)
+                    if active else
+                    ColorRGBA(r=1.0, g=0.35, b=0.0, a=0.55)
+                )
+                span = max(0.0, end_s - start_s)
+                samples = max(2, int(math.ceil(span / 0.5)) + 1)
+                for index in range(samples):
+                    route_s = start_s + span * index / (samples - 1)
+                    route_sample = self._lateral_route.sample(route_s)
+                    zone.points.append(Point(
+                        x=float(route_sample.x),
+                        y=float(route_sample.y),
+                        z=0.20,
+                    ))
+                markers.append(zone)
+
+                label_sample = self._lateral_route.sample(
+                    0.5 * (start_s + end_s)
+                )
+                label = Marker()
+                label.header = zone.header
+                label.ns = "junction_freeze_labels"
+                label.id = marker_id
+                label.type = Marker.TEXT_VIEW_FACING
+                label.action = Marker.ADD
+                label.pose.position.x = float(label_sample.x)
+                label.pose.position.y = float(label_sample.y)
+                label.pose.position.z = 0.85
+                label.pose.orientation.w = 1.0
+                label.scale.z = 0.32
+                label.color = zone.color
+                label.text = (
+                    f"JUNCTION FREEZE {start_s:.1f}-{end_s:.1f}m"
+                    + (" ACTIVE" if active else "")
+                )
+                markers.append(label)
         if target is not None and self._lateral_route is not None:
             for marker_id, side, color in (
                 (1, "left", (1.0, 0.65, 0.0)),
@@ -2413,6 +2720,7 @@ class RoutePlanner(Node):
         self._lateral_route = None
         self._lateral_s = 0.0
         self._lateral_robot_d = 0.0
+        self._lateral_robot_xy = None
         self._lateral_target = None
         self._lateral_target_stamp_ns = None
         self._lateral_seq_d = None
@@ -2420,8 +2728,16 @@ class RoutePlanner(Node):
         self._lateral_good_frames = 0
         self._lateral_safety_ok = False
         self._lateral_safety_reason = "no_target"
+        self._lateral_goal_geometry_ok = False
+        self._lateral_last_corridor = None
+        self._lateral_avoid_active = False
+        self._lateral_avoid_d = None
+        self._lateral_avoid_clear_frames = 0
         self._lateral_state = "REFERENCE_ONLY"
         self._lateral_reason = "route_has_no_motor_segment"
+        self._lateral_last_log_signature = None
+        self._lateral_last_junction_guard = False
+        self._lateral_dispatch_blocked_signature = None
         if len(lonlat_path) < 2 or mode != "road":
             return
         start = road_start_index if road_start_index is not None else 0
@@ -2815,22 +3131,48 @@ class RoutePlanner(Node):
 
     def _lateral_closed_loop_pose(self):
         if self._lateral_target is None:
+            self._lateral_reason = "dynamic_target_missing"
             return None
         if self._lateral_state not in (
-            "TRACK_RIGHT", "SEEK_RIGHT_EDGE", "JUNCTION_GUARD", "HOLD_LAST"
+            "TRACK_RIGHT", "SEEK_RIGHT_EDGE", "JUNCTION_GUARD",
+            "AVOID_OBSTACLE", "HOLD_LAST"
         ):
             return None
         age = (
             self.get_clock().now().nanoseconds - self._lateral_target_stamp_ns
         ) / 1e9
         if age > float(self.get_parameter("semantic_lateral_hold_last_s").value):
+            self._lateral_state = "DEGRADED_STOP"
+            self._lateral_reason = "dynamic_target_stale"
             return None
         target = self._lateral_target
         # Reject a result that has fallen behind current route progress while a
         # slow worker was running.
         if target.s + 0.5 < self._lateral_s:
+            self._lateral_state = "DEGRADED_STOP"
+            self._lateral_reason = "dynamic_target_behind_robot"
             return None
+        geometry_target, extended, geometry_reason = (
+            self._ensure_target_beyond_goal_tolerance(target)
+        )
+        if geometry_target is None:
+            self._lateral_goal_geometry_ok = False
+            self._lateral_safety_ok = False
+            self._lateral_safety_reason = geometry_reason
+            self._lateral_state = "DEGRADED_STOP"
+            self._lateral_reason = geometry_reason
+            return None
+        if extended:
+            target = geometry_target
+            self._lateral_target = target
+            self._lateral_target_seq += 1
+            self._lateral_seq_d = target.d
+            self._lateral_seq_s = target.s
+            self._lateral_reason = target.state_reason
+        self._lateral_goal_geometry_ok = True
         safe, reason = self._lateral_target_is_safe(target.x, target.y)
+        self._lateral_safety_ok = safe
+        self._lateral_safety_reason = reason
         if not safe:
             self._lateral_state = "DEGRADED_STOP"
             self._lateral_reason = reason
@@ -2913,6 +3255,172 @@ class RoutePlanner(Node):
                     return False, "target_footprint_lethal"
         return True, "ok"
 
+    def _limit_lateral_target_from_robot(self, target):
+        """Limit lateral motion from the achieved robot pose, not old goals.
+
+        Advancing from the previous target allows an immobile robot's target to
+        walk farther away on every semantic frame.  Anchoring the command to
+        the measured route projection makes lateral progress contingent on the
+        vehicle actually following it.
+        """
+        max_step = max(0.0, float(self.get_parameter(
+            "semantic_lateral_max_lateral_step_m"
+        ).value))
+        delta_d = target.d - self._lateral_robot_d
+        if abs(delta_d) <= max_step:
+            return target
+        limited_d = self._lateral_robot_d + math.copysign(max_step, delta_d)
+        route_sample = self._lateral_route.sample(target.s)
+        return replace(
+            target,
+            d=float(limited_d),
+            x=float(route_sample.x + limited_d * math.sin(route_sample.yaw)),
+            y=float(route_sample.y - limited_d * math.cos(route_sample.yaw)),
+        )
+
+    def _fit_target_in_safety_window(self, target):
+        """Find the farthest safe receding target inside the local costmap.
+
+        Outside the rolling grid is not treated as free space.  The target is
+        pulled back along the selected OSM branch, and if necessary toward the
+        achieved robot offset, until its full footprint is represented and
+        safe.  Lethal/unknown/missing costmaps retain their existing fail-closed
+        behavior.
+        """
+        safe, reason = self._lateral_target_is_safe(target.x, target.y)
+        if safe or reason != "target_outside_safety_costmap":
+            return target, False
+
+        forward = max(0.0, target.s - self._lateral_s)
+        minimum = max(0.0, float(self.get_parameter(
+            "semantic_lateral_min_lookahead_m"
+        ).value))
+        minimum = min(forward, minimum)
+        longitudinal_step = max(0.05, float(self.get_parameter(
+            "semantic_lateral_safety_lookahead_step_m"
+        ).value))
+        forwards = []
+        candidate_forward = forward
+        while candidate_forward > minimum + 1e-6:
+            forwards.append(candidate_forward)
+            candidate_forward -= longitudinal_step
+        forwards.append(minimum)
+
+        lateral_step = max(0.05, float(self.get_parameter(
+            "semantic_lateral_safety_inward_step_m"
+        ).value))
+        lateral_delta = self._lateral_robot_d - target.d
+        lateral_values = [target.d]
+        if abs(lateral_delta) > 1e-6:
+            count = int(math.ceil(abs(lateral_delta) / lateral_step))
+            direction = math.copysign(1.0, lateral_delta)
+            lateral_values.extend(
+                target.d + direction * min(abs(lateral_delta), i * lateral_step)
+                for i in range(1, count + 1)
+            )
+
+        # Progress takes priority, then closeness to the desired lateral
+        # offset. This preserves the held junction lane whenever it fits.
+        for candidate_forward in forwards:
+            candidate_s = min(
+                self._lateral_route.total_length,
+                self._lateral_s + candidate_forward,
+            )
+            route_sample = self._lateral_route.sample(candidate_s)
+            for candidate_d in lateral_values:
+                candidate_x = (
+                    route_sample.x + candidate_d * math.sin(route_sample.yaw)
+                )
+                candidate_y = (
+                    route_sample.y - candidate_d * math.cos(route_sample.yaw)
+                )
+                candidate_safe, _ = self._lateral_target_is_safe(
+                    candidate_x, candidate_y
+                )
+                if candidate_safe:
+                    return replace(
+                        target,
+                        x=float(candidate_x),
+                        y=float(candidate_y),
+                        yaw=float(route_sample.yaw),
+                        s=float(candidate_s),
+                        d=float(candidate_d),
+                        state_reason="costmap_receding_target",
+                    ), True
+        return target, False
+
+    def _target_robot_distance(self, target):
+        robot_xy = getattr(self, "_lateral_robot_xy", None)
+        if robot_xy is None:
+            return float("nan")
+        rx, ry = robot_xy
+        return math.hypot(target.x - rx, target.y - ry)
+
+    def _ensure_target_beyond_goal_tolerance(self, target):
+        """Extend a folded junction target beyond Nav2's reached radius."""
+        if getattr(self, "_lateral_robot_xy", None) is None:
+            return target, False, "robot_pose_unavailable"
+        minimum = max(0.0, float(self.get_parameter(
+            "semantic_lateral_min_goal_distance_m"
+        ).value))
+        if self._target_robot_distance(target) >= minimum:
+            return target, False, "ok"
+
+        step = max(0.05, float(self.get_parameter(
+            "semantic_lateral_safety_lookahead_step_m"
+        ).value))
+        max_forward = max(
+            target.s - self._lateral_s,
+            float(self.get_parameter("semantic_lateral_far_m").value),
+        )
+        lateral_step = max(0.05, float(self.get_parameter(
+            "semantic_lateral_safety_inward_step_m"
+        ).value))
+        lateral_delta = self._lateral_robot_d - target.d
+        lateral_values = [target.d]
+        if abs(lateral_delta) > 1e-6:
+            count = int(math.ceil(abs(lateral_delta) / lateral_step))
+            direction = math.copysign(1.0, lateral_delta)
+            lateral_values.extend(
+                target.d + direction * min(abs(lateral_delta), i * lateral_step)
+                for i in range(1, count + 1)
+            )
+
+        forward = max(0.0, target.s - self._lateral_s) + step
+        while forward <= max_forward + 1e-6:
+            candidate_s = min(
+                self._lateral_route.total_length,
+                self._lateral_s + forward,
+            )
+            route_sample = self._lateral_route.sample(candidate_s)
+            for candidate_d in lateral_values:
+                candidate = replace(
+                    target,
+                    x=float(
+                        route_sample.x
+                        + candidate_d * math.sin(route_sample.yaw)
+                    ),
+                    y=float(
+                        route_sample.y
+                        - candidate_d * math.cos(route_sample.yaw)
+                    ),
+                    yaw=float(route_sample.yaw),
+                    s=float(candidate_s),
+                    d=float(candidate_d),
+                    state_reason="goal_distance_extended",
+                )
+                if self._target_robot_distance(candidate) < minimum:
+                    continue
+                safe, _ = self._lateral_target_is_safe(
+                    candidate.x, candidate.y
+                )
+                if safe:
+                    return candidate, True, "ok"
+            if candidate_s >= self._lateral_route.total_length - 1e-6:
+                break
+            forward += step
+        return None, False, "target_inside_goal_tolerance"
+
     def _shift_target_inward_for_safety(self, target):
         """Move an obstructed right-side target toward road center, if safe.
 
@@ -2959,6 +3467,130 @@ class RoutePlanner(Node):
                     state_reason="costmap_inward_shift",
                 ), True
         return target, False
+
+    def _avoid_obstacle_in_corridor(self, target):
+        """Select a safe 2-D target inside the frozen road corridor.
+
+        A parked vehicle invalidates one preferred endpoint, not the complete
+        route.  Search lateral offsets at the nominal progress first, then
+        nearby longitudinal stations. Unknown/out-of-grid cells remain unsafe.
+        The chosen side is held for several clear frames to prevent oscillation.
+        """
+        safe, reason = self._lateral_target_is_safe(target.x, target.y)
+        release_frames = max(1, int(self.get_parameter(
+            "semantic_lateral_avoid_release_frames"
+        ).value))
+        if safe:
+            if not self._lateral_avoid_active:
+                return target, False
+            held = self._corridor_candidate(
+                target, target.s, self._lateral_avoid_d,
+                "obstacle_avoid_hold",
+            )
+            held_safe, _ = self._lateral_target_is_safe(held.x, held.y)
+            if held_safe:
+                self._lateral_avoid_clear_frames += 1
+                if self._lateral_avoid_clear_frames < release_frames:
+                    return held, True
+            self._lateral_avoid_active = False
+            self._lateral_avoid_d = None
+            self._lateral_avoid_clear_frames = 0
+            return target, False
+        if reason != "target_footprint_lethal":
+            return target, False
+
+        self._lateral_avoid_clear_frames = 0
+        margin = float(self.get_parameter(
+            "semantic_lateral_inside_margin_m"
+        ).value)
+        left_limit = target.left + margin
+        right_limit = target.right - margin
+        if left_limit > right_limit:
+            return target, False
+        lateral_step = max(0.05, float(self.get_parameter(
+            "semantic_lateral_safety_inward_step_m"
+        ).value))
+        grid_values = np.arange(
+            left_limit, right_limit + 0.5 * lateral_step, lateral_step,
+            dtype=np.float64,
+        ).tolist()
+        preferred = float(np.clip(target.d, left_limit, right_limit))
+        lateral_values = [preferred]
+        lateral_values.extend(sorted(
+            grid_values,
+            key=lambda value: (
+                abs(value - (
+                    self._lateral_avoid_d
+                    if self._lateral_avoid_active
+                    and self._lateral_avoid_d is not None
+                    else preferred
+                )),
+                abs(value - preferred),
+            ),
+        ))
+        # Deduplicate the clipped preferred value and floating-point grid hits.
+        lateral_values = list(dict.fromkeys(
+            round(float(value), 6) for value in lateral_values
+        ))
+
+        base_forward = max(0.0, target.s - self._lateral_s)
+        forward_step = max(0.1, float(self.get_parameter(
+            "semantic_lateral_safety_lookahead_step_m"
+        ).value))
+        max_forward = max(base_forward, float(self.get_parameter(
+            "semantic_lateral_avoid_max_lookahead_m"
+        ).value))
+        min_forward = max(0.0, float(self.get_parameter(
+            "semantic_lateral_min_lookahead_m"
+        ).value))
+        forward_values = [base_forward]
+        value = base_forward + forward_step
+        while value <= max_forward + 1e-6:
+            forward_values.append(value)
+            value += forward_step
+        value = base_forward - forward_step
+        while value >= min_forward - 1e-6:
+            forward_values.append(value)
+            value -= forward_step
+
+        minimum_distance = float(self.get_parameter(
+            "semantic_lateral_min_goal_distance_m"
+        ).value)
+        for forward in forward_values:
+            candidate_s = min(
+                self._lateral_route.total_length,
+                self._lateral_s + forward,
+            )
+            for candidate_d in lateral_values:
+                candidate = self._corridor_candidate(
+                    target, candidate_s, candidate_d,
+                    "corridor_obstacle_avoid",
+                )
+                distance = self._target_robot_distance(candidate)
+                if math.isfinite(distance) and distance < minimum_distance:
+                    continue
+                candidate_safe, _ = self._lateral_target_is_safe(
+                    candidate.x, candidate.y
+                )
+                if candidate_safe:
+                    self._lateral_avoid_active = True
+                    self._lateral_avoid_d = float(candidate_d)
+                    return candidate, True
+            if candidate_s >= self._lateral_route.total_length - 1e-6:
+                break
+        return target, False
+
+    def _corridor_candidate(self, target, candidate_s, candidate_d, reason):
+        sample = self._lateral_route.sample(candidate_s)
+        return replace(
+            target,
+            x=float(sample.x + candidate_d * math.sin(sample.yaw)),
+            y=float(sample.y - candidate_d * math.cos(sample.yaw)),
+            yaw=float(sample.yaw),
+            s=float(candidate_s),
+            d=float(candidate_d),
+            state_reason=reason,
+        )
 
     @staticmethod
     def _shortest_angle(target, current):
@@ -3026,6 +3658,9 @@ class RoutePlanner(Node):
         self._lateral_seq_s = None
         self._lateral_safety_ok = False
         self._lateral_safety_reason = "waiting_for_post_align_target"
+        self._lateral_avoid_active = False
+        self._lateral_avoid_d = None
+        self._lateral_avoid_clear_frames = 0
         self._lateral_state = "ACQUIRE_BOUNDARY"
         self._lateral_reason = "waiting_for_post_align_semantic_frame"
         self.get_logger().info(
@@ -3235,6 +3870,8 @@ class RoutePlanner(Node):
         self._nav_send_pending = False
         self._nav_batch_last_xy = None
         self._nav_sent_key = None
+        self._nav_last_succeeded_key = None
+        self._nav_last_succeeded_route_s = None
         self._nav_force_resend = False
         self._nav_running = bool(poses)
         if self._nav_running:
@@ -3251,6 +3888,7 @@ class RoutePlanner(Node):
         if robot_pose is None:
             return
         rx, ry, robot_yaw = robot_pose
+        self._lateral_robot_xy = (rx, ry)
         poses = self._nav_route_poses
         n = len(poses)
 
@@ -3324,8 +3962,34 @@ class RoutePlanner(Node):
         if lateral_required and lateral_pose is None:
             # On a motor segment, closed-loop mode must fail closed. Falling
             # through to the biased OSM waypoint recreates the original hazard.
+            blocked_signature = (
+                self._lateral_state,
+                self._lateral_reason,
+                self._lateral_safety_reason,
+            )
+            if blocked_signature != self._lateral_dispatch_blocked_signature:
+                target = self._lateral_target
+                target_text = "no dynamic target"
+                if target is not None:
+                    age = (
+                        self.get_clock().now().nanoseconds
+                        - self._lateral_target_stamp_ns
+                    ) / 1e9
+                    target_text = (
+                        f"target_forward={target.s - self._lateral_s:.2f} m, "
+                        f"lateral_delta={target.d - self._lateral_robot_d:.2f} m, "
+                        f"target_age={max(0.0, age):.2f} s"
+                    )
+                self.get_logger().warning(
+                    "[campus_lateral] Nav2 dispatch BLOCKED (fail-closed): "
+                    f"state={self._lateral_state}, reason={self._lateral_reason}, "
+                    f"safety={self._lateral_safety_reason}, {target_text}; "
+                    "cancelling the active Nav2 goal."
+                )
+                self._lateral_dispatch_blocked_signature = blocked_signature
             self._cancel_nav2_goal()
             return
+        self._lateral_dispatch_blocked_signature = None
         if lateral_pose is not None:
             key = (
                 self._nav_cursor,
@@ -3333,6 +3997,18 @@ class RoutePlanner(Node):
                 "semantic_lateral",
                 self._lateral_target_seq,
             )
+            if (
+                key == self._nav_last_succeeded_key
+                and self._nav_last_succeeded_route_s is not None
+                and self._lateral_s
+                <= self._nav_last_succeeded_route_s + 0.05
+            ):
+                self.get_logger().warning(
+                    "[campus_lateral] Suppressing repeated Nav2 goal already "
+                    "reported reached without route progress.",
+                    throttle_duration_sec=2.0,
+                )
+                return
             if key == self._nav_sent_key and self._nav_goal_active:
                 return
             if not self._send_nav2_waypoints([lateral_pose], preempt=True):
@@ -3864,6 +4540,8 @@ class RoutePlanner(Node):
             self._nav_sent_key = None
             self._nav_force_resend = True
         else:
+            self._nav_last_succeeded_key = self._nav_sent_key
+            self._nav_last_succeeded_route_s = self._lateral_s
             self.get_logger().info("Nav2 campus waypoint batch finished.")
         # bt_navigator runs one navigator at a time, so the final NavigateToPose
         # can only go out once the through-poses goal has actually terminated.

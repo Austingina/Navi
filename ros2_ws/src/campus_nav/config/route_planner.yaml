@@ -66,6 +66,15 @@
     # OSM reference.  A 4 m longitudinal lookahead could put the target just
     # beyond the 5 m half-extent and deadlock closed-loop dispatch.
     semantic_lateral_lookahead_m: 2.5
+    # At a sharp or compound junction, pull an out-of-window target back along
+    # the selected OSM branch instead of treating unrepresented space as safe
+    # or stopping immediately. The full footprint must still pass the costmap.
+    semantic_lateral_min_lookahead_m: 0.6
+    semantic_lateral_safety_lookahead_step_m: 0.25
+    # Nav2's outdoor general goal tolerance is 1.0 m. At sharp offset turns a
+    # point 2.5 route-metres ahead can fold back to within that radius and be
+    # reported reached immediately, so require a geometric-distance margin.
+    semantic_lateral_min_goal_distance_m: 1.3
     semantic_lateral_inside_margin_m: 0.75
     semantic_lateral_min_target_confidence: 0.45
     # SAM3 is intentionally rate-limited and currently arrives near 1 Hz over
@@ -80,18 +89,19 @@
     semantic_lateral_fit_max_slope: 0.35
     semantic_lateral_center_innovation_m: 0.6
     semantic_lateral_width_innovation_m: 0.6
-    # Freeze the last confirmed center offset and width across topological
-    # intersections; release only after three consistent post-junction frames.
+    # Freeze width across topological intersections, hold the vehicle's achieved
+    # entry offset (no lane change in the junction), and merge overlapping
+    # guards for compound junctions. Release after three stable exit frames.
     semantic_lateral_junction_guard_before_m: 4.0
     semantic_lateral_junction_guard_after_m: 3.0
-    semantic_lateral_junction_release_frames: 3
+    semantic_lateral_junction_release_frames: 1
     # Blend the OSM tangent through polyline corners so a fixed lateral offset
     # follows a turn continuously instead of jumping when the segment changes.
     semantic_lateral_tangent_window_m: 1.5
     # Replan on meaningful lateral change or longitudinal progress separately.
     # Normal forward motion must not be mistaken for lateral target noise.
-    semantic_lateral_target_move_m: 0.35
-    semantic_lateral_target_progress_m: 1.0
+    semantic_lateral_target_move_m: 0.8
+    semantic_lateral_target_progress_m: 1.5
     # If a newly selected route initially points behind the front camera, use
     # Nav2's collision-checked Spin behavior before requiring a semantic target.
     semantic_lateral_align_heading_enable: true
@@ -104,9 +114,13 @@
     # mode fails stopped unless the whole target footprint is known and nonlethal.
     semantic_lateral_safety_costmap_topic: /local_costmap/costmap
     semantic_lateral_safety_radius_m: 0.75
-    # If the slew-limited target overlaps a lethal cell, search toward the
-    # fitted road center at this resolution. Never crosses the center.
+    # Search the frozen road corridor at this lateral resolution when a parked
+    # vehicle occupies the preferred target. The full footprint remains gated.
     semantic_lateral_safety_inward_step_m: 0.2
+    semantic_lateral_avoid_max_lookahead_m: 5.0
+    # Hold the selected bypass side until this many clear semantic observations
+    # so the target cannot alternate around the obstacle.
+    semantic_lateral_avoid_release_frames: 3
     semantic_lateral_lethal_occupancy: 99
     semantic_lateral_costmap_max_age_s: 1.0
     semantic_lateral_debug_topic: /campus_lateral/debug
